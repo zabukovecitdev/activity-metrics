@@ -34,7 +34,7 @@ class KafkaConnector:
             future = self._producer.send(self._topic, value=asdict(metrics), key=metrics.machine_id)
             future.get(timeout=10)
         except KafkaError:
-            logger.exception("Pošiljanje metrik v Kafko ni uspelo")
+            logger.exception("Failed to send metrics to Kafka")
             raise
 
     def close(self) -> None:
