@@ -1,0 +1,36 @@
+[project]
+name = "activityreporter"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Zabukovec",email = "rok.zabukovec@heureka.group"}
+]
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "psutil (>=7.2.2,<8.0.0)",
+    "get-mac (>=0.9.2,<0.10.0)",
+    "kafka-python (>=3.0.11,<4.0.0)",
+    "py-machineid",
+    "fastapi (>=0.141.1,<0.142.0)",
+    "uvicorn (>=0.53.0,<0.54.0)",
+    "pytest (>=9.1.1,<10.0.0)",
+    "pytest-asyncio (>=1.4.0,<2.0.0)",
+    "requests (>=2.34.2,<3.0.0)",
+]
+
+[tool.poetry]
+packages = [
+    {include = "client", from = "src"},
+    {include = "connectors", from = "src"},
+]
+
+[tool.poetry.scripts]
+activityreporter = "activityreporter.main:main"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
