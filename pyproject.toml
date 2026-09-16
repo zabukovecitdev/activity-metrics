@@ -18,16 +18,19 @@ dependencies = [
     "pytest-asyncio (>=1.4.0,<2.0.0)",
     "requests (>=2.34.2,<3.0.0)",
     "httpx (>=0.28.1,<0.29.0)",
+    "psycopg[binary] (>=3.2.10,<4.0.0)",
 ]
 
 [tool.poetry]
 packages = [
     {include = "client", from = "src"},
     {include = "connectors", from = "src"},
+    {include = "consumers", from = "src"},
 ]
 
 [tool.poetry.scripts]
 activityreporter = "activityreporter.main:main"
+metrics-writer = "consumers.main:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
