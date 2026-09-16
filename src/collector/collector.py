@@ -4,21 +4,24 @@ import asyncio
 import logging
 
 import httpx
+from kafka.errors import KafkaError
 
 from client.metric_factory import Metrics
+from connectors.kafka_connector import KafkaConnector
 
 logger = logging.getLogger(__name__)
 
 SCRAPE_INTERVAL_SECONDS = 15
 CONNECT_TIMEOUT_SECONDS = 2
-READ_TIMEOUT_SECONDS = 5
+READ_TIMEOUT_SECONDS = 2
 MAX_CONNECTIONS = 200
 MAX_KEEPALIVE_CONNECTIONS = 200
 
 
 class Collector:
-    def __init__(self, endpoint_urls: list[str]):
+    def __init__(self, endpoint_urls: list[str], connector: KafkaConnector):
         self.endpoints = endpoint_urls
+        self.connector = connector
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(READ_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
             limits=httpx.Limits(
@@ -39,10 +42,19 @@ class Collector:
         try:
             response = await self._client.get(endpoint)
             response.raise_for_status()
-            metrics = Metrics(**response.json())
-            print(metrics)
         except httpx.HTTPError as e:
-            logger.error("Zajem metrik iz %s ni uspel: %s", endpoint, e)
+            logger.error("Failed to scrape metrics from %s: %s", endpoint, e)
+            return
+
+        metrics = Metrics(**response.json())
+        print(metrics)
+
+        try:
+            # offloaded to a thread: KafkaProducer.send()/future.get() block,
+            # and would otherwise stall the event loop for every other scrape in flight
+            await asyncio.to_thread(self.connector.send, metrics)
+        except KafkaError:
+            pass  # already logged with a stack trace inside connector.send
 
     async def aclose(self) -> None:
         await self._client.aclose()

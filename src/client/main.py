@@ -1,3 +1,6 @@
+import asyncio
+
+import uvicorn
 from fastapi import FastAPI
 from starlette.responses import RedirectResponse
 
@@ -14,3 +17,15 @@ async def metrics() -> Metrics:
 @app.get("/", include_in_schema=False)
 async def docs_redirect():
     return RedirectResponse(url='/docs')
+
+
+async def main() -> None:
+    config = uvicorn.Config(app, host="0.0.0.0", port=8080)
+    server = uvicorn.Server(config)
+    await server.serve()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

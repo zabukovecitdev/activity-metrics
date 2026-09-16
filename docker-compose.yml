@@ -34,7 +34,7 @@ services:
     restart: unless-stopped
     command: jobmanager
     ports:
-      - "8081:8081" # Flink Web UI
+      - "8081:8081"
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
