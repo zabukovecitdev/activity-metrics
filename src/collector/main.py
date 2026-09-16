@@ -1,18 +1,14 @@
 import asyncio
 
 from collector.collector import Collector
-from connectors.kafka_connector import KafkaConnector
 
 endpoints = [
-    "http://0.0.0.0:8080"
+    "http://0.0.0.0:8080/metrics/"
 ]
 
 async def main():
-    with KafkaConnector.from_env() as connector:
-        collector = Collector(endpoints, connector)
-        while True:
-            await collector.collect()
-            await asyncio.sleep(1)
+    async with Collector(endpoints) as collector:
+        await collector.run()
 
 if __name__ == "__main__":
     try:
