@@ -26,6 +26,41 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
 
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: timescaledb
+    restart: unless-stopped
+    ports:
+      - "5433:5432" # host access, e.g. for local psql (5432 is often taken)
+    environment:
+      POSTGRES_DB: activityreporter
+      POSTGRES_USER: activityreporter
+      POSTGRES_PASSWORD: activityreporter # dev-only default
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+
+  metrics-writer:
+    build:
+      context: .
+      dockerfile: docker/consumer/Dockerfile
+    image: activityreporter-consumer:latest
+    container_name: metrics-writer
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      KAFKA_CONNECTION_STRING: kafka:9092
+      KAFKA_METRICS_TOPIC: metrics
+      KAFKA_CONSUMER_GROUP_ID: timescale-writer
+      TIMESCALE_HOST: timescaledb
+      TIMESCALE_PORT: "5432"
+      TIMESCALE_DB: activityreporter
+      TIMESCALE_USER: activityreporter
+      TIMESCALE_PASSWORD: activityreporter
+    depends_on:
+      - kafka
+      - timescaledb
+
   jobmanager:
     build:
       context: ./docker/flink
@@ -58,3 +93,6 @@ services:
       - ./flink-jobs:/opt/flink/jobs
     depends_on:
       - jobmanager
+
+volumes:
+  timescaledb-data:
