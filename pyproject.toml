@@ -19,6 +19,8 @@ dependencies = [
     "requests (>=2.34.2,<3.0.0)",
     "httpx (>=0.28.1,<0.29.0)",
     "psycopg[binary] (>=3.2.10,<4.0.0)",
+    "pyflink (>=1.0,<2.0)",
+    "numpy (>=2.5.3,<3.0.0)",
 ]
 
 [tool.poetry]
@@ -26,11 +28,13 @@ packages = [
     {include = "client", from = "src"},
     {include = "connectors", from = "src"},
     {include = "consumers", from = "src"},
+    {include = "collector", from = "src"},
 ]
 
 [tool.poetry.scripts]
-activityreporter = "activityreporter.main:main"
+activityreporter = "client.main:cli"
 metrics-writer = "consumers.main:main"
+collector = "collector.main:cli"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

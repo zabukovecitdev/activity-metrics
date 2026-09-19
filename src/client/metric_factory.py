@@ -6,9 +6,7 @@ import psutil as util
 @dataclass
 class Metrics:
     timestamp: float|int
-    boot_time: float
-    core_count: int | None
-    cpu_usage: list[float]
+    cpu_usage: float
     memory_usage: float
     memory_total: float
     labels: dict
@@ -18,17 +16,13 @@ class MetricFactory:
 
     @staticmethod
     async def create_metrics(labels: dict) -> Metrics:
-        boot_time: float = util.boot_time()
-        cpu_count: int | None = util.cpu_count()
-        cpu_usage: list[float | int] = util.cpu_percent(interval=0.1, percpu=True)
+        cpu_usage: float = util.cpu_percent(interval=0.1)
         memory = util.virtual_memory()
         memory_total: int = memory.total
         memory_usage: int = memory.used
         machine_id: str = machineid.id()
 
         return Metrics(timestamp=time.time(),
-                       boot_time=boot_time,
-                       core_count=cpu_count,
                        cpu_usage=cpu_usage,
                        memory_total=memory_total,
                        memory_usage=memory_usage,

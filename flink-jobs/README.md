@@ -9,6 +9,15 @@ Submit a job against the running session cluster with:
 docker compose exec jobmanager flink run -py /opt/flink/jobs/<your_job>.py
 ```
 
+`metrics_aggregator.py` is a minimal example: it wires a Kafka source table to
+the `metrics` topic and prints every row via a `print` sink, so the
+source/sink connection can be verified before real aggregation logic is
+added. Run it with:
+
+```bash
+docker compose exec jobmanager flink run -py /opt/flink/jobs/metrics_aggregator.py
+```
+
 The cluster's Kafka broker is reachable from inside the Flink containers at
 `kafka:9092`. The Flink Web UI is available at http://localhost:8081.
 

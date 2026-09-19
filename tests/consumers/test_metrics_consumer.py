@@ -14,9 +14,7 @@ class LoopBreak(Exception):
 def build_metrics(timestamp: float) -> Metrics:
     return Metrics(
         timestamp=timestamp,
-        boot_time=1000.0,
-        core_count=2,
-        cpu_usage=[10.0, 20.0],
+        cpu_usage=15.0,
         memory_usage=50.0,
         memory_total=100.0,
         labels={"name": "test"},

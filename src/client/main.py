@@ -24,8 +24,12 @@ async def main() -> None:
     server = uvicorn.Server(config)
     await server.serve()
 
-if __name__ == "__main__":
+def cli() -> None:
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == "__main__":
+    cli()
