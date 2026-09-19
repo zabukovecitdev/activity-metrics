@@ -12,6 +12,11 @@ RUN pip3 install --no-cache-dir apache-flink==1.19.1
 
 # Kafka SQL/Table & DataStream connector, so PyFlink jobs can read/write Kafka
 # topics without each job having to ship its own jar.
+# `ADD <url>` fetches this as root:root mode 600, which the container's
+# unprivileged `flink` user (uid 9999) cannot read — so it silently fails to
+# load at job-submission time even though it's on the classpath. Match the
+# permissions of the other jars already in this directory.
 ADD https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.2.0-1.19/flink-sql-connector-kafka-3.2.0-1.19.jar /opt/flink/lib/
+RUN chmod 644 /opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar
 
 WORKDIR /opt/flink

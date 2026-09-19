@@ -6,9 +6,7 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 CREATE TABLE IF NOT EXISTS raw_metrics (
     machine_id    TEXT               NOT NULL,
     "timestamp"   TIMESTAMPTZ        NOT NULL,
-    boot_time     TIMESTAMPTZ        NOT NULL,
-    core_count    INTEGER,
-    cpu_usage     DOUBLE PRECISION[] NOT NULL,
+    cpu_usage     DOUBLE PRECISION   NOT NULL,
     memory_usage  DOUBLE PRECISION   NOT NULL,
     memory_total  DOUBLE PRECISION   NOT NULL,
     labels        JSONB              NOT NULL DEFAULT '{}'::jsonb,

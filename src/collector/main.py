@@ -1,19 +1,25 @@
 import asyncio
+import os
 
 from collector.collector import Collector
 from connectors.kafka_connector import KafkaConnector
 
-endpoints = [
-    "http://0.0.0.0:8080/metrics/"
-]
+DEFAULT_ENDPOINTS = "http://localhost:8080/metrics/"
 
-async def main():
+
+async def main() -> None:
+    endpoints = os.environ.get("COLLECTOR_ENDPOINTS", DEFAULT_ENDPOINTS).split(",")
     with KafkaConnector.from_env() as connector:
         async with Collector(endpoints, connector) as collector:
             await collector.run()
 
-if __name__ == "__main__":
+
+def cli() -> None:
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == "__main__":
+    cli()

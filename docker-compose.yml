@@ -31,14 +31,30 @@ services:
     container_name: timescaledb
     restart: unless-stopped
     ports:
-      - "5433:5432" # host access, e.g. for local psql (5432 is often taken)
+      - "5433:5432"
     environment:
       POSTGRES_DB: activityreporter
       POSTGRES_USER: activityreporter
-      POSTGRES_PASSWORD: activityreporter # dev-only default
+      POSTGRES_PASSWORD: activityreporter
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
+
+  collector:
+    build:
+      context: .
+      dockerfile: docker/collector/Dockerfile
+    image: activityreporter-collector:latest
+    container_name: collector
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      KAFKA_CONNECTION_STRING: kafka:9092
+      KAFKA_METRICS_TOPIC: metrics
+      COLLECTOR_ENDPOINTS: http://activityreporter:8080/metrics/
+    depends_on:
+      - kafka
+      - activityreporter
 
   metrics-writer:
     build:
