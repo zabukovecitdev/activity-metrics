@@ -5,13 +5,13 @@ from fastapi import FastAPI
 from starlette.responses import RedirectResponse
 
 from client.machine_info import MachineInfo, MachineInfoFactory
-from client.metric_factory import Metrics
 from client.reporter import HttpReporter
+from core.metrics import RawMetrics
 
 app = FastAPI()
 
 @app.get("/metrics/", tags=["metrics"])
-async def metrics() -> Metrics:
+async def metrics() -> RawMetrics:
     return await HttpReporter().get()
 
 

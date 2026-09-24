@@ -6,16 +6,18 @@ from dataclasses import asdict
 import psycopg
 from psycopg.types.json import Jsonb
 
-from client.metric_factory import Metrics
+from core.metrics import ProcessedMetrics
 
 logger = logging.getLogger(__name__)
 
 INSERT_SQL = """
     INSERT INTO raw_metrics
-        (machine_id, "timestamp", cpu_usage, memory_usage, memory_total, labels, is_anomaly)
+        (machine_id, "timestamp", cpu_usage, memory_usage, memory_total, labels,
+         battery_charging, battery_percentage, is_anomaly)
     VALUES
         (%(machine_id)s, to_timestamp(%(timestamp)s),
-         %(cpu_usage)s, %(memory_usage)s, %(memory_total)s, %(labels)s, %(is_anomaly)s)
+         %(cpu_usage)s, %(memory_usage)s, %(memory_total)s, %(labels)s,
+         %(battery_charging)s, %(battery_percentage)s, %(is_anomaly)s)
     ON CONFLICT (machine_id, "timestamp") DO NOTHING
 """
 
@@ -41,7 +43,7 @@ class TimescaleConnector:
     def connect(self) -> None:
         self._conn = psycopg.connect(self._dsn, autocommit=False)
 
-    def insert_batch(self, metrics_batch: list[Metrics]) -> None:
+    def insert_batch(self, metrics_batch: list[ProcessedMetrics]) -> None:
         if not metrics_batch:
             return
 

@@ -5,8 +5,8 @@ import time
 
 from kafka import KafkaConsumer
 
-from client.metric_factory import Metrics
 from connectors.timescale_connector import TimescaleConnector
+from core.metrics import ProcessedMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +56,13 @@ class MetricsConsumer:
         self._running = False
 
     def run(self) -> None:
-        batch: list[Metrics] = []
+        batch: list[ProcessedMetrics] = []
         last_flush = time.monotonic()
         try:
             while self._running:
                 polled = self._consumer.poll(timeout_ms=POLL_TIMEOUT_MS, max_records=self._batch_size)
                 for records in polled.values():
-                    batch.extend(Metrics(**record.value) for record in records)
+                    batch.extend(ProcessedMetrics(**record.value) for record in records)
 
                 if batch and (
                     len(batch) >= self._batch_size
@@ -77,7 +77,7 @@ class MetricsConsumer:
         finally:
             self._consumer.close()
 
-    def _flush(self, batch: list[Metrics]) -> None:
+    def _flush(self, batch: list[ProcessedMetrics]) -> None:
         # Offsets are committed only after a successful write, so a crash here
         # replays the batch on restart; the insert is idempotent via ON CONFLICT.
         self._writer.insert_batch(batch)
