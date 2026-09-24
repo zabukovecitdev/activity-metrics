@@ -4,6 +4,7 @@ import uvicorn
 from fastapi import FastAPI
 from starlette.responses import RedirectResponse
 
+from client.machine_info import MachineInfo, MachineInfoFactory
 from client.metric_factory import Metrics
 from client.reporter import HttpReporter
 
@@ -12,6 +13,11 @@ app = FastAPI()
 @app.get("/metrics/", tags=["metrics"])
 async def metrics() -> Metrics:
     return await HttpReporter().get()
+
+
+@app.get("/info/", tags=["info"])
+async def info() -> MachineInfo:
+    return await MachineInfoFactory.create_machine_info()
 
 
 @app.get("/", include_in_schema=False)

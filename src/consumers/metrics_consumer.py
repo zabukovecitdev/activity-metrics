@@ -43,7 +43,7 @@ class MetricsConsumer:
     def from_env(cls, writer: TimescaleConnector) -> MetricsConsumer:
         return cls(
             bootstrap_servers=os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094"),
-            topic=os.environ.get("KAFKA_METRICS_TOPIC", "metrics"),
+            topic=os.environ.get("KAFKA_PROCESSED_METRICS_TOPIC", "processed_metrics"),
             group_id=os.environ.get("KAFKA_CONSUMER_GROUP_ID", "timescale-writer"),
             writer=writer,
             batch_size=int(os.environ.get("CONSUMER_BATCH_SIZE", DEFAULT_BATCH_SIZE)),

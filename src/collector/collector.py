@@ -11,7 +11,7 @@ from connectors.kafka_connector import KafkaConnector
 
 logger = logging.getLogger(__name__)
 
-SCRAPE_INTERVAL_SECONDS = 15
+SCRAPE_INTERVAL_SECONDS = 1
 CONNECT_TIMEOUT_SECONDS = 2
 READ_TIMEOUT_SECONDS = 2
 MAX_CONNECTIONS = 200

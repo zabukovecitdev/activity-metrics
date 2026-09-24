@@ -11,6 +11,8 @@ class Metrics:
     memory_total: float
     labels: dict
     machine_id: str
+    battery_charging: bool | None
+    battery_percentage: float | None
 
 class MetricFactory:
 
@@ -21,10 +23,14 @@ class MetricFactory:
         memory_total: int = memory.total
         memory_usage: int = memory.used
         machine_id: str = machineid.id()
+        battery_charging: bool | None = util.sensors_battery().power_plugged if util.sensors_battery() else None
+        battery_percentage: float | None = util.sensors_battery().percent if util.sensors_battery() else None
 
         return Metrics(timestamp=time.time(),
                        cpu_usage=cpu_usage,
                        memory_total=memory_total,
                        memory_usage=memory_usage,
                        labels=labels,
-                       machine_id=machine_id)
+                       machine_id=machine_id,
+                       battery_charging=battery_charging,
+                       battery_percentage=battery_percentage)
