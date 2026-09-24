@@ -65,11 +65,16 @@ services:
     image: activityreporter-collector:latest
     container_name: collector
     restart: unless-stopped
+    # mDNS multicast doesn't cross the Docker bridge, so the collector joins the host's
+    # network to discover clients on the LAN. Service names like "kafka" don't resolve
+    # here, hence Kafka's host-published listener.
+    network_mode: host
     environment:
       PYTHONUNBUFFERED: "1"
-      KAFKA_CONNECTION_STRING: kafka:9092
+      KAFKA_CONNECTION_STRING: localhost:9094
       KAFKA_RAW_METRICS_TOPIC: raw_metrics
-      COLLECTOR_ENDPOINTS: http://activityreporter:8080/metrics/
+      # Scraped in addition to clients discovered over mDNS, comma separated.
+      COLLECTOR_ENDPOINTS: ""
     depends_on:
       - kafka
       - activityreporter
