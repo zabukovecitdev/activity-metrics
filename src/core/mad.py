@@ -9,6 +9,16 @@ class MAD:
     THRESHOLD = 3.5
 
     def is_anomaly(self, values: list[float]) -> bool:
+        """
+        Check whether the last value in the series deviates significantly from the
+        rest, using Median Absolute Deviation (MAD).
+
+        Requires at least 2 values.
+
+        :param values: series to check, most recent value last
+        :return: True if the last value is an anomaly
+        :raises InsufficientDataError: if len(values) < 2
+        """
         if len(values) < self.MINIMAL_POINT_COUNT:
             raise InsufficientDataError(values)
 

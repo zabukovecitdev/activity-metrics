@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable, Iterable
 
 import httpx
 from kafka.errors import KafkaError
 
-from client.metric_factory import Metrics
 from connectors.kafka_connector import KafkaConnector
+from core.metrics import RawMetrics
 
 logger = logging.getLogger(__name__)
 
-SCRAPE_INTERVAL_SECONDS = 15
+SCRAPE_INTERVAL_SECONDS = 1
 CONNECT_TIMEOUT_SECONDS = 2
 READ_TIMEOUT_SECONDS = 2
 MAX_CONNECTIONS = 200
@@ -19,8 +20,9 @@ MAX_KEEPALIVE_CONNECTIONS = 200
 
 
 class Collector:
-    def __init__(self, endpoint_urls: list[str], connector: KafkaConnector):
-        self.endpoints = endpoint_urls
+    def __init__(self, endpoints: Callable[[], Iterable[str]], connector: KafkaConnector):
+        # Called on every scrape, so clients discovered or lost in between are picked up.
+        self.endpoints = endpoints
         self.connector = connector
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(READ_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
@@ -36,7 +38,7 @@ class Collector:
             await asyncio.sleep(SCRAPE_INTERVAL_SECONDS)
 
     async def collect(self) -> None:
-        await asyncio.gather(*(self._scrape(endpoint) for endpoint in self.endpoints))
+        await asyncio.gather(*(self._scrape(endpoint) for endpoint in set(self.endpoints())))
 
     async def _scrape(self, endpoint: str) -> None:
         try:
@@ -46,7 +48,7 @@ class Collector:
             logger.error("Failed to scrape metrics from %s: %s", endpoint, e)
             return
 
-        metrics = Metrics(**response.json())
+        metrics = RawMetrics(**response.json())
         print(metrics)
 
         try:

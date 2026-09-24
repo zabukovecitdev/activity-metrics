@@ -1,20 +1,24 @@
+import re
 from unittest.mock import MagicMock, patch
 
 import psycopg
 import pytest
 
-from client.metric_factory import Metrics
+from core.metrics import ProcessedMetrics
 from connectors.timescale_connector import TimescaleConnector
 
 
-def build_metrics(timestamp: float = 1.0) -> Metrics:
-    return Metrics(
+def build_metrics(timestamp: float = 1.0) -> ProcessedMetrics:
+    return ProcessedMetrics(
         timestamp=timestamp,
         cpu_usage=15.0,
         memory_usage=50.0,
         memory_total=100.0,
         labels={"name": "test"},
         machine_id="machine-123",
+        battery_charging=True,
+        battery_percentage=80.0,
+        is_anomaly=False,
     )
 
 
@@ -36,6 +40,20 @@ def test_insert_batch_commits_once_on_success():
     assert cursor.executemany.call_count == 1
     assert connection.commit.call_count == 1
     assert connection.rollback.call_count == 0
+
+
+def test_insert_batch_passes_a_value_for_every_sql_placeholder():
+    connection = build_connection()
+
+    with patch("connectors.timescale_connector.psycopg.connect", return_value=connection):
+        connector = TimescaleConnector(dsn="dsn")
+        connector.connect()
+        connector.insert_batch([build_metrics()])
+
+    cursor = connection.cursor.return_value.__enter__.return_value
+    sql, rows = cursor.executemany.call_args.args
+    placeholders = set(re.findall(r"%\((\w+)\)s", sql))
+    assert placeholders == set(rows[0])
 
 
 def test_insert_batch_skips_empty_batch():

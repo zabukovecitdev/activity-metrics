@@ -12,7 +12,12 @@ services:
     container_name: kafka
     restart: unless-stopped
     ports:
-      - "9094:9094" # host access, e.g. for local producers/consumers
+      - "9094:9094"
+    healthcheck:
+      test: /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+      interval: 5s
+      timeout: 10s
+      retries: 10
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -38,7 +43,20 @@ services:
       POSTGRES_PASSWORD: activityreporter
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d:ro
+
+  migrate:
+    image: flyway/flyway:13.7.0
+    container_name: migrate
+    command: migrate
+    environment:
+      FLYWAY_URL: jdbc:postgresql://timescaledb:5432/activityreporter
+      FLYWAY_USER: activityreporter
+      FLYWAY_PASSWORD: activityreporter
+      FLYWAY_CONNECT_RETRIES: "10"
+    volumes:
+      - ./db/migrations:/flyway/sql:ro
+    depends_on:
+      - timescaledb
 
   collector:
     build:
@@ -47,11 +65,16 @@ services:
     image: activityreporter-collector:latest
     container_name: collector
     restart: unless-stopped
+    # mDNS multicast doesn't cross the Docker bridge, so the collector joins the host's
+    # network to discover clients on the LAN. Service names like "kafka" don't resolve
+    # here, hence Kafka's host-published listener.
+    network_mode: host
     environment:
       PYTHONUNBUFFERED: "1"
-      KAFKA_CONNECTION_STRING: kafka:9092
-      KAFKA_METRICS_TOPIC: metrics
-      COLLECTOR_ENDPOINTS: http://activityreporter:8080/metrics/
+      KAFKA_CONNECTION_STRING: localhost:9094
+      KAFKA_RAW_METRICS_TOPIC: raw_metrics
+      # Scraped in addition to clients discovered over mDNS, comma separated.
+      COLLECTOR_ENDPOINTS: ""
     depends_on:
       - kafka
       - activityreporter
@@ -66,7 +89,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: kafka:9092
-      KAFKA_METRICS_TOPIC: metrics
+      KAFKA_RAW_METRICS_TOPIC: raw_metrics
       KAFKA_CONSUMER_GROUP_ID: timescale-writer
       TIMESCALE_HOST: timescaledb
       TIMESCALE_PORT: "5432"
@@ -74,8 +97,10 @@ services:
       TIMESCALE_USER: activityreporter
       TIMESCALE_PASSWORD: activityreporter
     depends_on:
-      - kafka
-      - timescaledb
+      kafka:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
   jobmanager:
     build:
@@ -87,8 +112,11 @@ services:
     ports:
       - "8081:8081"
     environment:
+      # Without a restart strategy a job fails for good on its first error,
+      # e.g. when it starts before the collector has created its Kafka topic.
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
+        restart-strategy.type: exponential-delay
     volumes:
       - ./flink-jobs:/opt/flink/jobs
     depends_on:
@@ -109,6 +137,31 @@ services:
       - ./flink-jobs:/opt/flink/jobs
     depends_on:
       - jobmanager
+
+  flink-jobs-submitter:
+    build:
+      context: ./docker/flink
+    image: activityreporter-flink:1.19.1
+    container_name: flink-jobs-submitter
+    restart: "no"
+    entrypoint: ["bash", "/opt/flink/submit-jobs.sh"]
+    environment:
+      KAFKA_CONNECTION_STRING: kafka:9092
+      KAFKA_RAW_METRICS_TOPIC: raw_metrics
+      KAFKA_PROCESSED_METRICS_TOPIC: processed_metrics
+      # The Kafka connector jar is already in the image's /opt/flink/lib.
+      KAFKA_CONNECTOR_JAR: ""
+    volumes:
+      - ./flink-jobs:/opt/flink/jobs:ro
+      - ./src:/opt/flink/src:ro
+      - ./docker/flink/submit-jobs.sh:/opt/flink/submit-jobs.sh:ro
+    depends_on:
+      jobmanager:
+        condition: service_started
+      taskmanager:
+        condition: service_started
+      kafka:
+        condition: service_healthy
 
 volumes:
   timescaledb-data:

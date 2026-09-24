@@ -14,31 +14,30 @@ dependencies = [
     "py-machineid",
     "fastapi (>=0.141.1,<0.142.0)",
     "uvicorn (>=0.53.0,<0.54.0)",
-    "pytest (>=9.1.1,<10.0.0)",
-    "pytest-asyncio (>=1.4.0,<2.0.0)",
     "requests (>=2.34.2,<3.0.0)",
     "httpx (>=0.28.1,<0.29.0)",
     "psycopg[binary] (>=3.2.10,<4.0.0)",
-    "pyflink (>=1.0,<2.0)",
     "numpy (>=2.5.3,<3.0.0)",
+    "zeroconf>=0.151.3",
 ]
 
-[tool.poetry]
-packages = [
-    {include = "client", from = "src"},
-    {include = "connectors", from = "src"},
-    {include = "consumers", from = "src"},
-    {include = "collector", from = "src"},
-]
-
-[tool.poetry.scripts]
+[project.scripts]
 activityreporter = "client.main:cli"
 metrics-writer = "consumers.main:main"
 collector = "collector.main:cli"
 
+[dependency-groups]
+dev = [
+    "pytest (>=9.1.1,<10.0.0)",
+    "pytest-asyncio (>=1.4.0,<2.0.0)",
+]
+
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/client", "src/collector", "src/connectors", "src/consumers", "src/core"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
