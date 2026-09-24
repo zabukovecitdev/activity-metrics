@@ -26,7 +26,7 @@ class KafkaConnector:
     def from_env(cls) -> KafkaConnector:
         return cls(
             bootstrap_servers=os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094"),
-            topic=os.environ.get("KAFKA_METRICS_TOPIC", "metrics"),
+            topic=os.environ.get("KAFKA_RAW_METRICS_TOPIC", "raw_metrics"),
         )
 
     def send(self, metrics: Metrics) -> None:
