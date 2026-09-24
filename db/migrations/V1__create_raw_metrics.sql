@@ -1,6 +1,3 @@
--- Runs automatically on first start of an empty TimescaleDB data volume.
--- Later schema changes need a manual migration or a volume wipe.
-
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 CREATE TABLE IF NOT EXISTS raw_metrics (
