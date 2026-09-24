@@ -1,11 +1,12 @@
 from abc import ABC
 
-from client.metric_factory import MetricFactory, Metrics
+from client.metric_factory import MetricFactory
 from connectors.kafka_connector import KafkaConnector
+from core.metrics import RawMetrics
 
 
 class BaseReporter(ABC):
-    async def get(self) -> Metrics:
+    async def get(self) -> RawMetrics:
         raise NotImplementedError()
 
     async def report(self) -> None:
@@ -22,5 +23,5 @@ class KafkaReporter(BaseReporter):
         self._connector.send(await MetricFactory.create_metrics({"name": "KafkaReporter"}))
 
 class HttpReporter(BaseReporter):
-    async def get(self) -> Metrics:
+    async def get(self) -> RawMetrics:
         return await MetricFactory.create_metrics({"name": "HttpReporter"})

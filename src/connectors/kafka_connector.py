@@ -6,7 +6,7 @@ from dataclasses import asdict
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
 
-from client.metric_factory import Metrics
+from core.metrics import RawMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class KafkaConnector:
             topic=os.environ.get("KAFKA_RAW_METRICS_TOPIC", "raw_metrics"),
         )
 
-    def send(self, metrics: Metrics) -> None:
+    def send(self, metrics: RawMetrics) -> None:
         try:
             future = self._producer.send(self._topic, value=asdict(metrics), key=metrics.machine_id)
             future.get(timeout=10)

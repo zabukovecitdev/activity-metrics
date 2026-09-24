@@ -18,3 +18,12 @@ async def test_create_metrics_returns_metrics_built_from_system_stats():
     assert metrics.memory_usage == 50
     assert metrics.labels == {"name": "test"}
     assert metrics.machine_id == "machine-123"
+
+
+async def test_create_metrics_reports_no_battery_when_power_supply_is_missing():
+    with patch("client.metric_factory.util.sensors_battery",
+               side_effect=FileNotFoundError("/sys/class/power_supply")):
+        metrics = await MetricFactory.create_metrics({"name": "test"})
+
+    assert metrics.battery_charging is None
+    assert metrics.battery_percentage is None

@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 import machineid
 import psutil as util
 
+from client.metric_factory import read_battery
+
 
 @dataclass
 class MachineInfo():
@@ -26,7 +28,7 @@ class MachineInfoFactory:
 
     @staticmethod
     async def create_machine_info() -> MachineInfo:
-        battery = util.sensors_battery()
+        battery = read_battery()
         boot_time: float = util.boot_time()
 
         return MachineInfo(machine_id=machineid.id(),

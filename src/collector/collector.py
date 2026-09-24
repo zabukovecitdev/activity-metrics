@@ -6,8 +6,8 @@ import logging
 import httpx
 from kafka.errors import KafkaError
 
-from client.metric_factory import Metrics
 from connectors.kafka_connector import KafkaConnector
+from core.metrics import RawMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class Collector:
             logger.error("Failed to scrape metrics from %s: %s", endpoint, e)
             return
 
-        metrics = Metrics(**response.json())
+        metrics = RawMetrics(**response.json())
         print(metrics)
 
         try:
