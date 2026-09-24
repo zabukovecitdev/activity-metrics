@@ -15,6 +15,8 @@ def build_metrics(timestamp: float = 1.0) -> Metrics:
         memory_total=100.0,
         labels={"name": "test"},
         machine_id="machine-123",
+        battery_charging=True,
+        battery_percentage=80.0,
     )
 
 
