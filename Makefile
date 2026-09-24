@@ -8,7 +8,7 @@ $(KAFKA_CONNECTOR_JAR):
 
 .PHONY: flink-example
 flink-example: $(KAFKA_CONNECTOR_JAR)
-	$(FLINK_PYTHON) flink-jobs/example_job.py
+	PYTHONPATH=src $(FLINK_PYTHON) flink-jobs/example_job.py
 
 .PHONY: client collector metrics-writer test
 client:
@@ -22,3 +22,13 @@ metrics-writer:
 
 test:
 	uv run pytest
+
+# Starts the whole stack, or restarts it from scratch if it's already running.
+# Kafka has no volume, so topics and offsets are reset; TimescaleDB data is kept.
+.PHONY: run down
+run:
+	docker compose down --remove-orphans
+	docker compose up -d --build
+
+down:
+	docker compose down --remove-orphans

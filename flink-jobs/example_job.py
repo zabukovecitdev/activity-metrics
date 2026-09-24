@@ -1,5 +1,6 @@
 import os
 import sys
+from dataclasses import fields
 from pathlib import Path
 
 from pyflink.common import Configuration, WatermarkStrategy
@@ -18,27 +19,46 @@ from pyflink.datastream.functions import RuntimeContext, KeyedProcessFunction
 from pyflink.datastream.state import ListStateDescriptor
 
 from core.mad import MAD
+from core.metrics import ProcessedMetrics
 
 ONE_HOUR_MS = 60 * 60 * 1000
 MIN_VALUES_FOR_MAD = 20
 
 # Same jar version baked into the jobmanager/taskmanager image by
 # docker/flink/Dockerfile — local runs need it on the classpath too, since
-# apache-flink's bundled jars don't include the Kafka connector.
-KAFKA_CONNECTOR_JAR = Path(__file__).parent / "lib" / "flink-sql-connector-kafka-3.2.0-1.19.jar"
+# apache-flink's bundled jars don't include the Kafka connector. The docker
+# submitter sets this to "" so the image's copy isn't loaded a second time.
+KAFKA_CONNECTOR_JAR = os.environ.get(
+    "KAFKA_CONNECTOR_JAR",
+    str(Path(__file__).parent / "lib" / "flink-sql-connector-kafka-3.2.0-1.19.jar"),
+)
+KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094")
 
-# metrics_writer.py's Metrics.timestamp is `time.time()` — epoch seconds, not
-# an ISO-8601 instant — so the row type must be DOUBLE, and event time is
-# derived from it explicitly instead of relying on Kafka record timestamps.
-METRIC_FIELD_NAMES = ["timestamp", "cpu_usage", "memory_usage", "memory_total", "labels", "machine_id", "is_anomaly"]
-METRIC_FIELD_TYPES = [
-    Types.DOUBLE(), Types.DOUBLE(), Types.DOUBLE(), Types.DOUBLE(),
-    Types.MAP(Types.STRING(), Types.STRING()), Types.STRING(), Types.BOOLEAN(),
-]
-# `is_anomaly` isn't produced by the collector — pyflink's Row has a fixed
-# schema, so the field has to be declared upfront (JSON deserialization
-# leaves it at its default) for AnomalyDetector to be able to set it later.
-METRIC_TYPE_INFO = Types.ROW_NAMED(METRIC_FIELD_NAMES, METRIC_FIELD_TYPES)
+# RawMetrics.timestamp is `time.time()` — epoch seconds, not an ISO-8601
+# instant — so the row type must be DOUBLE, and event time is derived from it
+# explicitly instead of relying on Kafka record timestamps.
+METRIC_FIELD_TYPES = {
+    "timestamp": Types.DOUBLE(),
+    "cpu_usage": Types.DOUBLE(),
+    "memory_usage": Types.DOUBLE(),
+    "memory_total": Types.DOUBLE(),
+    "labels": Types.MAP(Types.STRING(), Types.STRING()),
+    "machine_id": Types.STRING(),
+    "battery_charging": Types.BOOLEAN(),
+    "battery_percentage": Types.DOUBLE(),
+    "is_anomaly": Types.BOOLEAN(),
+}
+# The row schema follows ProcessedMetrics, which the consumer builds from this
+# job's output. `is_anomaly` isn't produced by the collector — pyflink's Row
+# has a fixed schema, so the field has to be declared upfront (JSON
+# deserialization leaves it at its default) for AnomalyDetector to set it.
+METRIC_FIELD_NAMES = [field.name for field in fields(ProcessedMetrics)]
+if set(METRIC_FIELD_NAMES) != set(METRIC_FIELD_TYPES):
+    raise RuntimeError(
+        f"METRIC_FIELD_TYPES {sorted(METRIC_FIELD_TYPES)} is out of sync with "
+        f"ProcessedMetrics {sorted(METRIC_FIELD_NAMES)}"
+    )
+METRIC_TYPE_INFO = Types.ROW_NAMED(METRIC_FIELD_NAMES, [METRIC_FIELD_TYPES[name] for name in METRIC_FIELD_NAMES])
 
 
 class MetricTimestampAssigner(TimestampAssigner):
@@ -80,7 +100,8 @@ def detect_anomalies():
     # leave the Kafka connector classes unresolved when combined with
     # set_python_executable below.
     config = Configuration()
-    config.set_string("pipeline.jars", f"file://{KAFKA_CONNECTOR_JAR}")
+    if KAFKA_CONNECTOR_JAR:
+        config.set_string("pipeline.jars", f"file://{KAFKA_CONNECTOR_JAR}")
     env = StreamExecutionEnvironment.get_execution_environment(config)
 
     # Local Python UDF workers (key_by/process) are spawned as a subprocess
@@ -88,7 +109,7 @@ def detect_anomalies():
     # explicitly or the job dies immediately with ModuleNotFoundError: pyflink.
     env.set_python_executable(sys.executable)
 
-    # The `metrics` topic has a single partition (docker-compose default);
+    # The raw metrics topic has a single partition (docker-compose default);
     # extra parallel Kafka source subtasks would just sit idle.
     env.set_parallelism(1)
 
@@ -97,8 +118,8 @@ def detect_anomalies():
         .build()
 
     source = KafkaSource.builder() \
-        .set_bootstrap_servers("localhost:9094") \
-        .set_topics("metrics") \
+        .set_bootstrap_servers(KAFKA_BOOTSTRAP_SERVERS) \
+        .set_topics(os.environ.get("KAFKA_RAW_METRICS_TOPIC", "raw_metrics")) \
         .set_group_id("flink-metrics-aggregator") \
         .set_starting_offsets(KafkaOffsetsInitializer.earliest()) \
         .set_value_only_deserializer(deserialization_schema) \
@@ -113,7 +134,7 @@ def detect_anomalies():
                                  .process(AnomalyDetector(), output_type=METRIC_TYPE_INFO))
 
     sink = KafkaSink.builder() \
-        .set_bootstrap_servers("localhost:9094") \
+        .set_bootstrap_servers(KAFKA_BOOTSTRAP_SERVERS) \
         .set_record_serializer(
             KafkaRecordSerializationSchema.builder()
             .set_topic(os.environ.get("KAFKA_PROCESSED_METRICS_TOPIC", "processed_metrics"))
