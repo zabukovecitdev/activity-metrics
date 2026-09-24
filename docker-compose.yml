@@ -12,7 +12,12 @@ services:
     container_name: kafka
     restart: unless-stopped
     ports:
-      - "9094:9094" # host access, e.g. for local producers/consumers
+      - "9094:9094"
+    healthcheck:
+      test: kafka-topics --bootstrap-server broker:9092 --list
+      interval: 30s
+      timeout: 10s
+      retries: 3
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -38,7 +43,20 @@ services:
       POSTGRES_PASSWORD: activityreporter
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d:ro
+
+  migrate:
+    image: flyway/flyway:13.7.0
+    container_name: migrate
+    command: migrate
+    environment:
+      FLYWAY_URL: jdbc:postgresql://timescaledb:5432/activityreporter
+      FLYWAY_USER: activityreporter
+      FLYWAY_PASSWORD: activityreporter
+      FLYWAY_CONNECT_RETRIES: "10"
+    volumes:
+      - ./db/migrations:/flyway/sql:ro
+    depends_on:
+      - timescaledb
 
   collector:
     build:
@@ -50,8 +68,8 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: kafka:9092
-      KAFKA_METRICS_TOPIC: metrics
-      COLLECTOR_ENDPOINTS: http://activityreporter:8080/metrics/
+      KAFKA_RAW_METRICS_TOPIC: raw_metrics
+      COLLECTOR_ENDPOINTS: http://localhost:8080/metrics/
     depends_on:
       - kafka
       - activityreporter
@@ -66,7 +84,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: kafka:9092
-      KAFKA_METRICS_TOPIC: metrics
+      KAFKA_RAW_METRICS_TOPIC: raw_metrics
       KAFKA_CONSUMER_GROUP_ID: timescale-writer
       TIMESCALE_HOST: timescaledb
       TIMESCALE_PORT: "5432"
@@ -74,8 +92,10 @@ services:
       TIMESCALE_USER: activityreporter
       TIMESCALE_PASSWORD: activityreporter
     depends_on:
-      - kafka
-      - timescaledb
+      kafka:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
   jobmanager:
     build:
