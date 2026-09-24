@@ -12,10 +12,10 @@ logger = logging.getLogger(__name__)
 
 INSERT_SQL = """
     INSERT INTO raw_metrics
-        (machine_id, "timestamp", cpu_usage, memory_usage, memory_total, labels)
+        (machine_id, "timestamp", cpu_usage, memory_usage, memory_total, labels, is_anomaly)
     VALUES
         (%(machine_id)s, to_timestamp(%(timestamp)s),
-         %(cpu_usage)s, %(memory_usage)s, %(memory_total)s, %(labels)s)
+         %(cpu_usage)s, %(memory_usage)s, %(memory_total)s, %(labels)s, %(is_anomaly)s)
     ON CONFLICT (machine_id, "timestamp") DO NOTHING
 """
 
