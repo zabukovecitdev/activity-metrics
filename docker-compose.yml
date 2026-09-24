@@ -14,10 +14,10 @@ services:
     ports:
       - "9094:9094"
     healthcheck:
-      test: kafka-topics --bootstrap-server broker:9092 --list
-      interval: 30s
+      test: /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+      interval: 5s
       timeout: 10s
-      retries: 3
+      retries: 10
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -69,7 +69,7 @@ services:
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: kafka:9092
       KAFKA_RAW_METRICS_TOPIC: raw_metrics
-      COLLECTOR_ENDPOINTS: http://localhost:8080/metrics/
+      COLLECTOR_ENDPOINTS: http://activityreporter:8080/metrics/
     depends_on:
       - kafka
       - activityreporter
@@ -107,8 +107,11 @@ services:
     ports:
       - "8081:8081"
     environment:
+      # Without a restart strategy a job fails for good on its first error,
+      # e.g. when it starts before the collector has created its Kafka topic.
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
+        restart-strategy.type: exponential-delay
     volumes:
       - ./flink-jobs:/opt/flink/jobs
     depends_on:
@@ -129,6 +132,31 @@ services:
       - ./flink-jobs:/opt/flink/jobs
     depends_on:
       - jobmanager
+
+  flink-jobs-submitter:
+    build:
+      context: ./docker/flink
+    image: activityreporter-flink:1.19.1
+    container_name: flink-jobs-submitter
+    restart: "no"
+    entrypoint: ["bash", "/opt/flink/submit-jobs.sh"]
+    environment:
+      KAFKA_CONNECTION_STRING: kafka:9092
+      KAFKA_RAW_METRICS_TOPIC: raw_metrics
+      KAFKA_PROCESSED_METRICS_TOPIC: processed_metrics
+      # The Kafka connector jar is already in the image's /opt/flink/lib.
+      KAFKA_CONNECTOR_JAR: ""
+    volumes:
+      - ./flink-jobs:/opt/flink/jobs:ro
+      - ./src:/opt/flink/src:ro
+      - ./docker/flink/submit-jobs.sh:/opt/flink/submit-jobs.sh:ro
+    depends_on:
+      jobmanager:
+        condition: service_started
+      taskmanager:
+        condition: service_started
+      kafka:
+        condition: service_healthy
 
 volumes:
   timescaledb-data:
