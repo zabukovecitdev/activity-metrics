@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import signal
 
 from collector.collector import Collector
 from collector.discovery import ServiceDiscovery
@@ -24,6 +25,7 @@ async def main() -> None:
 
 
 def cli() -> None:
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
