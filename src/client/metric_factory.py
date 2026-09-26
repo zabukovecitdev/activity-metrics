@@ -2,7 +2,7 @@ import time
 import machineid
 import psutil as util
 
-from core.metrics import RawMetrics
+from core.metrics import Metric
 
 
 def read_battery():
@@ -17,7 +17,7 @@ def read_battery():
 class MetricFactory:
 
     @staticmethod
-    async def create_metrics(labels: dict) -> RawMetrics:
+    async def create_metrics(labels: dict) -> list[Metric]:
         cpu_usage: float = util.cpu_percent(interval=0.1)
         memory = util.virtual_memory()
         memory_total: int = memory.total
@@ -26,12 +26,18 @@ class MetricFactory:
         battery = read_battery()
         battery_charging: bool | None = battery.power_plugged if battery else None
         battery_percentage: float | None = battery.percent if battery else None
+        timestamp = time.time()
 
-        return RawMetrics(timestamp=time.time(),
-                          cpu_usage=cpu_usage,
-                          memory_total=memory_total,
-                          memory_usage=memory_usage,
-                          labels=labels,
-                          machine_id=machine_id,
-                          battery_charging=battery_charging,
-                          battery_percentage=battery_percentage)
+        metrics = [
+            Metric(timestamp=timestamp, name="cpu_usage", value=cpu_usage, machine_id=machine_id, labels=labels),
+            Metric(timestamp=timestamp, name="memory_usage", value=memory_usage, machine_id=machine_id, labels=labels),
+            Metric(timestamp=timestamp, name="memory_total", value=memory_total, machine_id=machine_id, labels=labels),
+        ]
+        if battery_percentage is not None:
+            metrics.append(Metric(timestamp=timestamp, name="battery_percentage", value=battery_percentage,
+                                   machine_id=machine_id, labels=labels))
+        if battery_charging is not None:
+            metrics.append(Metric(timestamp=timestamp, name="battery_charging", value=float(battery_charging),
+                                   machine_id=machine_id, labels=labels))
+
+        return metrics

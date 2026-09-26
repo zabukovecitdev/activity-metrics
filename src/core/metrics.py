@@ -1,9 +1,9 @@
+import time
 from dataclasses import dataclass
 
 
 @dataclass
 class RawMetrics:
-    """What a client measures; sent by the collector to the raw metrics topic."""
     timestamp: float | int
     cpu_usage: float
     memory_usage: float
@@ -16,5 +16,13 @@ class RawMetrics:
 
 @dataclass
 class ProcessedMetrics(RawMetrics):
-    """RawMetrics enriched by the Flink job; consumed and written to TimescaleDB."""
     is_anomaly: bool
+
+@dataclass
+class Metric:
+    timestamp: float | int
+    name: str
+    value: float
+    machine_id: str
+    labels: dict
+    tenant_id: int | None = None  # ponytail: multi-tenancy not wired up yet, fill in when it is
