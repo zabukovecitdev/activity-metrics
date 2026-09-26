@@ -5,10 +5,8 @@ import uvicorn
 from fastapi import FastAPI
 from starlette.responses import RedirectResponse
 
+from client import v1
 from client.discovery import ServiceAdvertiser
-from client.machine_info import MachineInfo, MachineInfoFactory
-from client.reporter import HttpReporter
-from core.metrics import RawMetrics
 
 PORT = 8080
 
@@ -20,15 +18,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-
-@app.get("/metrics/", tags=["metrics"])
-async def metrics() -> RawMetrics:
-    return await HttpReporter().get()
-
-
-@app.get("/info/", tags=["info"])
-async def info() -> MachineInfo:
-    return await MachineInfoFactory.create_machine_info()
+app.include_router(v1.router)
 
 
 @app.get("/", include_in_schema=False)
