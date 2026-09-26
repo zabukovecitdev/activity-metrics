@@ -22,7 +22,10 @@ class ProcessedMetrics(RawMetrics):
 class Metric:
     timestamp: float | int
     name: str
+    type: str
+    unit: str
     value: float
     machine_id: str
     labels: dict
+    attributes: dict[str, str] | None = None
     tenant_id: int | None = None  # ponytail: multi-tenancy not wired up yet, fill in when it is
