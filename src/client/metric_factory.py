@@ -29,15 +29,18 @@ class MetricFactory:
         timestamp = time.time()
 
         metrics = [
-            Metric(timestamp=timestamp, name="cpu_usage", value=cpu_usage, machine_id=machine_id, labels=labels),
-            Metric(timestamp=timestamp, name="memory_usage", value=memory_usage, machine_id=machine_id, labels=labels),
-            Metric(timestamp=timestamp, name="memory_total", value=memory_total, machine_id=machine_id, labels=labels),
+            Metric(timestamp=timestamp, name="system.cpu.utilization", type="gauge", unit="%",
+                   value=cpu_usage, machine_id=machine_id, labels=labels),
+            Metric(timestamp=timestamp, name="system.memory.usage", type="gauge", unit="By",
+                   value=memory_usage, machine_id=machine_id, labels=labels),
+            Metric(timestamp=timestamp, name="system.memory.limit", type="gauge", unit="By",
+                   value=memory_total, machine_id=machine_id, labels=labels),
         ]
         if battery_percentage is not None:
-            metrics.append(Metric(timestamp=timestamp, name="battery_percentage", value=battery_percentage,
-                                   machine_id=machine_id, labels=labels))
+            metrics.append(Metric(timestamp=timestamp, name="system.battery.utilization", type="gauge", unit="%",
+                                   value=battery_percentage, machine_id=machine_id, labels=labels))
         if battery_charging is not None:
-            metrics.append(Metric(timestamp=timestamp, name="battery_charging", value=float(battery_charging),
-                                   machine_id=machine_id, labels=labels))
+            metrics.append(Metric(timestamp=timestamp, name="system.battery.charging", type="gauge", unit="1",
+                                   value=float(battery_charging), machine_id=machine_id, labels=labels))
 
         return metrics
