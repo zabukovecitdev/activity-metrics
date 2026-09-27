@@ -1,12 +1,13 @@
 import json
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import asdict
 
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
 
-from core.metrics import RawMetrics
+from core.metrics import Metric
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +30,12 @@ class KafkaConnector:
             topic=os.environ.get("KAFKA_RAW_METRICS_TOPIC", "raw_metrics"),
         )
 
-    def send(self, metrics: RawMetrics) -> None:
+    def send(self, metrics: Iterable[Metric]) -> None:
         try:
-            future = self._producer.send(self._topic, value=asdict(metrics), key=metrics.machine_id)
-            future.get(timeout=10)
+            # Queue every message before waiting, so a scrape costs one broker round trip, not one per metric.
+            futures = [self._producer.send(self._topic, value=asdict(m), key=m.machine_id) for m in metrics]
+            for future in futures:
+                future.get(timeout=10)
         except KafkaError:
             logger.exception("Failed to send metrics to Kafka")
             raise
