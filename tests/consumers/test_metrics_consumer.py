@@ -4,23 +4,22 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from consumers.metrics_consumer import MetricsConsumer
-from core.metrics import ProcessedMetrics
+from core.metrics import ProcessedMetric
 
 
 class LoopBreak(Exception):
     """Raised by a mocked poll() to terminate the consumer's infinite run loop."""
 
 
-def build_metrics(timestamp: float) -> ProcessedMetrics:
-    return ProcessedMetrics(
+def build_metrics(timestamp: float) -> ProcessedMetric:
+    return ProcessedMetric(
         timestamp=timestamp,
-        cpu_usage=15.0,
-        memory_usage=50.0,
-        memory_total=100.0,
-        labels={"name": "test"},
+        name="system.cpu.utilization",
+        type="gauge",
+        unit="%",
+        value=15.0,
         machine_id="machine-123",
-        battery_charging=True,
-        battery_percentage=80.0,
+        attributes={"core": "0"},
         is_anomaly=False,
     )
 
