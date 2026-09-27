@@ -17,7 +17,7 @@ def read_battery():
 class MetricFactory:
 
     @staticmethod
-    async def create_metrics(labels: dict) -> list[Metric]:
+    async def create_metrics() -> list[Metric]:
         cpu_usage: float = util.cpu_percent(interval=0.1)
         memory = util.virtual_memory()
         memory_total: int = memory.total
@@ -30,17 +30,17 @@ class MetricFactory:
 
         metrics = [
             Metric(timestamp=timestamp, name="system.cpu.utilization", type="gauge", unit="%",
-                   value=cpu_usage, machine_id=machine_id, labels=labels),
+                   value=cpu_usage, machine_id=machine_id),
             Metric(timestamp=timestamp, name="system.memory.usage", type="gauge", unit="By",
-                   value=memory_usage, machine_id=machine_id, labels=labels),
+                   value=memory_usage, machine_id=machine_id),
             Metric(timestamp=timestamp, name="system.memory.limit", type="gauge", unit="By",
-                   value=memory_total, machine_id=machine_id, labels=labels),
+                   value=memory_total, machine_id=machine_id),
         ]
         if battery_percentage is not None:
             metrics.append(Metric(timestamp=timestamp, name="system.battery.utilization", type="gauge", unit="%",
-                                   value=battery_percentage, machine_id=machine_id, labels=labels))
+                                   value=battery_percentage, machine_id=machine_id))
         if battery_charging is not None:
             metrics.append(Metric(timestamp=timestamp, name="system.battery.charging", type="gauge", unit="1",
-                                   value=float(battery_charging), machine_id=machine_id, labels=labels))
+                                   value=float(battery_charging), machine_id=machine_id))
 
         return metrics
