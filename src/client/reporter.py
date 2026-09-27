@@ -14,14 +14,14 @@ class BaseReporter(ABC):
 
 class ConsoleReporter(BaseReporter):
     async def report(self) -> None:
-        print(await MetricFactory.create_metrics({"name": "ConsoleReporter"}))
+        print(await MetricFactory.create_metrics())
 
 class KafkaReporter(BaseReporter):
     def __init__(self, connector: KafkaConnector):
         self._connector = connector
     async def report(self) -> None:
-        self._connector.send(await MetricFactory.create_metrics({"name": "KafkaReporter"}))
+        self._connector.send(await MetricFactory.create_metrics())
 
 class HttpReporter(BaseReporter):
     async def get(self) -> list[Metric]:
-        return await MetricFactory.create_metrics({"name": "HttpReporter"})
+        return await MetricFactory.create_metrics()
