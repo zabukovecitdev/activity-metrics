@@ -7,8 +7,8 @@ $(KAFKA_CONNECTOR_JAR):
 	curl -sSL -o $(KAFKA_CONNECTOR_JAR) $(KAFKA_CONNECTOR_URL)
 
 .PHONY: flink-example
-flink-example: $(KAFKA_CONNECTOR_JAR)
-	PYTHONPATH=src $(FLINK_PYTHON) flink-jobs/example_job.py
+mad: $(KAFKA_CONNECTOR_JAR)
+	PYTHONPATH=src $(FLINK_PYTHON) flink-jobs/metrics_aggregator.py
 
 .PHONY: client collector metrics-writer test
 client:
