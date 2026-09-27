@@ -3,16 +3,18 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Iterable
+from datetime import datetime
+from typing import Any
 
 import httpx
 from kafka.errors import KafkaError
 
 from connectors.kafka_connector import KafkaConnector
-from core.metrics import RawMetrics
+from core.metrics import Metric
 
 logger = logging.getLogger(__name__)
 
-SCRAPE_INTERVAL_SECONDS = 1
+SCRAPE_INTERVAL_SECONDS = 10
 CONNECT_TIMEOUT_SECONDS = 2
 READ_TIMEOUT_SECONDS = 2
 MAX_CONNECTIONS = 200
@@ -44,12 +46,14 @@ class Collector:
         try:
             response = await self._client.get(endpoint)
             response.raise_for_status()
+            metrics = parse_metrics(response.json())
         except httpx.HTTPError as e:
             logger.error("Failed to scrape metrics from %s: %s", endpoint, e)
             return
-
-        metrics = RawMetrics(**response.json())
-        print(metrics)
+        except (KeyError, TypeError, ValueError) as e:
+            # Caught here so one misbehaving client can't take down the whole gather.
+            logger.error("Malformed response from %s: %r", endpoint, e)
+            return
 
         try:
             # offloaded to a thread: KafkaProducer.send()/future.get() block,
@@ -66,3 +70,20 @@ class Collector:
 
     async def __aexit__(self, *exc) -> None:
         await self.aclose()
+
+
+def parse_metrics(payload: dict[str, Any]) -> list[Metric]:
+    machine_id = payload["machine_id"]
+    timestamp = datetime.fromisoformat(payload["timestamp"]).timestamp()
+    return [
+        Metric(
+            timestamp=timestamp,
+            name=m["name"],
+            type=m["type"],
+            unit=m["unit"],
+            value=float(m["value"]),
+            machine_id=machine_id,
+            attributes=m.get("attributes"),
+        )
+        for m in payload["metrics"]
+    ]
