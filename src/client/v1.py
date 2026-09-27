@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import machineid
 from fastapi import APIRouter
 
 from client.machine_info import Machine, MachineFactory
@@ -20,6 +21,7 @@ class MetricObservation:
 
 @dataclass
 class MetricsResponse:
+    machine_id: str
     timestamp: str
     metrics: list[MetricObservation]
 
@@ -38,6 +40,7 @@ async def machine() -> Machine:
 async def metrics() -> MetricsResponse:
     observations = await HttpReporter().get()
     return MetricsResponse(
+        machine_id=machineid.id(),
         timestamp=datetime.now(timezone.utc).isoformat(),
         metrics=[
             MetricObservation(name=m.name, type=m.type, unit=m.unit, value=m.value, attributes=m.attributes)
