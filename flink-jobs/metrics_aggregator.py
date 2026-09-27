@@ -19,10 +19,17 @@ from pyflink.datastream.functions import RuntimeContext, KeyedProcessFunction
 from pyflink.datastream.state import ListStateDescriptor
 
 from core.mad import MAD
-from core.metrics import ProcessedMetrics
+from core.metrics import ProcessedMetric
 
 ONE_HOUR_MS = 60 * 60 * 1000
 MIN_VALUES_FOR_MAD = 20
+# MAD only makes sense on gauges: a counter only ever grows, so its raw value
+# drifts away from the window median and would need a rate first. Among
+# gauges, MAD is meaningless for a 0/1 flag or a value that barely changes:
+# its median absolute deviation is 0, so every step (plugging in the charger,
+# battery dropping 1%) would be flagged. These pass through with
+# is_anomaly=False and keep no state.
+NOT_ANOMALY_SCORED = {"system.battery.charging", "system.battery.utilization", "system.memory.limit"}
 
 # Same jar version baked into the jobmanager/taskmanager image by
 # docker/flink/Dockerfile — local runs need it on the classpath too, since
@@ -34,29 +41,28 @@ KAFKA_CONNECTOR_JAR = os.environ.get(
 )
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094")
 
-# RawMetrics.timestamp is `time.time()` — epoch seconds, not an ISO-8601
+# Metric.timestamp is `time.time()` — epoch seconds, not an ISO-8601
 # instant — so the row type must be DOUBLE, and event time is derived from it
 # explicitly instead of relying on Kafka record timestamps.
 METRIC_FIELD_TYPES = {
     "timestamp": Types.DOUBLE(),
-    "cpu_usage": Types.DOUBLE(),
-    "memory_usage": Types.DOUBLE(),
-    "memory_total": Types.DOUBLE(),
-    "labels": Types.MAP(Types.STRING(), Types.STRING()),
+    "name": Types.STRING(),
+    "type": Types.STRING(),
+    "unit": Types.STRING(),
+    "value": Types.DOUBLE(),
     "machine_id": Types.STRING(),
-    "battery_charging": Types.BOOLEAN(),
-    "battery_percentage": Types.DOUBLE(),
+    "attributes": Types.MAP(Types.STRING(), Types.STRING()),
     "is_anomaly": Types.BOOLEAN(),
 }
-# The row schema follows ProcessedMetrics, which the consumer builds from this
+# The row schema follows ProcessedMetric, which the consumer builds from this
 # job's output. `is_anomaly` isn't produced by the collector — pyflink's Row
 # has a fixed schema, so the field has to be declared upfront (JSON
 # deserialization leaves it at its default) for AnomalyDetector to set it.
-METRIC_FIELD_NAMES = [field.name for field in fields(ProcessedMetrics)]
+METRIC_FIELD_NAMES = [field.name for field in fields(ProcessedMetric)]
 if set(METRIC_FIELD_NAMES) != set(METRIC_FIELD_TYPES):
     raise RuntimeError(
         f"METRIC_FIELD_TYPES {sorted(METRIC_FIELD_TYPES)} is out of sync with "
-        f"ProcessedMetrics {sorted(METRIC_FIELD_NAMES)}"
+        f"ProcessedMetric {sorted(METRIC_FIELD_NAMES)}"
     )
 METRIC_TYPE_INFO = Types.ROW_NAMED(METRIC_FIELD_NAMES, [METRIC_FIELD_TYPES[name] for name in METRIC_FIELD_NAMES])
 
@@ -67,30 +73,36 @@ class MetricTimestampAssigner(TimestampAssigner):
 
 
 class AnomalyDetector(KeyedProcessFunction):
-    """Evaluates every incoming metric against the last hour of values for
-    its machine_id, instead of batching a verdict once per sliding-window
+    """Evaluates every incoming metric against the last hour of values of
+    the same metric on the same machine (the stream is keyed by
+    (machine_id, name)), instead of batching a verdict once per sliding-window
     firing (which only scores whichever value happens to be last when the
     window closes, and can re-emit the same value across several firings)."""
 
     def open(self, runtime_context: RuntimeContext):
-        self.recent_cpu_usages = runtime_context.get_list_state(
-            ListStateDescriptor("recent_cpu_usages", Types.TUPLE([Types.LONG(), Types.DOUBLE()]))
+        self.recent_values = runtime_context.get_list_state(
+            ListStateDescriptor("recent_values", Types.TUPLE([Types.LONG(), Types.DOUBLE()]))
         )
         self.mad_detector = MAD()
 
     def process_element(self, value, ctx: 'KeyedProcessFunction.Context'):
+        if value["type"] != "gauge" or value["name"] in NOT_ANOMALY_SCORED:
+            value["is_anomaly"] = False
+            yield value
+            return
+
         event_time = ctx.timestamp()
         cutoff = event_time - ONE_HOUR_MS
 
-        window = [(t, cpu) for t, cpu in self.recent_cpu_usages.get() if t >= cutoff]
-        window.append((event_time, value["cpu_usage"]))
-        self.recent_cpu_usages.update(window)
+        window = [(t, v) for t, v in self.recent_values.get() if t >= cutoff]
+        window.append((event_time, value["value"]))
+        self.recent_values.update(window)
 
-        cpu_usages = [cpu for _, cpu in window]
-        if len(cpu_usages) < MIN_VALUES_FOR_MAD:
+        values = [v for _, v in window]
+        if len(values) < MIN_VALUES_FOR_MAD:
             value["is_anomaly"] = False
         else:
-            value["is_anomaly"] = self.mad_detector.is_anomaly(cpu_usages)
+            value["is_anomaly"] = self.mad_detector.is_anomaly(values)
         yield value
 
 
@@ -109,9 +121,11 @@ def detect_anomalies():
     # explicitly or the job dies immediately with ModuleNotFoundError: pyflink.
     env.set_python_executable(sys.executable)
 
-    # The raw metrics topic has a single partition (docker-compose default);
-    # extra parallel Kafka source subtasks would just sit idle.
-    env.set_parallelism(1)
+    # The raw metrics topic has a single partition (docker-compose default),
+    # so one of the two Kafka source subtasks sits idle; the parallelism pays
+    # off after key_by, where the (machine_id, name) keys and their MAD state
+    # are split across two AnomalyDetector subtasks.
+    env.set_parallelism(2)
 
     deserialization_schema = JsonRowDeserializationSchema.builder() \
         .type_info(METRIC_TYPE_INFO) \
@@ -130,7 +144,10 @@ def detect_anomalies():
 
     metrics = env.from_source(source, watermark_strategy, "Kafka Source")
 
-    anomaly_processed_metrics = (metrics.key_by(lambda t: t["machine_id"])
+    # Kafka partitions by machine_id (per-machine ordering); state here is
+    # finer-grained so each metric gets its own MAD history.
+    anomaly_processed_metrics = (metrics.key_by(lambda t: (t["machine_id"], t["name"]),
+                                                key_type=Types.TUPLE([Types.STRING(), Types.STRING()]))
                                  .process(AnomalyDetector(), output_type=METRIC_TYPE_INFO))
 
     sink = KafkaSink.builder() \
