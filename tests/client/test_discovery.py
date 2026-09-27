@@ -11,4 +11,4 @@ def test_clients_with_same_hostname_get_unique_names():
     assert a.server != b.server
     assert a.name == f"laptop-aaaaaaaa1111.{SERVICE_TYPE}"
     assert a.parsed_addresses() == ["192.168.1.10"]
-    assert a.properties[b"path"] == b"/metrics/"
+    assert a.properties[b"path"] == b"/v1/metrics"

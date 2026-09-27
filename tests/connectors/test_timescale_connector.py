@@ -4,20 +4,19 @@ from unittest.mock import MagicMock, patch
 import psycopg
 import pytest
 
-from core.metrics import ProcessedMetrics
+from core.metrics import ProcessedMetric
 from connectors.timescale_connector import TimescaleConnector
 
 
-def build_metrics(timestamp: float = 1.0) -> ProcessedMetrics:
-    return ProcessedMetrics(
+def build_metrics(timestamp: float = 1.0) -> ProcessedMetric:
+    return ProcessedMetric(
         timestamp=timestamp,
-        cpu_usage=15.0,
-        memory_usage=50.0,
-        memory_total=100.0,
-        labels={"name": "test"},
+        name="system.cpu.utilization",
+        type="gauge",
+        unit="%",
+        value=15.0,
         machine_id="machine-123",
-        battery_charging=True,
-        battery_percentage=80.0,
+        attributes={"core": "0"},
         is_anomaly=False,
     )
 
@@ -54,6 +53,21 @@ def test_insert_batch_passes_a_value_for_every_sql_placeholder():
     sql, rows = cursor.executemany.call_args.args
     placeholders = set(re.findall(r"%\((\w+)\)s", sql))
     assert placeholders == set(rows[0])
+
+
+def test_insert_batch_stores_missing_attributes_as_empty_object():
+    connection = build_connection()
+    metric = build_metrics()
+    metric.attributes = None
+
+    with patch("connectors.timescale_connector.psycopg.connect", return_value=connection):
+        connector = TimescaleConnector(dsn="dsn")
+        connector.connect()
+        connector.insert_batch([metric])
+
+    cursor = connection.cursor.return_value.__enter__.return_value
+    _, rows = cursor.executemany.call_args.args
+    assert rows[0]["attributes"].obj == {}
 
 
 def test_insert_batch_skips_empty_batch():
