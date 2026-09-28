@@ -49,11 +49,13 @@ The tree under `src/activityreporter/` is split by process, with a service modul
 | `shared/discovery.py` | mDNS service type and metrics path. |
 | `shared/clickhouse.py` | Async ClickHouse client. |
 
-Imports, console scripts, the Hatch package list, and tests still use the module names from before this move (`client`, `collector`, `connectors`, `consumers`, `core`). The map and the commands that depend on it are in [docs/operations.md](docs/operations.md).
+Imports, console scripts, the Hatch package list, and tests still use the module names from before this move (`client`, `collector`, `connectors`, `consumers`, `core`). `uv build` and `uv run` install a wheel that contains only dist-info, so those imports raise `ModuleNotFoundError`. The map and the commands that depend on it are in [docs/operations.md](docs/operations.md).
 
 ## HTTP API
 
-Interactive docs: `GET /` redirects to `/docs`.
+The agent process does not reach these routes. `agent/main.py` imports `client.v1` and `client.discovery`. `agent/api.py` imports `client.reporter.HttpReporter` and `client.machine_info.Machine` / `MachineFactory`. Those modules were removed in the layout move, so importing the app raises `ModuleNotFoundError`. The shapes below are what the route functions and factories in the tree return once those imports resolve. See [docs/operations.md](docs/operations.md).
+
+Interactive docs, when the app is running: `GET /` redirects to `/docs`.
 
 | Method | Path | Body |
 | --- | --- | --- |
@@ -61,7 +63,7 @@ Interactive docs: `GET /` redirects to `/docs`.
 | `GET` | `/v1/machine` | `Machine` from `agent/models.py` |
 | `GET` | `/v1/metrics` | One snapshot of current gauges |
 
-`/v1/machine` fields: `machine_id`, `hostname`, `os` (lowercased `platform.system()`), `os_version`, `architecture`, `cores`, `total_disk_memory`, `total_memory`, `uptime` (seconds since boot), `last_boot` (UTC ISO-8601). `machine_id` comes from `machineid.id()`.
+`/v1/machine` is built by `MachineFactory.create_machine()` in `agent/models.py`. Fields: `machine_id`, `hostname`, `os` (lowercased `platform.system()`), `os_version`, `architecture`, `cores`, `total_disk_memory`, `total_memory`, `uptime` (seconds since boot), `last_boot` (UTC ISO-8601). `machine_id` comes from `machineid.id()`. `cores` is `psutil.cpu_count()` (logical CPUs, or `None` when the count is unavailable). `total_memory` is `psutil.virtual_memory().total` bytes. `total_disk_memory` is `psutil.disk_usage` of `os.sep`: total bytes on the root filesystem, not RAM.
 
 `/v1/metrics` response:
 
@@ -81,11 +83,11 @@ Interactive docs: `GET /` redirects to `/docs`.
 }
 ```
 
-`timestamp` is UTC `datetime.now().isoformat()`. Each observation is produced by `MetricFactory.create_metrics()`.
+`timestamp` is `datetime.now(timezone.utc).isoformat()` (UTC, with a `+00:00` offset). The handler does not call `MetricFactory`. It calls `HttpReporter().get()` and copies `name`, `type`, `unit`, `value`, and `attributes` from each returned object. `MetricFactory.create_metrics()` in `agent/service.py` is the sampler that used to sit behind `HttpReporter`, and it stamps each `Metric` with `time.time()`. The route drops that timestamp and uses the response clock instead. `create_metrics()` takes no arguments.
 
 | Name | Unit | When present |
 | --- | --- | --- |
-| `system.cpu.utilization` | `%` | Always. `psutil.cpu_percent(interval=0.1)`, so the handler blocks about 100 ms. |
+| `system.cpu.utilization` | `%` | Always. `psutil.cpu_percent(interval=0.1)` in `MetricFactory`, which blocks the caller for about 100 ms. |
 | `system.memory.usage` | `By` | Always. Bytes used. |
 | `system.memory.limit` | `By` | Always. Bytes total. |
 | `system.battery.utilization` | `%` | Only when `psutil.sensors_battery()` returns a battery. |
@@ -99,7 +101,11 @@ Interactive docs: `GET /` redirects to `/docs`.
 
 Agents advertise `_activityrep._tcp.local.` The service type is shorter than `_activityreporter` because RFC 6335 limits service names to 15 bytes.
 
-The instance name is `{hostname label}-{first 12 characters of the machine id with dashes removed}` on that type. The hostname label is the first DNS label, truncated to 40 characters. TXT properties:
+The instance name is `{hostname label}-{first 12 characters of the machine id with dashes removed}` on that type. The hostname label is the first DNS label, truncated to 40 characters. The mDNS server name is `activityreporter-{short_id}.local.`. Registration passes `allow_name_change=True`, so a name collision renames the instance instead of failing startup.
+
+The advertised address comes from `lan_ip()`: a UDP socket connected to `10.255.255.255:1`, then the socket's local address. If that connect raises `OSError`, the address is `127.0.0.1`. The collector will scrape that address as-is.
+
+TXT properties:
 
 | Key | Value |
 | --- | --- |
@@ -119,7 +125,7 @@ A non-2xx response, a transport error, or a payload that fails parsing is logged
 
 Required JSON fields: `machine_id` (string), `timestamp` (ISO-8601), `metrics` (array of objects with `name`, `type`, `unit`, `value`). `attributes` is optional. The shared timestamp is converted with `datetime.fromisoformat(...).timestamp()` and copied onto every `Metric`. `value` is cast with `float()`.
 
-Each `Metric` is published to Kafka as JSON (`dataclasses.asdict`), keyed by `machine_id`. Producer settings: `acks=all`, `retries=3`, send timeout 10 seconds. The producer is flushed and closed on the way out of `main`, including `SIGTERM` (installed as the default interrupt handler).
+Each `Metric` is published to Kafka as JSON (`dataclasses.asdict`), keyed by `machine_id`. Producer settings: `acks=all`, `retries=3`, send timeout 10 seconds. `send` runs in a worker thread (`asyncio.to_thread`) because `KafkaProducer.send` and `future.get` block; a blocking call on the event loop would stall the other scrapes in that round. The producer is flushed and closed on the way out of `main`, including `SIGTERM` (installed as the default interrupt handler).
 
 Kafka record shape:
 
@@ -152,6 +158,7 @@ Scoring rules in `AnomalyDetector.process_element`:
 - `type` other than `gauge`, and the names `system.battery.charging`, `system.battery.utilization`, and `system.memory.limit`, are passed through with `is_anomaly=false` and no state. Those series are flags or values that barely move, so a modified z-score flags ordinary steps.
 - Fewer than 20 values in the hour window sets `is_anomaly=false`.
 - Otherwise `MAD.is_anomaly` scores the latest value against the window.
+- The scored stream is both printed and sunk. `print()` writes every row to the taskmanager stdout. The Kafka sink sets the topic and a JSON value serializer only, so `processed_metrics` records have a null key.
 
 `MAD` (`anomaly_detector/mad.py`):
 
@@ -167,7 +174,7 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 `metrics_writer/service.py` reads `KAFKA_PROCESSED_METRICS_TOPIC` (default `processed_metrics`) in group `KAFKA_CONSUMER_GROUP_ID` (default `timescale-writer`). Auto-commit is off. Offset reset is `earliest`.
 
-Records are decoded as JSON into `ProcessedMetric`. A batch flushes when it reaches `CONSUMER_BATCH_SIZE` (default 100) or when `CONSUMER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into `ProcessedMetric`. A batch flushes when it reaches `CONSUMER_BATCH_SIZE` (default 100) or when `CONSUMER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. The loop polls for 1 second (`POLL_TIMEOUT_MS`). `SIGTERM` sets a stop flag that is checked after the current poll returns, then flushes a partial batch. An empty poll does not write or commit.
 
 `insert_batch` writes the TimescaleDB `metrics` table, then the consumer commits offsets. A failed insert leaves the offsets uncommitted so the batch is replayed. The insert is idempotent:
 
@@ -185,10 +192,10 @@ Flyway runs `db/migrations` against TimescaleDB (`activityreporter` database) fr
 
 | Migration | Effect |
 | --- | --- |
-| V1 | `raw_metrics` hypertable, wide CPU/memory columns. |
+| V1 | Creates the `timescaledb` extension and hypertable `raw_metrics`: `machine_id`, `timestamp`, `cpu_usage`, `memory_usage`, `memory_total`, `labels` (JSONB), `ingested_at`. Primary key `(machine_id, timestamp)`. |
 | V2 | 24-hour retention on `raw_metrics`. |
-| V3 | `raw_metrics.is_anomaly` (default false). |
-| V4 | Nullable `battery_charging` and `battery_percentage` on `raw_metrics`. |
+| V3 | `raw_metrics.is_anomaly` boolean, default false. |
+| V4 | Nullable `battery_charging` (boolean) and `battery_percentage` (double precision) on `raw_metrics`. |
 | V5 | `metrics` hypertable in long form, 24-hour retention. This is the table the writer inserts into. |
 
 V5 leaves `raw_metrics` in place. Current collector and writer code do not insert into it. Query `metrics` for samples produced by this pipeline.
@@ -197,4 +204,4 @@ V5 leaves `raw_metrics` in place. Current collector and writer code do not inser
 
 ## Tests
 
-Tests mirror the package directories (`tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/metrics_writer`) and import the pre-move module names. `make test` runs `uv run pytest`.
+Tests mirror the package directories (`tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/metrics_writer`) and import the pre-move module names. `make test` runs `uv run pytest`. Collection fails on all eight modules with `ModuleNotFoundError` (`client`, `collector`, `core`, or `consumers`) before any test body runs.
