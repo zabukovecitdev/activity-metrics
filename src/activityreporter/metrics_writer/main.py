@@ -1,8 +1,8 @@
 import logging
 import signal
 
-from connectors.timescale_connector import TimescaleConnector
-from consumers.metrics_consumer import MetricsConsumer
+from activityreporter.metrics_writer.repository import TimescaleConnector
+from activityreporter.metrics_writer.service import MetricsConsumer
 
 logging.basicConfig(
     level=logging.INFO,

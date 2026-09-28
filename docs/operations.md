@@ -21,13 +21,13 @@ Process commands from the `Makefile`:
 
 | Target | Command | Entry module in `pyproject.toml` |
 | --- | --- | --- |
-| `client` | `uv run activityreporter` | `client.main:cli` |
-| `collector` | `uv run collector` | `collector.main:cli` |
-| `metrics-writer` | `uv run metrics-writer` | `consumers.main:main` |
+| `client` | `uv run activityreporter` | `activityreporter.agent.main:cli` |
+| `collector` | `uv run collector` | `activityreporter.collector.main:cli` |
+| `metrics-writer` | `uv run metrics-writer` | `activityreporter.metrics_writer.main:main` |
 | `test` | `uv run pytest` | |
-| `mad` | `flink-jobs/.venv/bin/python flink-jobs/metrics_aggregator.py` | Job file now lives at `src/activityreporter/anomaly_detector/main.py` |
+| `mad` | `flink-jobs/.venv/bin/python src/activityreporter/anomaly_detector/main.py` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
-`mad` also downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink-jobs/lib/`. The job's default jar path is next to `anomaly_detector/main.py` (`anomaly_detector/lib/...`), not `flink-jobs/lib/`.
+`mad` downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink-jobs/lib/` and exports that absolute path as `KAFKA_CONNECTOR_JAR`. Without the variable, the job looks next to `anomaly_detector/main.py`.
 
 ## Environment
 
@@ -91,7 +91,7 @@ From the host, Timescale is `localhost:5433` with the same database, user, and p
 
 ## Flink jobs
 
-`jobmanager` and `taskmanager` mount `./flink-jobs` at `/opt/flink/jobs`. `flink-jobs-submitter` runs `docker/flink/submit-jobs.sh`, which submits every `/opt/flink/jobs/*.py` with `-pyfs /opt/flink/src` (the repo `src/` tree) and `-d`. The job Python file is `src/activityreporter/anomaly_detector/main.py`, so the submitter does not see it in `/opt/flink/jobs`.
+`jobmanager` and `taskmanager` mount `./flink-jobs` at `/opt/flink/jobs`. `flink-jobs-submitter` runs `docker/flink/submit-jobs.sh`, which submits `src/activityreporter/anomaly_detector/main.py` (mounted at `/opt/flink/src`) and any extra `/opt/flink/jobs/*.py`, with `-pyfs /opt/flink/src` and `-d`.
 
 The submitter waits until `flink list -m jobmanager:8081` succeeds. If the cluster already has a running job, it prints `Cluster already has running jobs, skipping submission.` and exits 0. To submit again, cancel the job in the Web UI at `http://localhost:8081`, then:
 
@@ -110,24 +110,17 @@ Give the Flink source and the writer different consumer groups. Both start at `e
 
 Task slots on the taskmanager: 2, matching the job parallelism.
 
-## Packaging after the layout move
+## Packaging
 
-Files live under `src/activityreporter/`. These references still use the previous locations:
+The wheel contains `src/activityreporter`. Console scripts:
 
-| Still configured as | Current file |
+| Script | Entry |
 | --- | --- |
-| `client.main:cli` | `activityreporter/agent/main.py` (`cli`) |
-| `collector.main:cli` | `activityreporter/collector/main.py` (`cli`) |
-| `consumers.main:main` | `activityreporter/metrics_writer/main.py` (`main`) |
-| Hatch wheel packages `src/client`, `src/collector`, `src/connectors`, `src/consumers`, `src/core` | Those directories are gone. The wheel config does not list `src/activityreporter`. |
-| `docker/collector/Dockerfile`, `docker/consumer/Dockerfile` | Removed. `docker-compose.yml` still builds the collector and metrics-writer from those paths. The root `Dockerfile` remains and starts `activityreporter`. |
-| `flink-jobs/metrics_aggregator.py` | `src/activityreporter/anomaly_detector/main.py` |
-| `from client.reporter import HttpReporter` and `from client.machine_info import Machine, MachineFactory` in `agent/api.py` | `reporter.py` was removed. `Machine` and `MachineFactory` are in `agent/models.py`. Sampling is `MetricFactory` in `agent/service.py`. |
-| `from core.errors.insufficient_data_error import InsufficientDataError` in `anomaly_detector/mad.py` | That module was removed. |
+| `activityreporter` | `activityreporter.agent.main:cli` |
+| `collector` | `activityreporter.collector.main:cli` |
+| `metrics-writer` | `activityreporter.metrics_writer.main:main` |
 
-Other imports inside the moved files follow the same old top-level names (`client`, `collector`, `connectors`, `consumers`, `core`). Tests patch and import those names (`client.metric_factory`, `collector.collector`, `consumers.metrics_consumer`, `connectors.timescale_connector`, `core.mad`, `core.discovery`, `core.metrics`).
-
-There are no `__init__.py` files under `src/activityreporter/`.
+`docker/collector/Dockerfile` and `docker/consumer/Dockerfile` install that wheel and start `collector` and `metrics-writer`. The root `Dockerfile` starts `activityreporter`. The anomaly detector is `src/activityreporter/anomaly_detector/main.py`. `/v1/metrics` is sampled by `MetricFactory` in `agent/service.py`. `InsufficientDataError` lives in `anomaly_detector/errors.py`.
 
 ## Troubleshooting
 
@@ -145,6 +138,6 @@ There are no `__init__.py` files under `src/activityreporter/`.
 
 **Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The submitter must leave `KAFKA_CONNECTOR_JAR` empty so the image copy is the only one on the classpath.
 
-**Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), a `*.py` under the jobs mount failed (`Failed to submit ...`), or a job is already running and submission was skipped. The jobs mount is `./flink-jobs`, which this tree no longer contains; Compose will create an empty directory, and the submitter then has nothing to submit.
+**Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), a job file failed (`Failed to submit ...`), or a job is already running and submission was skipped. The anomaly detector is submitted from `/opt/flink/src/activityreporter/anomaly_detector/main.py` even when `./flink-jobs` is empty.
 
 **`make run` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. TimescaleDB rows in `metrics` remain, subject to the 24-hour retention policy.
