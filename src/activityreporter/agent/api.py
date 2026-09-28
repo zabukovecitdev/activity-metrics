@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 import machineid
 from fastapi import APIRouter
 
-from client.machine_info import Machine, MachineFactory
-from client.reporter import HttpReporter
+from activityreporter.agent.models import Machine, MachineFactory
+from activityreporter.agent.service import MetricFactory
 
 router = APIRouter(prefix="/v1")
 
@@ -38,7 +38,7 @@ async def machine() -> Machine:
 
 @router.get("/metrics", tags=["metrics"])
 async def metrics() -> MetricsResponse:
-    observations = await HttpReporter().get()
+    observations = await MetricFactory.create_metrics()
     return MetricsResponse(
         machine_id=machineid.id(),
         timestamp=datetime.now(timezone.utc).isoformat(),

@@ -7,7 +7,7 @@ from dataclasses import asdict
 from kafka import KafkaProducer
 from kafka.errors import KafkaError
 
-from core.metrics import Metric
+from activityreporter.shared.metrics import Metric
 
 logger = logging.getLogger(__name__)
 

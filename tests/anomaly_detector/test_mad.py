@@ -1,7 +1,6 @@
 import pytest
 
-from core.errors.insufficient_data_error import InsufficientDataError
-from core.mad import MAD
+from activityreporter.anomaly_detector.mad import InsufficientDataError, MAD
 
 
 def test_mad_is_anomaly_returns_false_when_value_close_to_median():

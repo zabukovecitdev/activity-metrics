@@ -5,8 +5,8 @@ import uvicorn
 from fastapi import FastAPI
 from starlette.responses import RedirectResponse
 
-from client import v1
-from client.discovery import ServiceAdvertiser
+from activityreporter.agent.api import router
+from activityreporter.agent.discovery import ServiceAdvertiser
 
 PORT = 8080
 
@@ -18,7 +18,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-app.include_router(v1.router)
+app.include_router(router)
 
 
 @app.get("/", include_in_schema=False)

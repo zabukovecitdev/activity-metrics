@@ -18,8 +18,8 @@ from pyflink.datastream.formats.json import JsonRowDeserializationSchema, JsonRo
 from pyflink.datastream.functions import RuntimeContext, KeyedProcessFunction
 from pyflink.datastream.state import ListStateDescriptor
 
-from core.mad import MAD
-from core.metrics import ProcessedMetric
+from activityreporter.anomaly_detector.mad import MAD
+from activityreporter.shared.metrics import ProcessedMetric
 
 ONE_HOUR_MS = 60 * 60 * 1000
 MIN_VALUES_FOR_MAD = 20
@@ -35,10 +35,14 @@ NOT_ANOMALY_SCORED = {"system.battery.charging", "system.battery.utilization", "
 # docker/flink/Dockerfile — local runs need it on the classpath too, since
 # apache-flink's bundled jars don't include the Kafka connector. The docker
 # submitter sets this to "" so the image's copy isn't loaded a second time.
-KAFKA_CONNECTOR_JAR = os.environ.get(
-    "KAFKA_CONNECTOR_JAR",
-    str(Path(__file__).parent / "lib" / "flink-sql-connector-kafka-3.2.0-1.19.jar"),
+# The job used to live in flink-jobs/, next to lib/; it now lives under src/.
+_DEFAULT_KAFKA_CONNECTOR_JAR = (
+    Path(__file__).resolve().parents[3]
+    / "flink-jobs"
+    / "lib"
+    / "flink-sql-connector-kafka-3.2.0-1.19.jar"
 )
+KAFKA_CONNECTOR_JAR = os.environ.get("KAFKA_CONNECTOR_JAR", str(_DEFAULT_KAFKA_CONNECTOR_JAR))
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094")
 
 # Metric.timestamp is `time.time()` — epoch seconds, not an ISO-8601

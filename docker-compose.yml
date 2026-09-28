@@ -82,10 +82,9 @@ services:
       - timescaledb
 
   collector:
-    build:
-      context: .
-      dockerfile: docker/collector/Dockerfile
+    build: .
     image: activityreporter-collector:latest
+    command: ["collector"]
     container_name: collector
     restart: unless-stopped
     # mDNS multicast doesn't cross the Docker bridge, so the collector joins the host's
@@ -103,10 +102,9 @@ services:
       - activityreporter
 
   metrics-writer:
-    build:
-      context: .
-      dockerfile: docker/consumer/Dockerfile
+    build: .
     image: activityreporter-consumer:latest
+    command: ["metrics-writer"]
     container_name: metrics-writer
     restart: unless-stopped
     environment:
