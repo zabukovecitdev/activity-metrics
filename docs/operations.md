@@ -76,7 +76,7 @@ The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The 
 
 ## Migrations
 
-The `migrate` service runs `migrate/migrate` with `up` on every `make up`, after the ClickHouse healthcheck passes. It connects over the native protocol (`clickhouse:9000`) with `x-multi-statement=true` (several statements per file) and `x-migrations-table-engine=MergeTree` (otherwise `schema_migrations` is a `TinyLog`). The URL lives once, in the service's `DATABASE_URL`; `docker compose run --rm migrate <args>` passes any CLI arguments through, which is what `make migrate`, `make migrate-down`, and `make migrate-new name=<name>` do.
+The `migrate` service runs `migrate/migrate` with `up` on every `make up`, after `clickhouse-init` creates the `metrics` database. ClickHouse 24.1 does not apply `CLICKHOUSE_DB` on a fresh data directory, and `migrate` exits if that database is missing. It connects over the native protocol (`clickhouse:9000`) with `x-multi-statement=true` (several statements per file) and `x-migrations-table-engine=MergeTree` (otherwise `schema_migrations` is a `TinyLog`). The URL lives once, in the service's `DATABASE_URL`; `docker compose run --rm migrate <args>` passes any CLI arguments through, which is what `make migrate`, `make migrate-down`, and `make migrate-new name=<name>` do.
 
 Writing a migration:
 
