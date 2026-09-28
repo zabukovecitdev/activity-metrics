@@ -22,8 +22,6 @@ def metrics_url(info: AsyncServiceInfo) -> str | None:
 
 
 class ServiceDiscovery(ServiceListener):
-    """Tracks the metrics URLs of every client advertising SERVICE_TYPE on the LAN."""
-
     def __init__(self):
         self._urls: dict[str, str] = {}
         self._resolving: dict[str, asyncio.Task] = {}
@@ -39,7 +37,6 @@ class ServiceDiscovery(ServiceListener):
         self._schedule_resolve(type_, name)
 
     def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
-        # Fires when a client's address or port changes, e.g. after a DHCP renewal.
         self._schedule_resolve(type_, name)
 
     def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import os
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -47,6 +49,8 @@ class ClickHouseConnector:
 async def main() -> None:
     async with await ClickHouseConnector.from_env() as connector:
         result = await connector.query("SELECT version()")
+        data = [datetime.datetime.now(), "metric_example", 1.123, "Gauge", "%", "machine_1"]
+        await connector.insert("metrics", rows=[data], column_names=["timestamp", "name", "value", "type", "unit", "machine_id", ])
         print(result.result_rows)
 
 

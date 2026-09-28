@@ -1,18 +1,11 @@
-FLINK_PYTHON := flink-jobs/.venv/bin/python
-KAFKA_CONNECTOR_JAR := flink-jobs/lib/flink-sql-connector-kafka-3.2.0-1.19.jar
+FLINK_PYTHON := flink/.venv/bin/python
+KAFKA_CONNECTOR_JAR := flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar
 KAFKA_CONNECTOR_URL := https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.2.0-1.19/flink-sql-connector-kafka-3.2.0-1.19.jar
 
-$(KAFKA_CONNECTOR_JAR):
-	mkdir -p $(dir $(KAFKA_CONNECTOR_JAR))
-	curl -sSL -o $(KAFKA_CONNECTOR_JAR) $(KAFKA_CONNECTOR_URL)
+.PHONY: agent collector metrics-writer anomaly-detector test up down
 
-.PHONY: mad
-mad: $(KAFKA_CONNECTOR_JAR)
-	PYTHONPATH=src KAFKA_CONNECTOR_JAR=$(abspath $(KAFKA_CONNECTOR_JAR)) $(FLINK_PYTHON) src/activityreporter/anomaly_detector/main.py
-
-.PHONY: client collector metrics-writer test
-client:
-	uv run activityreporter
+agent:
+	uv run agent
 
 collector:
 	uv run collector
@@ -20,13 +13,22 @@ collector:
 metrics-writer:
 	uv run metrics-writer
 
+anomaly-detector: $(FLINK_PYTHON) $(KAFKA_CONNECTOR_JAR)
+	PYTHONPATH=src KAFKA_CONNECTOR_JAR=$(abspath $(KAFKA_CONNECTOR_JAR)) $(FLINK_PYTHON) -m activityreporter.anomaly_detector.main
+
+$(FLINK_PYTHON):
+	python3.11 -m venv flink/.venv
+	flink/.venv/bin/pip install apache-flink==1.19.1
+
+$(KAFKA_CONNECTOR_JAR):
+	mkdir -p $(dir $(KAFKA_CONNECTOR_JAR))
+	curl -sSL -o $(KAFKA_CONNECTOR_JAR) $(KAFKA_CONNECTOR_URL)
+
 test:
 	uv run pytest
 
-# Starts the whole stack, or restarts it from scratch if it's already running.
 # Kafka has no volume, so topics and offsets are reset; TimescaleDB data is kept.
-.PHONY: run down
-run:
+up:
 	docker compose down --remove-orphans
 	docker compose up -d --build
 

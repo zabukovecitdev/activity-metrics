@@ -4,7 +4,7 @@ import os
 import signal
 
 from activityreporter.collector.discovery import ServiceDiscovery
-from activityreporter.collector.repository import KafkaConnector
+from activityreporter.collector.repository import HttpAgentMetricsRepository, KafkaRawMetricsRepository
 from activityreporter.collector.service import Collector
 
 
@@ -14,14 +14,12 @@ def static_endpoints(raw: str) -> set[str]:
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    # Clients found over mDNS are scraped together with COLLECTOR_ENDPOINTS, which
-    # covers clients mDNS can't reach, e.g. across a Docker bridge network.
     endpoints = static_endpoints(os.environ.get("COLLECTOR_ENDPOINTS", ""))
     logging.info("Static endpoints: %s", sorted(endpoints) or "none")
-    with KafkaConnector.from_env() as connector:
-        async with ServiceDiscovery() as discovery:
-            async with Collector(lambda: endpoints | discovery.urls(), connector) as collector:
-                await collector.run()
+    with KafkaRawMetricsRepository.from_env() as raw_metrics:
+        async with ServiceDiscovery() as discovery, HttpAgentMetricsRepository() as agent_metrics:
+            collector = Collector(lambda: endpoints | discovery.urls(), agent_metrics, raw_metrics)
+            await collector.run()
 
 
 def cli() -> None:
