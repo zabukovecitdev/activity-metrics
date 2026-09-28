@@ -81,7 +81,7 @@ Interactive docs: `GET /` redirects to `/docs`.
 }
 ```
 
-`timestamp` is UTC `datetime.now().isoformat()`. Each observation is produced by `MetricFactory.create_metrics()`.
+`timestamp` is `datetime.now(timezone.utc).isoformat()`. Each observation is produced by `MetricFactory.create_metrics()`.
 
 | Name | Unit | When present |
 | --- | --- | --- |
@@ -155,9 +155,11 @@ Scoring rules in `AnomalyDetector.process_element`:
 
 `MAD` (`anomaly_detector/mad.py`):
 
-- Needs at least 2 values. `is_anomaly` raises `InsufficientDataError` from `anomaly_detector/errors.py` below that count. The Flink operator does not call `MAD` below 20 values. The returned flag is a Python `bool`; a `numpy.bool_` cannot be encoded by PyFlink's boolean coder.
+- Needs at least 2 values. `is_anomaly` raises `InsufficientDataError` from `anomaly_detector/errors.py` below that count. The Flink operator does not call `MAD` below 20 values. Both return sites are `bool(...)`. A `numpy.bool_` cannot be encoded by PyFlink's boolean coder (`chr()` rejects it) and fails the task the first time a series is scored.
 - Modified z-score uses scale `1.4826` and threshold `3.5`.
 - When the median absolute deviation is 0, the last value is an anomaly when it differs from the median.
+
+The sink serializes the row as JSON and does not set a Kafka key. `anomaly_processed_metrics.print()` logs each scored row on the taskmanager. Local `make mad` (separate 3.8–3.11 venv, `PYTHONPATH=src`, connector jar path) is in [docs/operations.md](docs/operations.md).
 
 The row schema matches `ProcessedMetric` (`Metric` fields plus `is_anomaly`). The collector does not send `is_anomaly`; the JSON row deserializer leaves it at the boolean default so the operator can set it. `METRIC_FIELD_TYPES` must name the same fields as `ProcessedMetric` or the job raises `RuntimeError` at import.
 
