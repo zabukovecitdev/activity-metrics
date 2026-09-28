@@ -4,22 +4,24 @@
 agent ──HTTP──▶ collector ──▶ Kafka raw_metrics ──▶ anomaly_detector (Flink) ──▶ Kafka processed_metrics ──▶ metrics_writer ──▶ TimescaleDB
 ```
 
+The package requires Python 3.14+ (`requires-python` in `pyproject.toml`, image `python:3.14-slim`). Agent, collector, and metrics writer are console scripts run with `uv`. The Flink job is not: PyFlink 1.19 needs CPython 3.8–3.11, and `make anomaly-detector` creates `flink/.venv` with `python3.11`.
+
 ## Project layout
 
-One package, `src/activityreporter/`, split by application. Every application has the same shape:
+One package, `src/activityreporter/`. `service.py` is the workflow. `repository.py` is the only module that reads the host or talks to HTTP, Kafka, or TimescaleDB. `main.py` wires those pieces and starts the process.
 
-| File            | Layer        | Holds                                                         |
-|-----------------|--------------|---------------------------------------------------------------|
-| `main.py`       | entrypoint   | wiring and process start (`cli()`), nothing else              |
-| `api.py`        | entrypoint   | HTTP routes (agent only)                                      |
-| `service.py`    | service      | the application's logic                                       |
-| `repository.py` | data access  | every read/write of data, one `<Source><Data>Repository` each |
-| `discovery.py`  | infra        | mDNS advertising / browsing                                   |
-| `models.py`     | domain       | types used only by this application                           |
+| Application | `repository.py` |
+| --- | --- |
+| `agent` | Functions, not a class: `read_machine_id`, `read_cpu_utilization`, `read_memory`, `read_battery`, `read_machine` (psutil and `machineid`). |
+| `collector` | `HttpAgentMetricsRepository` (GET and parse) and `KafkaRawMetricsRepository` (produce to `raw_metrics`). |
+| `anomaly_detector` | `kafka_raw_metrics_source`, `kafka_processed_metrics_sink`, and `event_time_watermarks`. Bootstrap servers, topic names, and group `flink-metrics-aggregator` are read when this module is imported. |
+| `metrics_writer` | `KafkaProcessedMetricsRepository` (consume) and `TimescaleMetricsRepository` (insert). |
+
+`api.py`, `discovery.py`, and `models.py` are not on every application. The agent has all three (`Machine` in `models.py`, mDNS advertise in `discovery.py`, routes in `api.py`). The collector has `discovery.py` (mDNS browse). The anomaly detector also has `mad.py` and `errors.py`.
 
 ```
 src/activityreporter/
-  shared/            code used by more than one application: Metric, mDNS constants, ClickHouse client
+  shared/            Metric, ProcessedMetric, mDNS constants, ClickHouse client (no pipeline caller)
   agent/             runs on every machine, serves /v1/metrics
   collector/         scrapes agents, publishes to raw_metrics
   anomaly_detector/  PyFlink job, raw_metrics → processed_metrics with is_anomaly
@@ -47,7 +49,7 @@ Environment variables, Compose details, and troubleshooting are in [docs/operati
 
 ## HTTP API
 
-Interactive docs: `GET /` redirects to `/docs`.
+The agent binds `0.0.0.0:8080` (`PORT` in `agent/main.py`). There is no environment override. Compose does not publish that port. Interactive docs: `GET /` redirects to `/docs`.
 
 | Method | Path | Body |
 | --- | --- | --- |
@@ -82,10 +84,10 @@ Interactive docs: `GET /` redirects to `/docs`.
 | `system.cpu.utilization` | `%` | Always. `psutil.cpu_percent(interval=0.1)`, so the handler blocks about 100 ms. |
 | `system.memory.usage` | `By` | Always. Bytes used. |
 | `system.memory.limit` | `By` | Always. Bytes total. |
-| `system.battery.utilization` | `%` | Only when `psutil.sensors_battery()` returns a battery. |
-| `system.battery.charging` | `1` | Only when a battery is present. `1.0` if `power_plugged`, else `0.0`. |
+| `system.battery.utilization` | `%` | When `read_battery()` returns a battery whose `percent` is not `None`. |
+| `system.battery.charging` | `1` | When that battery's `power_plugged` is not `None`. `1.0` if plugged, else `0.0`. |
 
-`sensors_battery()` raises `FileNotFoundError` when `/sys/class/power_supply` is missing (typical in a container). That error is treated as "no battery", and the two battery series are omitted.
+The two battery checks are independent. `sensors_battery()` raises `FileNotFoundError` when `/sys/class/power_supply` is missing (typical in a container). `read_battery()` turns that into `None`, and both series are omitted.
 
 `attributes` is reserved for extra series dimensions. Current samples leave it unset.
 
@@ -140,6 +142,7 @@ Kafka record shape:
 - Event time is `timestamp * 1000` milliseconds. Out-of-orderness bound is 5 seconds. Kafka record timestamps are not used.
 - Parallelism is 2. The stream is keyed by `(machine_id, name)` so each series keeps its own state. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`.
 - State is the last hour of `(event_time, value)` pairs for that key.
+- `main` also calls `processed_metrics.print()`, so every scored row is written to the taskmanager logs as well as the sink. The sink does not set a Kafka key.
 
 Scoring rules in `AnomalyDetector.process_element` (`anomaly_detector/service.py`):
 
@@ -153,7 +156,7 @@ Scoring rules in `AnomalyDetector.process_element` (`anomaly_detector/service.py
 - Modified z-score uses scale `1.4826` and threshold `3.5`.
 - When the median absolute deviation is 0, the last value is an anomaly when it differs from the median.
 
-The row schema matches `ProcessedMetric` (`Metric` fields plus `is_anomaly`). The collector does not send `is_anomaly`; the JSON row deserializer leaves it at the boolean default so the operator can set it. `PROCESSED_METRIC_FIELD_TYPES` in `anomaly_detector/repository.py` must name the same fields as `ProcessedMetric` or the job raises `RuntimeError` at import.
+The row schema matches `ProcessedMetric` (`Metric` fields plus `is_anomaly`). Collector JSON omits `is_anomaly`; the row type still declares the field, and `AnomalyDetector` assigns it on every emitted row. `PROCESSED_METRIC_FIELD_TYPES` in `anomaly_detector/repository.py` must name the same fields as `ProcessedMetric` or the job raises `RuntimeError` at import.
 
 Job submission, the Kafka connector jar, and consumer-group rules are in [docs/operations.md](docs/operations.md).
 
@@ -161,7 +164,7 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 `KafkaProcessedMetricsRepository` (`metrics_writer/repository.py`) reads `KAFKA_PROCESSED_METRICS_TOPIC` (default `processed_metrics`) in group `KAFKA_CONSUMER_GROUP_ID` (default `timescale-writer`). Auto-commit is off. Offset reset is `earliest`.
 
-Records are decoded as JSON into `ProcessedMetric`. A batch flushes when it reaches `METRICS_WRITER_BATCH_SIZE` (default 100) or when `METRICS_WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into `ProcessedMetric`. A body that is not valid JSON or does not match the dataclass is logged as `Skipping malformed record ...` and left out of the batch. A batch flushes when it reaches `METRICS_WRITER_BATCH_SIZE` (default 100) or when `METRICS_WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` sets `MetricsWriter.stop()`, which ends the loop after the current poll (timeout 1 second) and flushes a partial batch. An empty poll does not write or commit. Offsets move forward only on that commit, so a partition of only malformed records is polled again and never committed.
 
 `TimescaleMetricsRepository.insert_batch` writes the TimescaleDB `metrics` table, then `MetricsWriter` commits offsets. A failed insert leaves the offsets uncommitted so the batch is replayed. The insert is idempotent:
 
