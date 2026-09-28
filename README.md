@@ -220,6 +220,8 @@ ClickHouse errors retry up to 5 times. Backoff is `backoff_base_seconds * 2^(att
 
 [golang-migrate](https://github.com/golang-migrate/migrate) runs `db/migrations` against ClickHouse (`metrics` database) from the `migrate` Compose service. Applied versions are recorded in `metrics.schema_migrations`. Every migration is a numbered pair, `NNNNNN_<name>.up.sql` and `NNNNNN_<name>.down.sql`; create one with `make migrate-new name=<name>`.
 
+Compose runs `clickhouse/clickhouse-server:26.3`. That image creates `metrics` from `CLICKHOUSE_DB` when `/var/lib/clickhouse/data` is still absent. `clickhouse/clickhouse-server:24.1` skips that step on a fresh volume, and a volume it has already started does not gain the database when the image tag changes. See [docs/operations.md](docs/operations.md).
+
 | Migration | Effect |
 | --- | --- |
 | 000001 | `metrics` table, `ReplacingMergeTree`, hourly partitions, 24-hour TTL. |

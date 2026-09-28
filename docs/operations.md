@@ -6,6 +6,8 @@ Setup, configuration, and failure modes for the agent, collector, Flink job, met
 
 `make up` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. The named volume `clickhouse_data` is kept. Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place.
 
+ClickHouse is `clickhouse/clickhouse-server:26.3` (LTS). It creates the `metrics` database only while the volume's data directory is still empty. See [ClickHouse server](#clickhouse-server).
+
 | Published port | Service |
 | --- | --- |
 | `9094` | Kafka listener advertised as `localhost:9094` (`PLAINTEXT_HOST`). Containers on the Compose network use `kafka:9092`. |
@@ -76,6 +78,28 @@ The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The 
 | `CLICKHOUSE_PASSWORD` | `password` | `password` | `password` |
 
 `CLICKHOUSE_PORT` is the HTTP port. From the host, ClickHouse is `localhost:8123` (HTTP) and `localhost:9000` (native) with the same database, user, and password. Inside Compose both writers wait until the `migrate` container exits successfully.
+
+## ClickHouse server
+
+The `clickhouse` service runs `clickhouse/clickhouse-server:26.3`, the 26.3 LTS line. `CLICKHOUSE_DB`, `CLICKHOUSE_USER`, and `CLICKHOUSE_PASSWORD` are `metrics`, `user`, and `password`. Published ports are HTTP `8123` and native `9000`. The `clickhouse_data` volume is mounted at `/var/lib/clickhouse`.
+
+The image entrypoint creates `CLICKHOUSE_DB` only when `/var/lib/clickhouse/data` is absent. It starts the server on localhost, runs `CREATE DATABASE IF NOT EXISTS metrics`, then replaces that process with the normal server. The next start finds `data` and logs `ClickHouse Database directory appears to contain a database; Skipping initialization`. Changing `CLICKHOUSE_DB` after that does not create another database.
+
+`clickhouse/clickhouse-server:24.1` inverts that check. On a fresh volume the entrypoint logs `ClickHouse Database directory appears to contain a database; Skipping initialization` and never applies `CLICKHOUSE_DB`. The server still creates `/var/lib/clickhouse/data` for its built-in catalogs. `migrate` connects with `database=metrics` and fails with `Database metrics does not exist`. Pointing that same volume at 26.3 does not rerun initialization, because `data` already exists. 24.8 and later use the corrected check. 26.3 is the LTS this Compose file pins.
+
+The Compose file declares only `clickhouse_data`, so `-v` removes that volume and lets 26.3 create `metrics` on the next start. `make down` does not pass `-v`.
+
+```bash
+docker compose down -v
+make up
+```
+
+To keep the volume and only add the missing database:
+
+```bash
+docker compose exec clickhouse clickhouse-client -u user --password password -q "CREATE DATABASE IF NOT EXISTS metrics"
+make migrate
+```
 
 ## Migrations
 
@@ -153,3 +177,5 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 **Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), `flink run` failed (the container exits non-zero), or a job is already running and submission was skipped.
 
 **`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL.
+
+**`migrate` fails with `Database metrics does not exist`.** `CLICKHOUSE_DB` is applied only on a volume that has no `/var/lib/clickhouse/data` yet, and only by `clickhouse/clickhouse-server:24.8` or newer (this stack pins `26.3`). `24.1` logs `ClickHouse Database directory appears to contain a database; Skipping initialization` on a fresh volume and never creates `metrics`. After that volume has a `data` directory, changing the image tag does not create the database either. Recovery is in [ClickHouse server](#clickhouse-server).
