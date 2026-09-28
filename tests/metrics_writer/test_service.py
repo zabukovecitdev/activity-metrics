@@ -3,8 +3,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from consumers.metrics_consumer import MetricsConsumer
-from core.metrics import ProcessedMetric
+from activityreporter.metrics_writer.service import MetricsConsumer
+from activityreporter.shared.metrics import ProcessedMetric
 
 
 class LoopBreak(Exception):
@@ -30,7 +30,7 @@ def poll_result(*timestamps: float) -> dict:
 
 
 def build_consumer(writer, batch_size=100, batch_timeout_seconds=5.0):
-    with patch("consumers.metrics_consumer.KafkaConsumer") as kafka_consumer:
+    with patch("activityreporter.metrics_writer.service.KafkaConsumer") as kafka_consumer:
         consumer = MetricsConsumer(
             bootstrap_servers="localhost:9094",
             topic="metrics",
@@ -63,7 +63,7 @@ def test_run_flushes_on_timeout_before_batch_is_full():
     kafka.poll.side_effect = [poll_result(1.0), LoopBreak]
 
     # Second monotonic() reading is past the batch timeout relative to the first.
-    with patch("consumers.metrics_consumer.time.monotonic", side_effect=[0.0, 10.0, 10.0]), \
+    with patch("activityreporter.metrics_writer.service.time.monotonic", side_effect=[0.0, 10.0, 10.0]), \
          pytest.raises(LoopBreak):
         consumer.run()
 

@@ -9,8 +9,8 @@ from typing import Any
 import httpx
 from kafka.errors import KafkaError
 
-from connectors.kafka_connector import KafkaConnector
-from core.metrics import Metric
+from activityreporter.collector.repository import KafkaConnector
+from activityreporter.shared.metrics import Metric
 
 logger = logging.getLogger(__name__)
 

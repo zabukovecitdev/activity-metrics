@@ -6,7 +6,7 @@ import logging
 from zeroconf import IPVersion, ServiceListener, Zeroconf
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 
-from core.discovery import METRICS_PATH, SERVICE_TYPE
+from activityreporter.shared.discovery import METRICS_PATH, SERVICE_TYPE
 
 logger = logging.getLogger(__name__)
 

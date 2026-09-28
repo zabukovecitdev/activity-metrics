@@ -2,7 +2,7 @@ import time
 import machineid
 import psutil as util
 
-from core.metrics import Metric
+from activityreporter.shared.metrics import Metric
 
 
 def read_battery():
