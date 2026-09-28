@@ -18,8 +18,8 @@ from pyflink.datastream.formats.json import JsonRowDeserializationSchema, JsonRo
 from pyflink.datastream.functions import RuntimeContext, KeyedProcessFunction
 from pyflink.datastream.state import ListStateDescriptor
 
-from core.mad import MAD
-from core.metrics import ProcessedMetric
+from activityreporter.anomaly_detector.mad import MAD
+from activityreporter.shared.metrics import ProcessedMetric
 
 ONE_HOUR_MS = 60 * 60 * 1000
 MIN_VALUES_FOR_MAD = 20
@@ -113,7 +113,9 @@ def detect_anomalies():
     # set_python_executable below.
     config = Configuration()
     if KAFKA_CONNECTOR_JAR:
-        config.set_string("pipeline.jars", f"file://{KAFKA_CONNECTOR_JAR}")
+        # as_uri() keeps a relative path from becoming file://relative, which
+        # the JVM treats as a host name and fails to load the connector.
+        config.set_string("pipeline.jars", Path(KAFKA_CONNECTOR_JAR).resolve().as_uri())
     env = StreamExecutionEnvironment.get_execution_environment(config)
 
     # Local Python UDF workers (key_by/process) are spawned as a subprocess

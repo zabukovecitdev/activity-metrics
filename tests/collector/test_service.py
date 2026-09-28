@@ -1,8 +1,8 @@
 import httpx
 import machineid
 
-from client.main import app
-from collector.collector import Collector
+from activityreporter.agent.main import app
+from activityreporter.collector.service import Collector
 
 
 class RecordingConnector:

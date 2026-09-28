@@ -1,5 +1,5 @@
-from client.discovery import build_service_info
-from core.discovery import SERVICE_TYPE
+from activityreporter.agent.discovery import build_service_info
+from activityreporter.shared.discovery import SERVICE_TYPE
 
 
 def test_clients_with_same_hostname_get_unique_names():

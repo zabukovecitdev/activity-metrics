@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 import psycopg
 import pytest
 
-from core.metrics import ProcessedMetric
-from connectors.timescale_connector import TimescaleConnector
+from activityreporter.metrics_writer.repository import TimescaleConnector
+from activityreporter.shared.metrics import ProcessedMetric
 
 
 def build_metrics(timestamp: float = 1.0) -> ProcessedMetric:
@@ -30,7 +30,7 @@ def build_connection() -> MagicMock:
 def test_insert_batch_commits_once_on_success():
     connection = build_connection()
 
-    with patch("connectors.timescale_connector.psycopg.connect", return_value=connection):
+    with patch("activityreporter.metrics_writer.repository.psycopg.connect", return_value=connection):
         connector = TimescaleConnector(dsn="dsn")
         connector.connect()
         connector.insert_batch([build_metrics()])
@@ -44,7 +44,7 @@ def test_insert_batch_commits_once_on_success():
 def test_insert_batch_passes_a_value_for_every_sql_placeholder():
     connection = build_connection()
 
-    with patch("connectors.timescale_connector.psycopg.connect", return_value=connection):
+    with patch("activityreporter.metrics_writer.repository.psycopg.connect", return_value=connection):
         connector = TimescaleConnector(dsn="dsn")
         connector.connect()
         connector.insert_batch([build_metrics()])
@@ -60,7 +60,7 @@ def test_insert_batch_stores_missing_attributes_as_empty_object():
     metric = build_metrics()
     metric.attributes = None
 
-    with patch("connectors.timescale_connector.psycopg.connect", return_value=connection):
+    with patch("activityreporter.metrics_writer.repository.psycopg.connect", return_value=connection):
         connector = TimescaleConnector(dsn="dsn")
         connector.connect()
         connector.insert_batch([metric])
@@ -73,7 +73,7 @@ def test_insert_batch_stores_missing_attributes_as_empty_object():
 def test_insert_batch_skips_empty_batch():
     connection = build_connection()
 
-    with patch("connectors.timescale_connector.psycopg.connect", return_value=connection):
+    with patch("activityreporter.metrics_writer.repository.psycopg.connect", return_value=connection):
         connector = TimescaleConnector(dsn="dsn")
         connector.connect()
         connector.insert_batch([])
@@ -86,8 +86,8 @@ def test_insert_batch_retries_with_backoff_then_succeeds():
     cursor = connection.cursor.return_value.__enter__.return_value
     cursor.executemany.side_effect = [psycopg.OperationalError("boom"), None]
 
-    with patch("connectors.timescale_connector.psycopg.connect", return_value=connection), \
-         patch("connectors.timescale_connector.time.sleep") as sleep:
+    with patch("activityreporter.metrics_writer.repository.psycopg.connect", return_value=connection), \
+         patch("activityreporter.metrics_writer.repository.time.sleep") as sleep:
         connector = TimescaleConnector(dsn="dsn", max_retries=3, backoff_base_seconds=1.0)
         connector.connect()
         connector.insert_batch([build_metrics()])
@@ -103,8 +103,8 @@ def test_insert_batch_raises_after_exhausting_retries():
     cursor = connection.cursor.return_value.__enter__.return_value
     cursor.executemany.side_effect = psycopg.OperationalError("boom")
 
-    with patch("connectors.timescale_connector.psycopg.connect", return_value=connection), \
-         patch("connectors.timescale_connector.time.sleep") as sleep:
+    with patch("activityreporter.metrics_writer.repository.psycopg.connect", return_value=connection), \
+         patch("activityreporter.metrics_writer.repository.time.sleep") as sleep:
         connector = TimescaleConnector(dsn="dsn", max_retries=3, backoff_base_seconds=1.0)
         connector.connect()
         with pytest.raises(psycopg.OperationalError):
@@ -123,9 +123,9 @@ def test_reset_connection_reconnects_when_connection_is_closed():
     fresh_connection = build_connection()
 
     with patch(
-        "connectors.timescale_connector.psycopg.connect",
+        "activityreporter.metrics_writer.repository.psycopg.connect",
         side_effect=[closed_connection, fresh_connection],
-    ), patch("connectors.timescale_connector.time.sleep"):
+    ), patch("activityreporter.metrics_writer.repository.time.sleep"):
         connector = TimescaleConnector(dsn="dsn", max_retries=2)
         connector.connect()
         connector.insert_batch([build_metrics()])

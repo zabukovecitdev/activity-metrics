@@ -1,4 +1,4 @@
-from collector.main import static_endpoints
+from activityreporter.collector.main import static_endpoints
 
 
 def test_static_endpoints_are_split_and_trimmed():
