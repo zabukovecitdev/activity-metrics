@@ -1,17 +1,16 @@
-from dataclasses import asdict
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from activityreporter.metrics_writer.service import MetricsConsumer
+from activityreporter.metrics_writer.service import MetricsWriter
 from activityreporter.shared.metrics import ProcessedMetric
 
 
 class LoopBreak(Exception):
-    """Raised by a mocked poll() to terminate the consumer's infinite run loop."""
+    pass
 
 
-def build_metrics(timestamp: float) -> ProcessedMetric:
+def build_metric(timestamp: float) -> ProcessedMetric:
     return ProcessedMetric(
         timestamp=timestamp,
         name="system.cpu.utilization",
@@ -24,102 +23,80 @@ def build_metrics(timestamp: float) -> ProcessedMetric:
     )
 
 
-def poll_result(*timestamps: float) -> dict:
-    records = [MagicMock(value=asdict(build_metrics(ts))) for ts in timestamps]
-    return {"metrics-0": records}
-
-
-def build_consumer(writer, batch_size=100, batch_timeout_seconds=5.0):
-    with patch("activityreporter.metrics_writer.service.KafkaConsumer") as kafka_consumer:
-        consumer = MetricsConsumer(
-            bootstrap_servers="localhost:9094",
-            topic="metrics",
-            group_id="timescale-writer",
-            writer=writer,
-            batch_size=batch_size,
-            batch_timeout_seconds=batch_timeout_seconds,
-        )
-    return consumer, kafka_consumer.return_value
+def build_writer(batch_size=100, batch_timeout_seconds=5.0):
+    processed_metrics, timescale_metrics = MagicMock(), MagicMock()
+    writer = MetricsWriter(processed_metrics, timescale_metrics, batch_size, batch_timeout_seconds)
+    return writer, processed_metrics, timescale_metrics
 
 
 def test_run_flushes_when_batch_size_is_reached():
-    writer = MagicMock()
-    consumer, kafka = build_consumer(writer, batch_size=2)
-    kafka.poll.side_effect = [poll_result(1.0), poll_result(2.0), LoopBreak]
+    writer, processed, timescale = build_writer(batch_size=2)
+    processed.poll.side_effect = [[build_metric(1.0)], [build_metric(2.0)], LoopBreak]
 
     with pytest.raises(LoopBreak):
-        consumer.run()
+        writer.run()
 
-    writer.insert_batch.assert_called_once()
-    flushed = writer.insert_batch.call_args.args[0]
-    assert [m.timestamp for m in flushed] == [1.0, 2.0]
-    assert kafka.commit.call_count == 1
-    kafka.close.assert_called_once()
+    timescale.insert_batch.assert_called_once()
+    assert [m.timestamp for m in timescale.insert_batch.call_args.args[0]] == [1.0, 2.0]
+    assert processed.commit.call_count == 1
 
 
 def test_run_flushes_on_timeout_before_batch_is_full():
-    writer = MagicMock()
-    consumer, kafka = build_consumer(writer, batch_size=100, batch_timeout_seconds=5.0)
-    kafka.poll.side_effect = [poll_result(1.0), LoopBreak]
+    writer, processed, timescale = build_writer(batch_size=100, batch_timeout_seconds=5.0)
+    processed.poll.side_effect = [[build_metric(1.0)], LoopBreak]
 
-    # Second monotonic() reading is past the batch timeout relative to the first.
     with patch("activityreporter.metrics_writer.service.time.monotonic", side_effect=[0.0, 10.0, 10.0]), \
          pytest.raises(LoopBreak):
-        consumer.run()
+        writer.run()
 
-    writer.insert_batch.assert_called_once()
-    assert len(writer.insert_batch.call_args.args[0]) == 1
-    assert kafka.commit.call_count == 1
+    timescale.insert_batch.assert_called_once()
+    assert len(timescale.insert_batch.call_args.args[0]) == 1
+    assert processed.commit.call_count == 1
 
 
 def test_run_does_not_flush_empty_batch():
-    writer = MagicMock()
-    consumer, kafka = build_consumer(writer, batch_size=1)
-    kafka.poll.side_effect = [{}, LoopBreak]
+    writer, processed, timescale = build_writer(batch_size=1)
+    processed.poll.side_effect = [[], LoopBreak]
 
     with pytest.raises(LoopBreak):
-        consumer.run()
+        writer.run()
 
-    writer.insert_batch.assert_not_called()
-    kafka.commit.assert_not_called()
+    timescale.insert_batch.assert_not_called()
+    processed.commit.assert_not_called()
 
 
-def test_stop_flushes_pending_batch_and_closes_consumer():
-    writer = MagicMock()
-    consumer, kafka = build_consumer(writer, batch_size=100, batch_timeout_seconds=1000.0)
+def test_stop_flushes_pending_batch():
+    writer, processed, timescale = build_writer(batch_size=100, batch_timeout_seconds=1000.0)
 
     def poll_then_stop(**_):
-        consumer.stop()
-        return poll_result(1.0)
+        writer.stop()
+        return [build_metric(1.0)]
 
-    kafka.poll.side_effect = poll_then_stop
+    processed.poll.side_effect = poll_then_stop
 
-    consumer.run()
+    writer.run()
 
-    writer.insert_batch.assert_called_once()
-    assert len(writer.insert_batch.call_args.args[0]) == 1
-    assert kafka.commit.call_count == 1
-    kafka.close.assert_called_once()
+    timescale.insert_batch.assert_called_once()
+    assert len(timescale.insert_batch.call_args.args[0]) == 1
+    assert processed.commit.call_count == 1
 
 
 def test_flush_does_not_commit_offsets_when_write_fails():
-    writer = MagicMock()
-    writer.insert_batch.side_effect = RuntimeError("db is down")
-    consumer, kafka = build_consumer(writer)
+    writer, processed, timescale = build_writer()
+    timescale.insert_batch.side_effect = RuntimeError("db is down")
 
     with pytest.raises(RuntimeError):
-        consumer._flush([build_metrics(1.0)])
+        writer._flush([build_metric(1.0)])
 
-    kafka.commit.assert_not_called()
+    processed.commit.assert_not_called()
 
 
 def test_flush_commits_offsets_only_after_successful_write():
-    writer = MagicMock()
-    consumer, kafka = build_consumer(writer)
+    writer, processed, timescale = build_writer()
     call_order = []
-    writer.insert_batch.side_effect = lambda batch: call_order.append("insert")
-    kafka.commit.side_effect = lambda: call_order.append("commit")
+    timescale.insert_batch.side_effect = lambda batch: call_order.append("insert")
+    processed.commit.side_effect = lambda: call_order.append("commit")
 
-    consumer._flush([build_metrics(1.0)])
+    writer._flush([build_metric(1.0)])
 
     assert call_order == ["insert", "commit"]
