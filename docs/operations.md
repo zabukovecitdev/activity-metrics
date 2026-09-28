@@ -50,13 +50,13 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
 | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `raw_metrics` |
 | `KAFKA_PROCESSED_METRICS_TOPIC` | `processed_metrics` | `processed_metrics` |
-| `KAFKA_CONNECTOR_JAR` | `anomaly_detector/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` | empty |
+| `KAFKA_CONNECTOR_JAR` | `<dir of anomaly_detector/main.py>/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` | empty |
 
-An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already has that connector in `/opt/flink/lib`, and loading it a second time is what the submitter avoids. Local runs need the jar on the classpath because the `apache-flink` wheel does not include it. Pass an absolute `file://` path via `KAFKA_CONNECTOR_JAR`.
+An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already has that connector in `/opt/flink/lib`, and loading it a second time is what the submitter avoids. Local runs need the jar on the classpath because the `apache-flink` wheel does not include it. The job sets `pipeline.jars` to `file://` plus the value of `KAFKA_CONNECTOR_JAR`, so the variable is a filesystem path, not a URI. Use an absolute path (`/abs/path/flink-sql-connector-kafka-3.2.0-1.19.jar`) so the result is `file:///abs/path/...`. A value that already starts with `file://` becomes `file://file://...` and does not resolve. The default is the `lib/` directory next to `anomaly_detector/main.py`. `make mad` downloads the jar into `flink-jobs/lib/` and does not export `KAFKA_CONNECTOR_JAR`.
 
 `docker/flink/Dockerfile` fetches the same jar (`3.2.0-1.19` on Flink `1.19.1`) and runs `chmod 644` on it. `ADD` from a URL otherwise leaves the file mode `600`, owned by root, and the `flink` user (uid 9999) cannot read it. The job then fails at submission with the connector classes unresolved.
 
-The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The job calls `env.set_python_executable(sys.executable)` so keyed Python operators use that interpreter. A worker started as plain `python` on `PATH` dies with `ModuleNotFoundError: pyflink`.
+The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The Dockerfile comment requires a CPython 3.8–3.11 interpreter available as `python`. The image installs Debian `python3` and symlinks `/usr/bin/python` to it. The job calls `env.set_python_executable(sys.executable)` so keyed Python operators use that interpreter. A worker started as plain `python` on `PATH` dies with `ModuleNotFoundError: pyflink`.
 
 ### Metrics writer
 
@@ -87,11 +87,13 @@ From the host, Timescale is `localhost:5433` with the same database, user, and p
 | `CLICKHOUSE_PASSWORD` | `password` | `password` |
 | `CLICKHOUSE_DB` | `metrics` | `metrics` |
 
-`ClickHouseConnector.from_env` sets `autogenerate_session_id=False`. One client is shared across coroutines, and a per-client session rejects concurrent queries. Running `shared/clickhouse.py` as a script prints the result of `SELECT version()`. Nothing else in the repo calls the connector.
+`ClickHouseConnector.from_env` sets `autogenerate_session_id=False`. One client is shared across coroutines, and a per-client session rejects concurrent queries. `query(sql, params=None)` forwards `params` as `parameters` to the async client and returns a `QueryResult`. `insert(table, rows, column_names)` writes a sequence of row sequences into `table`. Both calls need a table that already exists. Compose sets `CLICKHOUSE_DB=metrics`. No file under `db/migrations` runs against ClickHouse, and no service creates tables there. The service also declares `deploy.resources.limits.memory: 4G` and a 2G reservation. Running `shared/clickhouse.py` as a script prints the result of `SELECT version()`. Nothing else in the repo calls the connector.
 
 ## Flink jobs
 
-`jobmanager` and `taskmanager` mount `./flink-jobs` at `/opt/flink/jobs`. `flink-jobs-submitter` runs `docker/flink/submit-jobs.sh`, which submits every `/opt/flink/jobs/*.py` with `-pyfs /opt/flink/src` (the repo `src/` tree) and `-d`. The job Python file is `src/activityreporter/anomaly_detector/main.py`, so the submitter does not see it in `/opt/flink/jobs`.
+`jobmanager` and `taskmanager` mount `./flink-jobs` at `/opt/flink/jobs`. That directory is not in the tree; Compose creates an empty directory for the bind mount. `flink-jobs-submitter` runs `docker/flink/submit-jobs.sh`, which submits every `/opt/flink/jobs/*.py` with `-pyfs /opt/flink/src` (the repo `src/` tree) and `-d`. The script does not set `nullglob`, so an empty directory still enters the loop once with the literal path `/opt/flink/jobs/*.py`, `flink run` fails, and the script exits 1. The job file is `src/activityreporter/anomaly_detector/main.py`. The submitter only globs `/opt/flink/jobs/*.py`, so that file is submitted only when a copy is placed in `flink-jobs/`.
+
+`-pyfs /opt/flink/src` puts `src/` on `PYTHONPATH`. That makes `activityreporter` importable as a namespace package. It does not make `core`, `client`, `collector`, `connectors`, or `consumers` importable. The job still imports `core.mad` and `core.metrics`.
 
 The submitter waits until `flink list -m jobmanager:8081` succeeds. If the cluster already has a running job, it prints `Cluster already has running jobs, skipping submission.` and exits 0. To submit again, cancel the job in the Web UI at `http://localhost:8081`, then:
 
@@ -122,16 +124,38 @@ Files live under `src/activityreporter/`. These references still use the previou
 | Hatch wheel packages `src/client`, `src/collector`, `src/connectors`, `src/consumers`, `src/core` | Those directories are gone. The wheel config does not list `src/activityreporter`. |
 | `docker/collector/Dockerfile`, `docker/consumer/Dockerfile` | Removed. `docker-compose.yml` still builds the collector and metrics-writer from those paths. The root `Dockerfile` remains and starts `activityreporter`. |
 | `flink-jobs/metrics_aggregator.py` | `src/activityreporter/anomaly_detector/main.py` |
-| `from client.reporter import HttpReporter` and `from client.machine_info import Machine, MachineFactory` in `agent/api.py` | `reporter.py` was removed. `Machine` and `MachineFactory` are in `agent/models.py`. Sampling is `MetricFactory` in `agent/service.py`. |
-| `from core.errors.insufficient_data_error import InsufficientDataError` in `anomaly_detector/mad.py` | That module was removed. |
 
-Other imports inside the moved files follow the same old top-level names (`client`, `collector`, `connectors`, `consumers`, `core`). Tests patch and import those names (`client.metric_factory`, `collector.collector`, `consumers.metrics_consumer`, `connectors.timescale_connector`, `core.mad`, `core.discovery`, `core.metrics`).
+`uv build` succeeds and writes `dist/activityreporter-0.1.0-py3-none-any.whl`. The archive contains dist-info and `entry_points.txt` only. `uv run` installs that wheel, so `make client`, `make collector`, `make metrics-writer`, and `make test` fail with `ModuleNotFoundError` before service code runs. The root image does the same `pip install .` and then `CMD ["activityreporter"]`, which imports `client.main`.
 
-There are no `__init__.py` files under `src/activityreporter/`.
+`PYTHONPATH=src` makes `activityreporter` a namespace package (there are no `__init__.py` files). These modules import in that mode: `activityreporter.agent.models`, `activityreporter.shared.metrics`, `activityreporter.shared.discovery`, `activityreporter.shared.clickhouse`. Every other module under `src/activityreporter/` still imports a removed top-level name and fails. Putting `src` on `PYTHONPATH` does not recreate `client` or `core`.
+
+Imports that still name the old modules:
+
+| Import in the tree | Symbol now lives at |
+| --- | --- |
+| `from client import v1` in `agent/main.py` | Router is `agent/api.py`. There is no `v1` module. |
+| `from client.discovery import ServiceAdvertiser` in `agent/main.py` | `agent/discovery.py` |
+| `from client.reporter import HttpReporter` in `agent/api.py` | Removed. `HttpReporter.get` used to return `MetricFactory.create_metrics()`. The sampler is `agent/service.py` and the route does not call it. |
+| `from client.machine_info import Machine, MachineFactory` in `agent/api.py` | `agent/models.py` |
+| `from core.metrics import Metric` in `agent/service.py`, `collector/service.py`, `collector/repository.py` | `shared/metrics.py` |
+| `from core.discovery import METRICS_PATH, SERVICE_TYPE` in `agent/discovery.py` and `collector/discovery.py` | `shared/discovery.py` |
+| `from collector.collector import Collector` in `collector/main.py` | `collector/service.py` |
+| `from connectors.kafka_connector import KafkaConnector` in `collector/main.py` and `collector/service.py` | `collector/repository.py` |
+| `from core.mad import MAD` and `from core.metrics import ProcessedMetric` in `anomaly_detector/main.py` | `anomaly_detector/mad.py` and `shared/metrics.py` |
+| `from core.errors.insufficient_data_error import InsufficientDataError` in `anomaly_detector/mad.py` | Removed. Not moved. |
+| `from connectors.timescale_connector import TimescaleConnector` in `metrics_writer/main.py`, `metrics_writer/service.py` | `metrics_writer/repository.py` |
+| `from consumers.metrics_consumer import MetricsConsumer` in `metrics_writer/main.py` | `metrics_writer/service.py` |
+| `from core.metrics import ProcessedMetric` in `metrics_writer/service.py` and `metrics_writer/repository.py` | `shared/metrics.py` |
+
+Tests patch and import the same old names (`client.metric_factory`, `client.main`, `client.discovery`, `collector.collector`, `collector.discovery`, `collector.main`, `consumers.metrics_consumer`, `connectors.timescale_connector`, `core.mad`, `core.discovery`, `core.metrics`, `core.errors.insufficient_data_error`). `uv run pytest` reports eight collection errors, one per test module.
 
 ## Troubleshooting
 
+**`make client`, `make collector`, `make metrics-writer`, or `make test` exits immediately.** `uv run` installs the metadata-only wheel described above. The traceback is `ModuleNotFoundError: No module named 'client'` (or `collector`, `consumers`, `core`, depending on the entry point). The same failure happens in the `activityreporter` image after `pip install .`. Collector and metrics-writer images fail earlier: Compose still points at `docker/collector/Dockerfile` and `docker/consumer/Dockerfile`, which are not in the tree.
+
 **Collector logs no discovered clients.** The collector must share a multicast network with the agent. In Compose it uses the host network for that reason. Confirm the agent is on the host (or another host on the LAN) and that UDP 5353 is not blocked. Add a full URL to `COLLECTOR_ENDPOINTS` to bypass mDNS. The collector logs `Static endpoints: none` when that variable is empty.
+
+**Discovered URL is `http://127.0.0.1:8080/v1/metrics`.** `lan_ip()` fell back because the UDP connect to `10.255.255.255:1` raised `OSError`. The agent is advertising loopback. Scrapes from any other host, including a host-network collector on a different machine, hit that machine's own port 8080.
 
 **Scrape errors every 10 seconds.** The collector logs `Failed to scrape metrics from ...` for transport and HTTP errors, and `Malformed response from ...` for a 200 body that is missing `machine_id`, `timestamp`, or a complete metric object. A trailing slash or a path other than `/v1/metrics` only works when the agent's TXT `path` matches the route you serve.
 
@@ -143,8 +167,8 @@ There are no `__init__.py` files under `src/activityreporter/`.
 
 **`is_anomaly` stays false.** The operator needs 20 samples of that `(machine_id, name)` in the last hour, the series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, or `system.memory.limit`. Battery series are omitted entirely when the agent has no power supply.
 
-**Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The submitter must leave `KAFKA_CONNECTOR_JAR` empty so the image copy is the only one on the classpath.
+**Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the absolute filesystem path of the jar (the job prefixes `file://` itself). In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The submitter must leave `KAFKA_CONNECTOR_JAR` empty so the image copy is the only one on the classpath.
 
-**Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), a `*.py` under the jobs mount failed (`Failed to submit ...`), or a job is already running and submission was skipped. The jobs mount is `./flink-jobs`, which this tree no longer contains; Compose will create an empty directory, and the submitter then has nothing to submit.
+**Flink submitter exits immediately.** Either a `*.py` under the jobs mount failed (`Failed to submit ...`), or a job is already running and submission was skipped. An empty `./flink-jobs` is the first case: the script submits the literal path `/opt/flink/jobs/*.py` and exits 1. While the jobmanager is down the script does not exit; it prints `Waiting for Flink jobmanager at jobmanager:8081...` every 2 seconds.
 
 **`make run` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. TimescaleDB rows in `metrics` remain, subject to the 24-hour retention policy.
