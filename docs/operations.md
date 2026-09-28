@@ -19,15 +19,23 @@ An agent run on the host (`make client`) advertises on the LAN, which that colle
 
 Process commands from the `Makefile`:
 
-| Target | Command | Entry module in `pyproject.toml` |
+| Target | Command | Notes |
 | --- | --- | --- |
 | `client` | `uv run activityreporter` | `activityreporter.agent.main:cli` |
 | `collector` | `uv run collector` | `activityreporter.collector.main:cli` |
 | `metrics-writer` | `uv run metrics-writer` | `activityreporter.metrics_writer.main:main` |
-| `test` | `uv run pytest` | |
-| `mad` | `flink-jobs/.venv/bin/python src/activityreporter/anomaly_detector/main.py` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
+| `test` | `uv run pytest` | `pythonpath = ["src"]` in `pyproject.toml` |
+| `mad` | `PYTHONPATH=src KAFKA_CONNECTOR_JAR=<abs jar> flink-jobs/.venv/bin/python src/activityreporter/anomaly_detector/main.py` | Jar path is absolute; see below |
 
-`mad` downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink-jobs/lib/` and exports that absolute path as `KAFKA_CONNECTOR_JAR`. Without the variable, the job looks next to `anomaly_detector/main.py`.
+`make mad` does not create `flink-jobs/.venv`. That interpreter must be CPython 3.8–3.11. `docker/flink/Dockerfile` states that range, and `apache-flink==1.19.1` depends on `pemja==0.4.1`, which publishes wheels only for 3.8–3.11. The rest of this repo requires Python 3.14, so the Flink venv is not the `uv` environment.
+
+```bash
+python3.11 -m venv flink-jobs/.venv
+flink-jobs/.venv/bin/pip install 'apache-flink==1.19.1'
+make mad
+```
+
+`make mad` downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink-jobs/lib/`, exports that absolute filesystem path as `KAFKA_CONNECTOR_JAR`, and sets `PYTHONPATH=src` so the job imports `activityreporter` without installing the wheel into the Flink venv. Copying only the interpreter command from the table leaves `PYTHONPATH` unset and the import fails.
 
 ## Environment
 
@@ -50,13 +58,15 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
 | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `raw_metrics` |
 | `KAFKA_PROCESSED_METRICS_TOPIC` | `processed_metrics` | `processed_metrics` |
-| `KAFKA_CONNECTOR_JAR` | `anomaly_detector/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` | empty |
+| `KAFKA_CONNECTOR_JAR` | `<dir of main.py>/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` | empty |
 
-An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already has that connector in `/opt/flink/lib`, and loading it a second time is what the submitter avoids. Local runs need the jar on the classpath because the `apache-flink` wheel does not include it. Pass an absolute `file://` path via `KAFKA_CONNECTOR_JAR`.
+`KAFKA_CONNECTOR_JAR` is a filesystem path. When it is non-empty, the job sets `pipeline.jars` to `Path(value).resolve().as_uri()`. A relative path is resolved against the process working directory. Do not prefix `file://`: `Path` treats that string as a relative path, so the URI becomes `file://<cwd>/file%3A/...` and the JVM does not load the connector.
+
+Unset, the default is the absolute path next to `anomaly_detector/main.py` (`Path(__file__).parent / "lib" / "flink-sql-connector-kafka-3.2.0-1.19.jar"`). On the cluster that directory is wherever Flink extracts the submitted script, and the jar is not there. An empty string skips `pipeline.jars`. Compose sets it empty because the image already has the connector in `/opt/flink/lib`. Loading that jar a second time is what the submitter avoids. Local runs need the variable because the `apache-flink` wheel does not include the connector. `make mad` passes the absolute path under `flink-jobs/lib/`.
 
 `docker/flink/Dockerfile` fetches the same jar (`3.2.0-1.19` on Flink `1.19.1`) and runs `chmod 644` on it. `ADD` from a URL otherwise leaves the file mode `600`, owned by root, and the `flink` user (uid 9999) cannot read it. The job then fails at submission with the connector classes unresolved.
 
-The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The job calls `env.set_python_executable(sys.executable)` so keyed Python operators use that interpreter. A worker started as plain `python` on `PATH` dies with `ModuleNotFoundError: pyflink`.
+The image installs PyFlink `apache-flink==1.19.1`, matching the base image, on the distro `python3` (3.8–3.11). The job calls `env.set_python_executable(sys.executable)` while the graph is built in the submitter, so taskmanagers must have PyFlink at that same path. Jobmanager, taskmanager, and the submitter share `activityreporter-flink:1.19.1`. A worker started as plain `python` on `PATH` dies with `ModuleNotFoundError: pyflink`.
 
 ### Metrics writer
 
@@ -91,7 +101,11 @@ From the host, Timescale is `localhost:5433` with the same database, user, and p
 
 ## Flink jobs
 
-`jobmanager` and `taskmanager` mount `./flink-jobs` at `/opt/flink/jobs`. `flink-jobs-submitter` runs `docker/flink/submit-jobs.sh`, which submits `src/activityreporter/anomaly_detector/main.py` (mounted at `/opt/flink/src`) and any extra `/opt/flink/jobs/*.py`, with `-pyfs /opt/flink/src` and `-d`.
+`jobmanager` and `taskmanager` mount `./flink-jobs` at `/opt/flink/jobs`. They do not mount `src/`. Only `flink-jobs-submitter` mounts `./src` at `/opt/flink/src` (read-only) and runs `docker/flink/submit-jobs.sh`.
+
+The script submits `/opt/flink/src/activityreporter/anomaly_detector/main.py` plus, with `nullglob`, any `/opt/flink/jobs/*.py`. An empty `./flink-jobs` does not add a literal `*.py` argument. The detector path is not a glob, so it is still submitted when that directory is empty. `flink run -d -m jobmanager:8081 -pyfs /opt/flink/src -py <job>` ships `src/` to the Python workers, which is how they import `activityreporter`. `flink run` inside the jobmanager container does not see `/opt/flink/src`.
+
+Kafka settings are read in the submitter while the graph is built. The taskmanager does not need `KAFKA_CONNECTION_STRING`. The sink writes the JSON row and does not set a Kafka key. `anomaly_processed_metrics.print()` logs each scored row on the taskmanager.
 
 The submitter waits until `flink list -m jobmanager:8081` succeeds. If the cluster already has a running job, it prints `Cluster already has running jobs, skipping submission.` and exits 0. To submit again, cancel the job in the Web UI at `http://localhost:8081`, then:
 
@@ -112,7 +126,7 @@ Task slots on the taskmanager: 2, matching the job parallelism.
 
 ## Packaging
 
-The wheel contains `src/activityreporter`. Console scripts:
+Hatchling builds the wheel from `src/activityreporter`. The installed import name is `activityreporter` (`__init__.py` is present on the package and each process directory). Console scripts:
 
 | Script | Entry |
 | --- | --- |
@@ -120,7 +134,7 @@ The wheel contains `src/activityreporter`. Console scripts:
 | `collector` | `activityreporter.collector.main:cli` |
 | `metrics-writer` | `activityreporter.metrics_writer.main:main` |
 
-`docker/collector/Dockerfile` and `docker/consumer/Dockerfile` install that wheel and start `collector` and `metrics-writer`. The root `Dockerfile` starts `activityreporter`. The anomaly detector is `src/activityreporter/anomaly_detector/main.py`. `/v1/metrics` is sampled by `MetricFactory` in `agent/service.py`. `InsufficientDataError` lives in `anomaly_detector/errors.py`.
+`docker/collector/Dockerfile` and `docker/consumer/Dockerfile` `pip install` the project and start `collector` and `metrics-writer`. The root `Dockerfile` starts `activityreporter`. The anomaly detector is not a console script. Compose submits `src/activityreporter/anomaly_detector/main.py` with `flink run`.
 
 ## Troubleshooting
 
@@ -136,8 +150,12 @@ The wheel contains `src/activityreporter`. Console scripts:
 
 **`is_anomaly` stays false.** The operator needs 20 samples of that `(machine_id, name)` in the last hour, the series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, or `system.memory.limit`. Battery series are omitted entirely when the agent has no power supply.
 
-**Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The submitter must leave `KAFKA_CONNECTOR_JAR` empty so the image copy is the only one on the classpath.
+**Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the filesystem path of the downloaded jar (`make mad` does this). A `file://` prefix is not a path the job can resolve. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The submitter must leave `KAFKA_CONNECTOR_JAR` empty so the image copy is the only one on the classpath. Unset is not the same as empty: the code default looks for `lib/` next to the submitted script.
 
-**Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), a job file failed (`Failed to submit ...`), or a job is already running and submission was skipped. The anomaly detector is submitted from `/opt/flink/src/activityreporter/anomaly_detector/main.py` even when `./flink-jobs` is empty.
+**Flink job dies once a series reaches 20 samples.** The task fails in PyFlink's boolean coder (`chr()` rejects the value) the first time `MAD.is_anomaly` runs. That function must return a builtin `bool`. Comparisons on numpy scalars are `numpy.bool_`. `anomaly_detector/mad.py` wraps both return sites in `bool()`. The unit tests check `result is True` and `result is False`.
+
+**`make mad` cannot import the job.** `ModuleNotFoundError: activityreporter` means `PYTHONPATH=src` was not set. `ModuleNotFoundError: pyflink` means `flink-jobs/.venv` is missing or was created with a Python newer than 3.11.
+
+**Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), a job file failed (`Failed to submit ...`), or a job is already running and submission was skipped. A missing `./src` mount still attempts `/opt/flink/src/activityreporter/anomaly_detector/main.py` and fails that submission. An empty `./flink-jobs` does not, by itself, skip the detector.
 
 **`make run` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. TimescaleDB rows in `metrics` remain, subject to the 24-hour retention policy.
