@@ -1,15 +1,14 @@
 # Operations
 
-Setup, configuration, and failure modes for the agent, collector, Flink job, and metrics writer. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
+Setup, configuration, and failure modes for the agent, collector, Flink job, metrics writer, and migrations. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
 
 ## Local stack
 
-`make up` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. Named volumes are kept (`timescaledb-data`, `clickhouse_data`). Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place.
+`make up` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. The named volume `clickhouse_data` is kept. Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place.
 
 | Published port | Service |
 | --- | --- |
 | `9094` | Kafka listener advertised as `localhost:9094` (`PLAINTEXT_HOST`). Containers on the Compose network use `kafka:9092`. |
-| `5433` | TimescaleDB, mapped to container port `5432`. |
 | `8123`, `9000` | ClickHouse HTTP and native protocol. |
 | `8081` | Flink Web UI. |
 
@@ -64,28 +63,34 @@ The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The 
 | --- | --- | --- |
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
 | `KAFKA_PROCESSED_METRICS_TOPIC` | `processed_metrics` | `processed_metrics` |
-| `KAFKA_CONSUMER_GROUP_ID` | `timescale-writer` | `timescale-writer` |
+| `KAFKA_CONSUMER_GROUP_ID` | `clickhouse-writer` | `clickhouse-writer` |
 | `METRICS_WRITER_BATCH_SIZE` | `100` | unset |
 | `METRICS_WRITER_BATCH_TIMEOUT_SECONDS` | `5.0` | unset |
-| `TIMESCALE_HOST` | `localhost` | `timescaledb` |
-| `TIMESCALE_PORT` | `5432` | `5432` |
-| `TIMESCALE_DB` | `activityreporter` | `activityreporter` |
-| `TIMESCALE_USER` | `activityreporter` | `activityreporter` |
-| `TIMESCALE_PASSWORD` | `activityreporter` | `activityreporter` |
-
-From the host, Timescale is `localhost:5433` with the same database, user, and password. Inside Compose the writer uses host `timescaledb` port `5432`, and it waits until the Flyway `migrate` container exits successfully.
-
-### ClickHouse client
-
-| Variable | Default | Compose server |
-| --- | --- | --- |
-| `CLICKHOUSE_HOST` | `localhost` | container name `clickhouse-server` |
+| `CLICKHOUSE_HOST` | `localhost` | `clickhouse` |
 | `CLICKHOUSE_PORT` | `8123` | `8123` |
+| `CLICKHOUSE_DB` | `metrics` | `metrics` |
 | `CLICKHOUSE_USER` | `user` | `user` |
 | `CLICKHOUSE_PASSWORD` | `password` | `password` |
-| `CLICKHOUSE_DB` | `metrics` | `metrics` |
 
-`ClickHouseConnector.from_env` sets `autogenerate_session_id=False`. One client is shared across coroutines, and a per-client session rejects concurrent queries. Running `shared/clickhouse.py` as a script prints the result of `SELECT version()`. Nothing else in the repo calls the connector.
+`CLICKHOUSE_PORT` is the HTTP port. From the host, ClickHouse is `localhost:8123` (HTTP) and `localhost:9000` (native) with the same database, user, and password. Inside Compose the writer waits until the `migrate` container exits successfully.
+
+## Migrations
+
+The `migrate` service runs `migrate/migrate` with `up` on every `make up`, after the ClickHouse healthcheck passes. It connects over the native protocol (`clickhouse:9000`) with `x-multi-statement=true` (several statements per file) and `x-migrations-table-engine=MergeTree` (otherwise `schema_migrations` is a `TinyLog`). The URL lives once, in the service's `DATABASE_URL`; `docker compose run --rm migrate <args>` passes any CLI arguments through, which is what `make migrate`, `make migrate-down`, and `make migrate-new name=<name>` do.
+
+Writing a migration:
+
+- One DDL change per file, with `IF [NOT] EXISTS`, and a `.down.sql` that undoes it.
+- ClickHouse DDL is not transactional. A file that fails halfway leaves some statements applied.
+- Test `make migrate-down && make migrate` locally before committing.
+
+**`Dirty database version N. Fix and force version.`** Migration `N` failed. `schema_migrations` marks it dirty and `migrate` refuses to run. Undo whatever part of `N` did apply (or finish it by hand), then record the real state and rerun:
+
+```bash
+docker compose run --rm migrate force <N-1>   # N's changes undone
+docker compose run --rm migrate force <N>     # N's changes completed by hand
+make migrate
+```
 
 ## Flink job
 
@@ -102,7 +107,7 @@ Give the Flink source and the writer different consumer groups. Both start at `e
 | Process | Group id | Topic it reads |
 | --- | --- | --- |
 | Anomaly detector | `flink-metrics-aggregator` | `raw_metrics` |
-| Metrics writer | `timescale-writer` | `processed_metrics` |
+| Metrics writer | `clickhouse-writer` | `processed_metrics` |
 
 `jobmanager` sets `restart-strategy.type: exponential-delay`. Without a restart strategy the job stops for good on the first error, including starting before the collector has created `raw_metrics`.
 
@@ -128,9 +133,9 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 
 **Kafka send failures.** When `KafkaRawMetricsRepository.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host and from the host-network collector, `kafka:9092` from bridge-network services.
 
-**Writer is idle while raw samples are flowing.** It reads `processed_metrics`, which is filled by the Flink job. Raw samples on `raw_metrics` do not reach TimescaleDB. Confirm the job is running in the Web UI and that the writer group is `timescale-writer`.
+**Writer is idle while raw samples are flowing.** It reads `processed_metrics`, which is filled by the Flink job. Raw samples on `raw_metrics` do not reach ClickHouse. Confirm the job is running in the Web UI and that the writer group is `clickhouse-writer`.
 
-**Writer reprocesses the same batch.** Offsets commit only after `insert_batch` returns. A TimescaleDB error is logged as `Failed to write metrics batch to TimescaleDB (attempt n/5)` and retried. After five failures the exception propagates and the process exits; Compose restarts it (`restart: unless-stopped`) and the uncommitted batch is read again. Duplicate rows are dropped by the primary key.
+**Writer reprocesses the same batch.** Offsets commit only after `insert_batch` returns. A ClickHouse error is logged as `Failed to write metrics batch to ClickHouse (attempt n/5)` and retried. After five failures the exception propagates and the process exits; Compose restarts it (`restart: unless-stopped`) and the uncommitted batch is read again. The replayed rows are inserted again and collapsed by `ReplacingMergeTree` on merge; query with `FINAL` to hide them before that.
 
 **`is_anomaly` stays false.** The operator needs 20 samples of that `(machine_id, name)` in the last hour, the series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, or `system.memory.limit`. Battery series are omitted entirely when the agent has no power supply.
 
@@ -138,4 +143,4 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 
 **Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), `flink run` failed (the container exits non-zero), or a job is already running and submission was skipped.
 
-**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. TimescaleDB rows in `metrics` remain, subject to the 24-hour retention policy.
+**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL.

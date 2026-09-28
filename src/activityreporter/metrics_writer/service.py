@@ -4,7 +4,7 @@ import logging
 import os
 import time
 
-from activityreporter.metrics_writer.repository import KafkaProcessedMetricsRepository, TimescaleMetricsRepository
+from activityreporter.metrics_writer.repository import KafkaProcessedMetricsRepository, ClickHouseMetricsRepository
 from activityreporter.shared.metrics import ProcessedMetric
 
 logger = logging.getLogger(__name__)
@@ -17,23 +17,23 @@ class MetricsWriter:
     def __init__(
         self,
         processed_metrics: KafkaProcessedMetricsRepository,
-        timescale_metrics: TimescaleMetricsRepository,
+        metrics_store: ClickHouseMetricsRepository,
         batch_size: int = DEFAULT_BATCH_SIZE,
         batch_timeout_seconds: float = DEFAULT_BATCH_TIMEOUT_SECONDS,
     ):
         self._processed_metrics = processed_metrics
-        self._timescale_metrics = timescale_metrics
+        self._metrics_store = metrics_store
         self._batch_size = batch_size
         self._batch_timeout_seconds = batch_timeout_seconds
         self._running = True
 
     @classmethod
     def from_env(
-        cls, processed_metrics: KafkaProcessedMetricsRepository, timescale_metrics: TimescaleMetricsRepository
+        cls, processed_metrics: KafkaProcessedMetricsRepository, metrics_store: ClickHouseMetricsRepository
     ) -> MetricsWriter:
         return cls(
             processed_metrics,
-            timescale_metrics,
+            metrics_store,
             batch_size=int(os.environ.get("METRICS_WRITER_BATCH_SIZE", DEFAULT_BATCH_SIZE)),
             batch_timeout_seconds=float(
                 os.environ.get("METRICS_WRITER_BATCH_TIMEOUT_SECONDS", DEFAULT_BATCH_TIMEOUT_SECONDS)
@@ -60,7 +60,7 @@ class MetricsWriter:
             self._flush(batch)
 
     def _flush(self, batch: list[ProcessedMetric]) -> None:
-        # Commit only after the write: a crash replays the batch, and the insert is idempotent via ON CONFLICT.
-        self._timescale_metrics.insert_batch(batch)
+        # Commit only after the write: a crash replays the batch, and ReplacingMergeTree collapses the duplicates.
+        self._metrics_store.insert_batch(batch)
         self._processed_metrics.commit()
-        logger.info("Wrote %d metrics to TimescaleDB and committed offsets", len(batch))
+        logger.info("Wrote %d metrics to ClickHouse and committed offsets", len(batch))

@@ -2,7 +2,7 @@ FLINK_PYTHON := flink/.venv/bin/python
 KAFKA_CONNECTOR_JAR := flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar
 KAFKA_CONNECTOR_URL := https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.2.0-1.19/flink-sql-connector-kafka-3.2.0-1.19.jar
 
-.PHONY: agent collector metrics-writer anomaly-detector test up down
+.PHONY: agent collector metrics-writer anomaly-detector test up down migrate migrate-down migrate-new
 
 agent:
 	uv run agent
@@ -27,10 +27,20 @@ $(KAFKA_CONNECTOR_JAR):
 test:
 	uv run pytest
 
-# Kafka has no volume, so topics and offsets are reset; TimescaleDB data is kept.
+# Kafka has no volume, so topics and offsets are reset; ClickHouse data is kept.
 up:
 	docker compose down --remove-orphans
 	docker compose up -d --build
 
 down:
 	docker compose down --remove-orphans
+
+migrate:
+	docker compose run --rm migrate up
+
+migrate-down:
+	docker compose run --rm migrate down 1
+
+# make migrate-new name=add_foo_to_metrics
+migrate-new:
+	docker compose run --rm --no-deps --user $$(id -u):$$(id -g) migrate create -ext sql -dir /migrations -seq $(name)
