@@ -5,8 +5,8 @@ import time
 
 from kafka import KafkaConsumer
 
-from connectors.timescale_connector import TimescaleConnector
-from core.metrics import ProcessedMetric
+from activityreporter.metrics_writer.repository import TimescaleConnector
+from activityreporter.shared.metrics import ProcessedMetric
 
 logger = logging.getLogger(__name__)
 

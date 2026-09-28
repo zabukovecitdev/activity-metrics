@@ -5,7 +5,7 @@ import machineid
 from zeroconf import ServiceInfo
 from zeroconf.asyncio import AsyncZeroconf
 
-from core.discovery import METRICS_PATH, SERVICE_TYPE
+from activityreporter.shared.discovery import METRICS_PATH, SERVICE_TYPE
 
 
 def lan_ip() -> str:
