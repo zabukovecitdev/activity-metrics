@@ -61,6 +61,32 @@ services:
         reservations:
           memory: 2G
 
+  # clickhouse/clickhouse-server:24.1 skips CLICKHOUSE_DB when the data directory
+  # is empty, so a fresh volume has no metrics database. golang-migrate exits
+  # before applying anything in that case, and the writer never starts.
+  clickhouse-init:
+    image: clickhouse/clickhouse-server:24.1
+    container_name: clickhouse-init
+    restart: "no"
+    environment:
+      CLICKHOUSE_DB: metrics
+      CLICKHOUSE_USER: user
+      CLICKHOUSE_PASSWORD: password
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        for _ in $$(seq 1 60); do
+          if clickhouse-client --host clickhouse -u "$$CLICKHOUSE_USER" --password "$$CLICKHOUSE_PASSWORD" -q "CREATE DATABASE IF NOT EXISTS $$CLICKHOUSE_DB"; then
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "Could not create ClickHouse database $$CLICKHOUSE_DB" >&2
+        exit 1
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
   migrate:
     image: migrate/migrate:v4.20.1
     container_name: migrate
@@ -71,8 +97,8 @@ services:
     volumes:
       - ./db/migrations:/migrations
     depends_on:
-      clickhouse:
-        condition: service_healthy
+      clickhouse-init:
+        condition: service_completed_successfully
 
   collector:
     build: .
