@@ -1,7 +1,7 @@
 from zeroconf.asyncio import AsyncServiceInfo
 
-from collector.discovery import metrics_url
-from core.discovery import SERVICE_TYPE
+from activityreporter.collector.discovery import metrics_url
+from activityreporter.shared.discovery import SERVICE_TYPE
 
 NAME = f"laptop-abc.{SERVICE_TYPE}"
 

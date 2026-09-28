@@ -2,7 +2,7 @@
 
 Host agents sample CPU, memory, and battery and serve them over HTTP. A collector scrapes those agents, a PyFlink job scores gauge anomalies, and a writer stores the scored samples in TimescaleDB.
 
-Console scripts and in-module imports still use the package names from before the move under `src/activityreporter/`. [docs/operations.md](docs/operations.md) lists those references and how to run the stack.
+Console scripts and imports use the `activityreporter` package under `src/activityreporter/`. [docs/operations.md](docs/operations.md) covers how to run the stack.
 
 Python 3.14+. Dependencies and console scripts are declared in `pyproject.toml`. Local commands go through `uv` (`Makefile`).
 
@@ -49,7 +49,7 @@ The tree under `src/activityreporter/` is split by process, with a service modul
 | `shared/discovery.py` | mDNS service type and metrics path. |
 | `shared/clickhouse.py` | Async ClickHouse client. |
 
-Imports, console scripts, the Hatch package list, and tests still use the module names from before this move (`client`, `collector`, `connectors`, `consumers`, `core`). The map and the commands that depend on it are in [docs/operations.md](docs/operations.md).
+Imports, console scripts, the Hatch package list, and tests use `activityreporter.*`. Commands are in [docs/operations.md](docs/operations.md).
 
 ## HTTP API
 
@@ -155,7 +155,7 @@ Scoring rules in `AnomalyDetector.process_element`:
 
 `MAD` (`anomaly_detector/mad.py`):
 
-- Needs at least 2 values. `is_anomaly` imports `InsufficientDataError` from `core.errors.insufficient_data_error` and raises it below that count. That module was removed in the layout move, and the Flink operator does not call `MAD` below 20 values.
+- Needs at least 2 values. `is_anomaly` raises `InsufficientDataError` from `anomaly_detector/errors.py` below that count. The Flink operator does not call `MAD` below 20 values. The returned flag is a Python `bool`; a `numpy.bool_` cannot be encoded by PyFlink's boolean coder.
 - Modified z-score uses scale `1.4826` and threshold `3.5`.
 - When the median absolute deviation is 0, the last value is an anomaly when it differs from the median.
 
@@ -197,4 +197,4 @@ V5 leaves `raw_metrics` in place. Current collector and writer code do not inser
 
 ## Tests
 
-Tests mirror the package directories (`tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/metrics_writer`) and import the pre-move module names. `make test` runs `uv run pytest`.
+Tests mirror the package directories (`tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/metrics_writer`) and import `activityreporter.*`. `make test` runs `uv run pytest`.

@@ -1,7 +1,7 @@
 import pytest
 
-from core.errors.insufficient_data_error import InsufficientDataError
-from core.mad import MAD
+from activityreporter.anomaly_detector.errors import InsufficientDataError
+from activityreporter.anomaly_detector.mad import MAD
 
 
 def test_mad_is_anomaly_returns_false_when_value_close_to_median():
@@ -11,7 +11,7 @@ def test_mad_is_anomaly_returns_false_when_value_close_to_median():
 
     result = mad.is_anomaly(values)
 
-    assert bool(result) is False
+    assert result is False
 
 
 def test_mad_raises_when_too_few_values_provided():
@@ -30,7 +30,7 @@ def test_mad_is_anomaly_returns_true_for_clear_outlier():
 
     result = mad.is_anomaly(values)
 
-    assert bool(result) is True
+    assert result is True
 
 
 def test_mad_is_anomaly_returns_false_for_moderate_deviation_below_threshold():
@@ -40,7 +40,7 @@ def test_mad_is_anomaly_returns_false_for_moderate_deviation_below_threshold():
 
     result = mad.is_anomaly(values)
 
-    assert bool(result) is False
+    assert result is False
 
 
 def test_mad_zero_fallback_returns_false_when_last_value_equals_median():
@@ -50,7 +50,7 @@ def test_mad_zero_fallback_returns_false_when_last_value_equals_median():
 
     result = mad.is_anomaly(values)
 
-    assert bool(result) is False
+    assert result is False
 
 
 def test_mad_zero_fallback_returns_true_when_last_value_differs_from_median():
@@ -60,4 +60,4 @@ def test_mad_zero_fallback_returns_true_when_last_value_differs_from_median():
 
     result = mad.is_anomaly(values)
 
-    assert bool(result) is True
+    assert result is True

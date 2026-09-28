@@ -6,9 +6,9 @@ $(KAFKA_CONNECTOR_JAR):
 	mkdir -p $(dir $(KAFKA_CONNECTOR_JAR))
 	curl -sSL -o $(KAFKA_CONNECTOR_JAR) $(KAFKA_CONNECTOR_URL)
 
-.PHONY: flink-example
+.PHONY: mad
 mad: $(KAFKA_CONNECTOR_JAR)
-	PYTHONPATH=src $(FLINK_PYTHON) flink-jobs/metrics_aggregator.py
+	PYTHONPATH=src KAFKA_CONNECTOR_JAR=$(abspath $(KAFKA_CONNECTOR_JAR)) $(FLINK_PYTHON) src/activityreporter/anomaly_detector/main.py
 
 .PHONY: client collector metrics-writer test
 client:
