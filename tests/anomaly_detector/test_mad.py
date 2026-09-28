@@ -61,3 +61,29 @@ def test_mad_zero_fallback_returns_true_when_last_value_differs_from_median():
     result = mad.is_anomaly(values)
 
     assert result is True
+
+
+def test_mad_zero_falls_back_to_scaled_mean_absolute_deviation():
+    values = [5.0] * 19 + [6.0]
+
+    score = MAD().score(values)
+
+    assert score.median == 5.0
+    assert score.scale == pytest.approx(MAD.MEAN_SIGMA * 0.05)
+    assert score.score == pytest.approx(1 / (MAD.MEAN_SIGMA * 0.05))
+
+
+def test_mad_score_is_zero_when_all_values_are_equal():
+    score = MAD().score([5.0, 5.0, 5.0])
+
+    assert score.score == 0.0
+    assert score.scale == 0.0
+
+
+def test_mad_score_is_modified_z_score_of_last_value():
+    # median 5, absolute deviations median 2
+    score = MAD().score([1, 3, 5, 7, 9])
+
+    assert score.median == 5.0
+    assert score.scale == pytest.approx(MAD.SIGMA * 2)
+    assert score.score == pytest.approx(4 / (MAD.SIGMA * 2))

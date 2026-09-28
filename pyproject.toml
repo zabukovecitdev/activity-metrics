@@ -24,7 +24,8 @@ dependencies = [
 [project.scripts]
 agent = "activityreporter.agent.main:cli"
 collector = "activityreporter.collector.main:cli"
-metrics-writer = "activityreporter.metrics_writer.main:cli"
+metrics-writer = "activityreporter.clickhouse_writer.main:metrics_cli"
+anomalies-writer = "activityreporter.clickhouse_writer.main:anomalies_cli"
 
 [dependency-groups]
 dev = [

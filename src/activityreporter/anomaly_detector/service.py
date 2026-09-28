@@ -1,26 +1,26 @@
+import time
+from dataclasses import astuple
+
+from pyflink.common import Row
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import KeyedProcessFunction, RuntimeContext
 from pyflink.datastream.state import ListStateDescriptor
 
-from activityreporter.anomaly_detector.mad import MAD
+from activityreporter.anomaly_detector.detection import detect, is_scored
 
 WINDOW_MS = 60 * 60 * 1000
-MIN_VALUES_FOR_MAD = 20
-# MAD's deviation is 0 for flags and near-constant gauges, so every small step would be flagged.
-NOT_ANOMALY_SCORED = {"system.battery.charging", "system.battery.utilization", "system.memory.limit"}
 
 
 class AnomalyDetector(KeyedProcessFunction):
+    """Emits an Anomaly row for each anomalous sample and nothing for the rest."""
+
     def open(self, runtime_context: RuntimeContext):
         self.recent_values = runtime_context.get_list_state(
             ListStateDescriptor("recent_values", Types.TUPLE([Types.LONG(), Types.DOUBLE()]))
         )
-        self.mad = MAD()
 
     def process_element(self, value, ctx: 'KeyedProcessFunction.Context'):
-        if value["type"] != "gauge" or value["name"] in NOT_ANOMALY_SCORED:
-            value["is_anomaly"] = False
-            yield value
+        if not is_scored(value):
             return
 
         event_time = ctx.timestamp()
@@ -28,6 +28,7 @@ class AnomalyDetector(KeyedProcessFunction):
         window.append((event_time, value["value"]))
         self.recent_values.update(window)
 
-        values = [v for _, v in window]
-        value["is_anomaly"] = len(values) >= MIN_VALUES_FOR_MAD and self.mad.is_anomaly(values)
-        yield value
+        anomaly = detect(value, [v for _, v in window], detected_at=time.time())
+        if anomaly is not None:
+            # Positional, in dataclass field order, which is the order of ANOMALY_TYPE_INFO.
+            yield Row(*astuple(anomaly))

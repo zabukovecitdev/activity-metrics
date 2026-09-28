@@ -100,21 +100,33 @@ services:
     container_name: metrics-writer
     command: metrics-writer
     restart: unless-stopped
-    environment:
+    environment: &clickhouse-writer-env
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: kafka:9092
-      KAFKA_PROCESSED_METRICS_TOPIC: processed_metrics
-      KAFKA_CONSUMER_GROUP_ID: clickhouse-writer
+      KAFKA_TOPIC: raw_metrics
+      KAFKA_CONSUMER_GROUP_ID: clickhouse-metrics-writer
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: "8123"
       CLICKHOUSE_DB: metrics
       CLICKHOUSE_USER: user
       CLICKHOUSE_PASSWORD: password
-    depends_on:
+    depends_on: &clickhouse-writer-depends-on
       kafka:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+
+  anomalies-writer:
+    build: .
+    image: activityreporter:latest
+    container_name: anomalies-writer
+    command: anomalies-writer
+    restart: unless-stopped
+    environment:
+      <<: *clickhouse-writer-env
+      KAFKA_TOPIC: anomalies
+      KAFKA_CONSUMER_GROUP_ID: clickhouse-anomalies-writer
+    depends_on: *clickhouse-writer-depends-on
 
   jobmanager:
     build:
@@ -158,7 +170,7 @@ services:
     environment:
       KAFKA_CONNECTION_STRING: kafka:9092
       KAFKA_RAW_METRICS_TOPIC: raw_metrics
-      KAFKA_PROCESSED_METRICS_TOPIC: processed_metrics
+      KAFKA_ANOMALIES_TOPIC: anomalies
     volumes:
       - ./src:/opt/flink/src:ro
       - ./docker/flink/submit-jobs.sh:/opt/flink/submit-jobs.sh:ro
