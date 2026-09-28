@@ -15,7 +15,7 @@ Setup, configuration, and failure modes for the agent, collector, Flink job, and
 
 The `agent` Compose service does not publish port `8080`. The collector uses `network_mode: host` because mDNS multicast does not cross the Docker bridge, and on the host network the DNS name `kafka` does not resolve. Its `KAFKA_CONNECTION_STRING` is therefore `localhost:9094`.
 
-An agent run on the host (`make agent`) advertises on the LAN, which that collector can discover. The Compose agent is on the bridge network with no published port, and `COLLECTOR_ENDPOINTS` defaults to empty, so this collector has no URL for it unless you set `COLLECTOR_ENDPOINTS` to an address the host network can reach.
+`make agent` listens on `0.0.0.0:8080`. That bind is `PORT` in `agent/main.py`, not an environment variable. The process advertises on the LAN, which the host-network collector can discover. The Compose agent uses the same bind on the bridge network and publishes no port, and `COLLECTOR_ENDPOINTS` defaults to empty, so this collector has no URL for it unless you set `COLLECTOR_ENDPOINTS` to an address the host network can reach.
 
 Process commands from the `Makefile`:
 
@@ -27,11 +27,11 @@ Process commands from the `Makefile`:
 | `test` | `uv run pytest` | |
 | `anomaly-detector` | `flink/.venv/bin/python -m activityreporter.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
-`anomaly-detector` creates `flink/.venv` with Python 3.11 and `apache-flink==1.19.1`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
+`anomaly-detector` runs `python3.11 -m venv flink/.venv`, installs `apache-flink==1.19.1` there, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`. It does not use the Python 3.14 package environment. `python3.11` must already be on `PATH`; the Makefile does not install it.
 
 ## Environment
 
-Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are noted when they differ.
+Defaults below are the `from_env` / `os.environ.get` fallbacks. The anomaly detector reads Kafka settings at import instead of through `from_env`. Compose overrides are noted when they differ.
 
 ### Collector
 
@@ -52,7 +52,9 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | `KAFKA_PROCESSED_METRICS_TOPIC` | `processed_metrics` | `processed_metrics` |
 | `KAFKA_CONNECTOR_JAR` | empty | unset (default applies) |
 
-An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already has that connector in `/opt/flink/lib`, and loading it a second time is what the submitter avoids. Local runs need the jar on the classpath because the `apache-flink` wheel does not include it. `make anomaly-detector` sets it; the job turns the path into a `file://` URI.
+An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already has that connector in `/opt/flink/lib`, and loading it a second time is what the submitter avoids. Local runs need the jar on the classpath because the `apache-flink` wheel does not include it. `make anomaly-detector` sets it; the job turns the path into a `file://` URI via `Path.resolve().as_uri()`. Pass a filesystem path. A value that already starts with `file://` is resolved as a relative path and the JVM does not load the jar.
+
+`KAFKA_CONNECTOR_JAR` is read in `anomaly_detector/main.py` at import. Bootstrap servers and both topic names are read in `anomaly_detector/repository.py` at import. The consumer group is the constant `flink-metrics-aggregator`, not an environment variable. Export the variables before `make anomaly-detector`. The submitter's Compose environment is visible because `flink run` starts a new interpreter. Changing the variables after import has no effect.
 
 `docker/flink/Dockerfile` fetches the same jar (`3.2.0-1.19` on Flink `1.19.1`) and runs `chmod 644` on it. `ADD` from a URL otherwise leaves the file mode `600`, owned by root, and the `flink` user (uid 9999) cannot read it. The job then fails at submission with the connector classes unresolved.
 
@@ -85,7 +87,9 @@ From the host, Timescale is `localhost:5433` with the same database, user, and p
 | `CLICKHOUSE_PASSWORD` | `password` | `password` |
 | `CLICKHOUSE_DB` | `metrics` | `metrics` |
 
-`ClickHouseConnector.from_env` sets `autogenerate_session_id=False`. One client is shared across coroutines, and a per-client session rejects concurrent queries. Running `shared/clickhouse.py` as a script prints the result of `SELECT version()`. Nothing else in the repo calls the connector.
+`ClickHouseConnector.from_env` sets `autogenerate_session_id=False`. One client is shared across coroutines, and a per-client session rejects concurrent queries. No pipeline service constructs this client.
+
+Running `shared/clickhouse.py` as a script (`python -m activityreporter.shared.clickhouse` from an installed wheel, or `PYTHONPATH=src`) queries `SELECT version()`, prints `result_rows`, then inserts one row into ClickHouse table `metrics` (`timestamp`, `name`, `value`, `type`, `unit`, `machine_id`). The repo has no ClickHouse migration. That insert fails unless the table already exists in database `metrics`. The script is not started by Compose.
 
 ## Flink job
 
@@ -118,7 +122,7 @@ The wheel contains `src/activityreporter`. Console scripts:
 | `collector` | `activityreporter.collector.main:cli` |
 | `metrics-writer` | `activityreporter.metrics_writer.main:cli` |
 
-The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent`, `collector`, and `metrics-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
+The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`, and sets no `CMD`. Compose runs it for `agent`, `collector`, and `metrics-writer`, each with its console script as `command`. `docker run activityreporter:latest` without a command starts the base image's `python3` and does not serve metrics or consume Kafka. The anomaly detector runs in the Flink image (`activityreporter-flink:1.19.1`) instead. There is no console script for it.
 
 ## Troubleshooting
 
@@ -139,3 +143,9 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 **Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), `flink run` failed (the container exits non-zero), or a job is already running and submission was skipped.
 
 **`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. TimescaleDB rows in `metrics` remain, subject to the 24-hour retention policy.
+
+**`make anomaly-detector` fails before the job starts.** The recipe is `python3.11 -m venv flink/.venv`. PyFlink 1.19 needs CPython 3.8–3.11 (`docker/flink/Dockerfile`); the project's 3.14 interpreter cannot host it. Install Python 3.11 and rerun the target. The first successful run also downloads the Kafka connector into `flink/lib/`.
+
+**Writer logs `Skipping malformed record` and Timescale stays behind.** `parse_record` in `metrics_writer/repository.py` drops a value that is not JSON or does not construct a `ProcessedMetric`. The process keeps running. Offsets commit only after a batch that contains at least one parsed row is inserted. A partition of only bad records is polled again every second and never committed.
+
+**Taskmanager logs grow with every sample.** `anomaly_detector/main.py` calls `processed_metrics.print()` before the Kafka sink, so each scored row is logged on the taskmanager as well as published to `processed_metrics`.
