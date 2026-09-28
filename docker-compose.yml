@@ -32,22 +32,15 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
 
-  timescaledb:
-    image: timescale/timescaledb:latest-pg16
-    container_name: timescaledb
-    restart: unless-stopped
-    ports:
-      - "5433:5432"
-    environment:
-      POSTGRES_DB: activityreporter
-      POSTGRES_USER: activityreporter
-      POSTGRES_PASSWORD: activityreporter
-    volumes:
-      - timescaledb-data:/var/lib/postgresql/data
-
   clickhouse:
     image: clickhouse/clickhouse-server:24.1
     container_name: clickhouse-server
+    restart: unless-stopped
+    healthcheck:
+      test: clickhouse-client -u $$CLICKHOUSE_USER --password $$CLICKHOUSE_PASSWORD -q 'SELECT 1'
+      interval: 5s
+      timeout: 5s
+      retries: 20
     ports:
       - "8123:8123"
       - "9000:9000"
@@ -69,18 +62,17 @@ services:
           memory: 2G
 
   migrate:
-    image: flyway/flyway:13.7.0
+    image: migrate/migrate:v4.20.1
     container_name: migrate
-    command: migrate
+    entrypoint: ["sh", "-c", 'exec migrate -path /migrations -database "$$DATABASE_URL" "$$@"', "--"]
+    command: ["up"]
     environment:
-      FLYWAY_URL: jdbc:postgresql://timescaledb:5432/activityreporter
-      FLYWAY_USER: activityreporter
-      FLYWAY_PASSWORD: activityreporter
-      FLYWAY_CONNECT_RETRIES: "10"
+      DATABASE_URL: clickhouse://clickhouse:9000?username=user&password=password&database=metrics&x-multi-statement=true&x-migrations-table-engine=MergeTree
     volumes:
-      - ./db/migrations:/flyway/sql:ro
+      - ./db/migrations:/migrations
     depends_on:
-      - timescaledb
+      clickhouse:
+        condition: service_healthy
 
   collector:
     build: .
@@ -112,12 +104,12 @@ services:
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: kafka:9092
       KAFKA_PROCESSED_METRICS_TOPIC: processed_metrics
-      KAFKA_CONSUMER_GROUP_ID: timescale-writer
-      TIMESCALE_HOST: timescaledb
-      TIMESCALE_PORT: "5432"
-      TIMESCALE_DB: activityreporter
-      TIMESCALE_USER: activityreporter
-      TIMESCALE_PASSWORD: activityreporter
+      KAFKA_CONSUMER_GROUP_ID: clickhouse-writer
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DB: metrics
+      CLICKHOUSE_USER: user
+      CLICKHOUSE_PASSWORD: password
     depends_on:
       kafka:
         condition: service_started
@@ -179,5 +171,4 @@ services:
         condition: service_healthy
 
 volumes:
-  timescaledb-data:
   clickhouse_data:

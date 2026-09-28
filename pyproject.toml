@@ -16,10 +16,9 @@ dependencies = [
     "uvicorn (>=0.53.0,<0.54.0)",
     "requests (>=2.34.2,<3.0.0)",
     "httpx (>=0.28.1,<0.29.0)",
-    "psycopg[binary] (>=3.2.10,<4.0.0)",
     "numpy (>=2.5.3,<3.0.0)",
     "zeroconf>=0.151.3",
-    "clickhouse-connect[async]>=1.9.0",
+    "clickhouse-connect>=1.9.0",
 ]
 
 [project.scripts]

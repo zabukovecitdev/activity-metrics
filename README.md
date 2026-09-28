@@ -1,7 +1,7 @@
 # ActivityReporter
 
 ```
-agent ──HTTP──▶ collector ──▶ Kafka raw_metrics ──▶ anomaly_detector (Flink) ──▶ Kafka processed_metrics ──▶ metrics_writer ──▶ TimescaleDB
+agent ──HTTP──▶ collector ──▶ Kafka raw_metrics ──▶ anomaly_detector (Flink) ──▶ Kafka processed_metrics ──▶ metrics_writer ──▶ ClickHouse
 ```
 
 ## Project layout
@@ -19,11 +19,11 @@ One package, `src/activityreporter/`, split by application. Every application ha
 
 ```
 src/activityreporter/
-  shared/            code used by more than one application: Metric, mDNS constants, ClickHouse client
+  shared/            code used by more than one application: Metric, mDNS constants
   agent/             runs on every machine, serves /v1/metrics
   collector/         scrapes agents, publishes to raw_metrics
   anomaly_detector/  PyFlink job, raw_metrics → processed_metrics with is_anomaly
-  metrics_writer/    processed_metrics → TimescaleDB
+  metrics_writer/    processed_metrics → ClickHouse
 tests/               mirrors src/activityreporter/
 ```
 
@@ -31,7 +31,10 @@ tests/               mirrors src/activityreporter/
 
 | Command                 | Does                                                                 |
 |-------------------------|----------------------------------------------------------------------|
-| `make up`               | (re)starts the whole stack in Docker; Kafka is reset, TimescaleDB is kept |
+| `make up`               | (re)starts the whole stack in Docker; Kafka is reset, ClickHouse is kept |
+| `make migrate`          | applies pending ClickHouse migrations                                |
+| `make migrate-down`     | reverts the latest migration                                         |
+| `make migrate-new name=x` | creates the next numbered `up`/`down` migration pair               |
 | `make down`             | stops the stack                                                      |
 | `make agent`            | runs the agent locally                                               |
 | `make collector`        | runs the collector locally                                           |
@@ -159,35 +162,31 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 ## Metrics writer
 
-`KafkaProcessedMetricsRepository` (`metrics_writer/repository.py`) reads `KAFKA_PROCESSED_METRICS_TOPIC` (default `processed_metrics`) in group `KAFKA_CONSUMER_GROUP_ID` (default `timescale-writer`). Auto-commit is off. Offset reset is `earliest`.
+`KafkaProcessedMetricsRepository` (`metrics_writer/repository.py`) reads `KAFKA_PROCESSED_METRICS_TOPIC` (default `processed_metrics`) in group `KAFKA_CONSUMER_GROUP_ID` (default `clickhouse-writer`). Auto-commit is off. Offset reset is `earliest`.
 
 Records are decoded as JSON into `ProcessedMetric`. A batch flushes when it reaches `METRICS_WRITER_BATCH_SIZE` (default 100) or when `METRICS_WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
-`TimescaleMetricsRepository.insert_batch` writes the TimescaleDB `metrics` table, then `MetricsWriter` commits offsets. A failed insert leaves the offsets uncommitted so the batch is replayed. The insert is idempotent:
+`ClickHouseMetricsRepository.insert_batch` writes the ClickHouse `metrics` table over HTTP (`clickhouse-connect`), then `MetricsWriter` commits offsets. A failed insert leaves the offsets uncommitted so the batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 
 ```sql
-ON CONFLICT (machine_id, name, attributes, "timestamp") DO NOTHING
+SELECT machine_id, name, count() FROM metrics FINAL GROUP BY machine_id, name
 ```
 
-`attributes` is part of the primary key, so `None` is stored as `{}`. `timestamp` is epoch seconds passed through `to_timestamp`.
+`None` attributes are stored as an empty map. `timestamp` is epoch seconds converted to a UTC `datetime` (`DateTime64(3, 'UTC')`).
 
-Connection errors retry up to 5 times. Backoff is `backoff_base_seconds * 2^(attempt-1)` with a 1 second base (1s, 2s, 4s, 8s). A closed connection is reopened. A live connection is rolled back and reused.
+ClickHouse errors retry up to 5 times. Backoff is `backoff_base_seconds * 2^(attempt-1)` with a 1 second base (1s, 2s, 4s, 8s). The HTTP client holds no transaction, so the same client is reused.
 
 ## Database
 
-Flyway runs `db/migrations` against TimescaleDB (`activityreporter` database) from the `migrate` Compose service.
+[golang-migrate](https://github.com/golang-migrate/migrate) runs `db/migrations` against ClickHouse (`metrics` database) from the `migrate` Compose service. Applied versions are recorded in `metrics.schema_migrations`. Every migration is a numbered pair, `NNNNNN_<name>.up.sql` and `NNNNNN_<name>.down.sql`; create one with `make migrate-new name=<name>`.
 
 | Migration | Effect |
 | --- | --- |
-| V1 | `raw_metrics` hypertable, wide CPU/memory columns. |
-| V2 | 24-hour retention on `raw_metrics`. |
-| V3 | `raw_metrics.is_anomaly` (default false). |
-| V4 | Nullable `battery_charging` and `battery_percentage` on `raw_metrics`. |
-| V5 | `metrics` hypertable in long form, 24-hour retention. This is the table the writer inserts into. |
+| 000001 | `metrics` table, `ReplacingMergeTree`, hourly partitions, 24-hour TTL. This is the table the writer inserts into. |
 
-V5 leaves `raw_metrics` in place. Current collector and writer code do not insert into it. Query `metrics` for samples produced by this pipeline.
+`metrics` columns: `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `is_anomaly`, `ingested_at`. Sorting (and deduplication) key `(machine_id, name, timestamp, cityHash64(mapSort(attributes)))`: a `Map` cannot be a sorting key, so the attributes are keyed by the hash of the sorted map. `ttl_only_drop_parts` drops whole expired hourly parts instead of rewriting them.
 
-`metrics` columns: `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (JSONB, default `{}`), `is_anomaly`, `ingested_at`. Primary key `(machine_id, name, attributes, timestamp)`.
+The TimescaleDB schema (Flyway `V1`–`V5`) was removed along with TimescaleDB; it is in git history.
 
 ## Tests
 
