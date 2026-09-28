@@ -7,9 +7,9 @@ from pyflink.common.typeinfo import Types
 from pyflink.datastream import StreamExecutionEnvironment
 
 from activityreporter.anomaly_detector.repository import (
-    PROCESSED_METRIC_TYPE_INFO,
+    ANOMALY_TYPE_INFO,
     event_time_watermarks,
-    kafka_processed_metrics_sink,
+    kafka_anomalies_sink,
     kafka_raw_metrics_source,
 )
 from activityreporter.anomaly_detector.service import AnomalyDetector
@@ -31,12 +31,12 @@ def main() -> None:
     env.set_parallelism(PARALLELISM)
 
     raw_metrics = env.from_source(kafka_raw_metrics_source(), event_time_watermarks(), "Kafka Source")
-    processed_metrics = raw_metrics \
+    anomalies = raw_metrics \
         .key_by(lambda m: (m["machine_id"], m["name"]), key_type=Types.TUPLE([Types.STRING(), Types.STRING()])) \
-        .process(AnomalyDetector(), output_type=PROCESSED_METRIC_TYPE_INFO)
+        .process(AnomalyDetector(), output_type=ANOMALY_TYPE_INFO)
 
-    processed_metrics.print()
-    processed_metrics.sink_to(kafka_processed_metrics_sink())
+    anomalies.print()
+    anomalies.sink_to(kafka_anomalies_sink())
 
     env.execute("Anomaly Detection")
 
