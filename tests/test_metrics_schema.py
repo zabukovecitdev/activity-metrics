@@ -1,8 +1,9 @@
 def test_runtime_entrypoints_import():
     from activityreporter.agent.main import app
     from activityreporter.collector.main import cli as collector_cli
-    from activityreporter.metrics_writer.main import main as writer_main
+    from activityreporter.clickhouse_writer.main import anomalies_cli, metrics_cli
 
     assert app is not None
     assert callable(collector_cli)
-    assert callable(writer_main)
+    assert callable(metrics_cli)
+    assert callable(anomalies_cli)

@@ -1,3 +1,4 @@
+import uuid
 from unittest.mock import patch
 
 import httpx
@@ -29,6 +30,14 @@ async def test_each_agent_metric_becomes_its_own_message():
     assert "system.cpu.utilization" in {m.name for m in published}
     assert {m.machine_id for m in published} == {machineid.id()}
     assert all(m.type and m.unit and isinstance(m.timestamp, float) for m in published)
+
+
+async def test_each_published_metric_gets_its_own_uuid7():
+    published = await collect_with_transport(httpx.ASGITransport(app=app))
+
+    ids = [uuid.UUID(m.metric_id) for m in published]
+    assert {i.version for i in ids} == {7}
+    assert len(set(ids)) == len(ids)
 
 
 async def test_malformed_response_is_skipped():
