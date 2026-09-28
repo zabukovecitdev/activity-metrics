@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from collections.abc import Iterable
 from dataclasses import asdict
 from datetime import datetime
@@ -48,6 +49,7 @@ def parse_metrics(payload: dict[str, Any]) -> list[Metric]:
             unit=m["unit"],
             value=float(m["value"]),
             machine_id=machine_id,
+            metric_id=str(uuid.uuid7()),
             attributes=m.get("attributes"),
         )
         for m in payload["metrics"]

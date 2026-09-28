@@ -1,33 +1,41 @@
+from dataclasses import dataclass
+
 import numpy as np
 
 from activityreporter.anomaly_detector.errors import InsufficientDataError
 
 
+@dataclass(frozen=True)
+class Score:
+    score: float
+    median: float
+    scale: float
+
+
 class MAD:
     SIGMA = 1.4826
+    # Iglewicz & Hoaglin: when over half the values equal the median, MAD is 0
+    # and the mean absolute deviation, scaled to match it, stands in.
+    MEAN_SIGMA = 1.253314
     MINIMAL_POINT_COUNT = 2
     THRESHOLD = 3.5
 
-    def is_anomaly(self, values: list[float]) -> bool:
-        """True if the last (most recent) value deviates from the rest by Median Absolute Deviation."""
+    def score(self, values: list[float]) -> Score:
+        """Modified z-score of the last (most recent) value against all of them."""
         if len(values) < self.MINIMAL_POINT_COUNT:
             raise InsufficientDataError(values)
 
-        last_value = values[-1]
+        # float() throughout: numpy scalars can't be encoded by PyFlink's coders.
+        median = float(np.median(values))
+        deviations = np.abs(np.asarray(values, dtype=float) - median)
+        scale = self.SIGMA * float(np.median(deviations))
+        if scale == 0:
+            scale = self.MEAN_SIGMA * float(np.mean(deviations))
+        if scale == 0:
+            # Every value is the same.
+            return Score(score=0.0, median=median, scale=0.0)
 
-        median = np.median(values)
-        deviation = list(map(lambda x: abs(x - median), values))
-        median_of_deviations = np.median(deviation)
+        return Score(score=float(deviations[-1]) / scale, median=median, scale=scale)
 
-        if float(median_of_deviations) == 0:
-            # numpy comparisons return numpy.bool_, which PyFlink's boolean
-            # coder cannot encode (chr() rejects it) and which kills the job
-            # the first time a series is scored.
-            return bool(last_value != median)
-
-        last_value_deviation = abs(last_value - median)
-
-        scaled_mad = self.SIGMA * median_of_deviations
-        modified_z_score = last_value_deviation / scaled_mad
-
-        return bool(modified_z_score >= self.THRESHOLD)
+    def is_anomaly(self, values: list[float]) -> bool:
+        return self.score(values).score >= self.THRESHOLD
