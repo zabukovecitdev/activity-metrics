@@ -23,9 +23,9 @@ dependencies = [
 ]
 
 [project.scripts]
-activityreporter = "activityreporter.agent.main:cli"
-metrics-writer = "activityreporter.metrics_writer.main:main"
+agent = "activityreporter.agent.main:cli"
 collector = "activityreporter.collector.main:cli"
+metrics-writer = "activityreporter.metrics_writer.main:cli"
 
 [dependency-groups]
 dev = [

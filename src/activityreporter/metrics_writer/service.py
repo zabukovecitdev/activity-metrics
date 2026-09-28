@@ -1,54 +1,42 @@
-import json
+from __future__ import annotations
+
 import logging
 import os
 import time
 
-from kafka import KafkaConsumer
-
-from activityreporter.metrics_writer.repository import TimescaleConnector
+from activityreporter.metrics_writer.repository import KafkaProcessedMetricsRepository, TimescaleMetricsRepository
 from activityreporter.shared.metrics import ProcessedMetric
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BATCH_SIZE = 100
 DEFAULT_BATCH_TIMEOUT_SECONDS = 5.0
-POLL_TIMEOUT_MS = 1000
 
 
-class MetricsConsumer:
+class MetricsWriter:
     def __init__(
         self,
-        bootstrap_servers: str,
-        topic: str,
-        group_id: str,
-        writer: TimescaleConnector,
+        processed_metrics: KafkaProcessedMetricsRepository,
+        timescale_metrics: TimescaleMetricsRepository,
         batch_size: int = DEFAULT_BATCH_SIZE,
         batch_timeout_seconds: float = DEFAULT_BATCH_TIMEOUT_SECONDS,
     ):
-        self._writer = writer
+        self._processed_metrics = processed_metrics
+        self._timescale_metrics = timescale_metrics
         self._batch_size = batch_size
         self._batch_timeout_seconds = batch_timeout_seconds
         self._running = True
-        self._consumer = KafkaConsumer(
-            topic,
-            bootstrap_servers=[bootstrap_servers],
-            group_id=group_id,
-            value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-            key_deserializer=lambda k: k.decode("utf-8") if k else None,
-            enable_auto_commit=False,
-            auto_offset_reset="earliest",
-        )
 
     @classmethod
-    def from_env(cls, writer: TimescaleConnector) -> MetricsConsumer:
+    def from_env(
+        cls, processed_metrics: KafkaProcessedMetricsRepository, timescale_metrics: TimescaleMetricsRepository
+    ) -> MetricsWriter:
         return cls(
-            bootstrap_servers=os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094"),
-            topic=os.environ.get("KAFKA_PROCESSED_METRICS_TOPIC", "processed_metrics"),
-            group_id=os.environ.get("KAFKA_CONSUMER_GROUP_ID", "timescale-writer"),
-            writer=writer,
-            batch_size=int(os.environ.get("CONSUMER_BATCH_SIZE", DEFAULT_BATCH_SIZE)),
+            processed_metrics,
+            timescale_metrics,
+            batch_size=int(os.environ.get("METRICS_WRITER_BATCH_SIZE", DEFAULT_BATCH_SIZE)),
             batch_timeout_seconds=float(
-                os.environ.get("CONSUMER_BATCH_TIMEOUT_SECONDS", DEFAULT_BATCH_TIMEOUT_SECONDS)
+                os.environ.get("METRICS_WRITER_BATCH_TIMEOUT_SECONDS", DEFAULT_BATCH_TIMEOUT_SECONDS)
             ),
         )
 
@@ -58,28 +46,21 @@ class MetricsConsumer:
     def run(self) -> None:
         batch: list[ProcessedMetric] = []
         last_flush = time.monotonic()
-        try:
-            while self._running:
-                polled = self._consumer.poll(timeout_ms=POLL_TIMEOUT_MS, max_records=self._batch_size)
-                for records in polled.values():
-                    batch.extend(ProcessedMetric(**record.value) for record in records)
-
-                if batch and (
-                    len(batch) >= self._batch_size
-                    or time.monotonic() - last_flush >= self._batch_timeout_seconds
-                ):
-                    self._flush(batch)
-                    batch = []
-                    last_flush = time.monotonic()
-
-            if batch:
+        while self._running:
+            batch.extend(self._processed_metrics.poll(max_records=self._batch_size))
+            if batch and (
+                len(batch) >= self._batch_size
+                or time.monotonic() - last_flush >= self._batch_timeout_seconds
+            ):
                 self._flush(batch)
-        finally:
-            self._consumer.close()
+                batch = []
+                last_flush = time.monotonic()
+
+        if batch:
+            self._flush(batch)
 
     def _flush(self, batch: list[ProcessedMetric]) -> None:
-        # Offsets are committed only after a successful write, so a crash here
-        # replays the batch on restart; the insert is idempotent via ON CONFLICT.
-        self._writer.insert_batch(batch)
-        self._consumer.commit()
+        # Commit only after the write: a crash replays the batch, and the insert is idempotent via ON CONFLICT.
+        self._timescale_metrics.insert_batch(batch)
+        self._processed_metrics.commit()
         logger.info("Wrote %d metrics to TimescaleDB and committed offsets", len(batch))
