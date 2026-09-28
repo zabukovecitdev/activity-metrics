@@ -1,6 +1,6 @@
 import numpy as np
 
-from core.errors.insufficient_data_error import InsufficientDataError
+from activityreporter.anomaly_detector.errors import InsufficientDataError
 
 
 class MAD:
@@ -29,11 +29,14 @@ class MAD:
         median_of_deviations =  np.median(deviation)
 
         if float(median_of_deviations) == 0:
-            return last_value != median
+            # numpy comparisons return numpy.bool_, which PyFlink's boolean
+            # coder cannot encode (chr() rejects it) and which kills the job
+            # the first time a series is scored.
+            return bool(last_value != median)
 
         last_value_deviation = abs(last_value - median)
 
         scaled_mad = self.SIGMA * median_of_deviations
         modified_z_score = last_value_deviation / scaled_mad
 
-        return modified_z_score >= self.THRESHOLD
+        return bool(modified_z_score >= self.THRESHOLD)

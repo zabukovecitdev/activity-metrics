@@ -3,9 +3,9 @@ import logging
 import os
 import signal
 
-from collector.collector import Collector
-from collector.discovery import ServiceDiscovery
-from connectors.kafka_connector import KafkaConnector
+from activityreporter.collector.discovery import ServiceDiscovery
+from activityreporter.collector.repository import KafkaConnector
+from activityreporter.collector.service import Collector
 
 
 def static_endpoints(raw: str) -> set[str]:

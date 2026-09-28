@@ -6,7 +6,7 @@ from dataclasses import asdict
 import psycopg
 from psycopg.types.json import Jsonb
 
-from core.metrics import ProcessedMetric
+from activityreporter.shared.metrics import ProcessedMetric
 
 logger = logging.getLogger(__name__)
 
