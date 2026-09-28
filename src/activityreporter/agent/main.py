@@ -31,6 +31,7 @@ async def main() -> None:
     server = uvicorn.Server(config)
     await server.serve()
 
+
 def cli() -> None:
     try:
         asyncio.run(main())

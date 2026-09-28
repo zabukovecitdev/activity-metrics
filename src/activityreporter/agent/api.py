@@ -1,11 +1,10 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-import machineid
 from fastapi import APIRouter
 
-from activityreporter.agent.models import Machine, MachineFactory
-from activityreporter.agent.service import MetricFactory
+from activityreporter.agent import service
+from activityreporter.agent.models import Machine
 
 router = APIRouter(prefix="/v1")
 
@@ -27,23 +26,23 @@ class MetricsResponse:
 
 
 @router.get("/health", tags=["health"])
-async def health() -> dict[str, str]:
+async def get_health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @router.get("/machine", tags=["machine"])
-async def machine() -> Machine:
-    return await MachineFactory.create_machine()
+async def get_machine() -> Machine:
+    return await service.describe_machine()
 
 
 @router.get("/metrics", tags=["metrics"])
-async def metrics() -> MetricsResponse:
-    observations = await MetricFactory.create_metrics()
+async def get_metrics() -> MetricsResponse:
+    metrics = await service.collect_metrics()
     return MetricsResponse(
-        machine_id=machineid.id(),
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        machine_id=metrics[0].machine_id,
+        timestamp=datetime.fromtimestamp(metrics[0].timestamp, timezone.utc).isoformat(),
         metrics=[
             MetricObservation(name=m.name, type=m.type, unit=m.unit, value=m.value, attributes=m.attributes)
-            for m in observations
+            for m in metrics
         ],
     )

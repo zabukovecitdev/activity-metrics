@@ -1,55 +1,49 @@
-# Activity Reporter
-
-Host agents sample CPU, memory, and battery and serve them over HTTP. A collector scrapes those agents, a PyFlink job scores gauge anomalies, and a writer stores the scored samples in TimescaleDB.
-
-Console scripts and imports use the `activityreporter` package under `src/activityreporter/`. [docs/operations.md](docs/operations.md) covers how to run the stack.
-
-Python 3.14+. Dependencies and console scripts are declared in `pyproject.toml`. Local commands go through `uv` (`Makefile`).
-
-## Runtime
+# ActivityReporter
 
 ```
-agent :8080
-  GET /v1/metrics          mDNS  _activityrep._tcp.local.
-        |                         |
-        |    scrape every 10s    |
-        v                         v
-     collector  --Kafka raw_metrics-->  anomaly detector (PyFlink, MAD)
-                                              |
-                                              v
-                                    Kafka processed_metrics
-                                              |
-                                              v
-                                    metrics writer --> TimescaleDB metrics
+agent ──HTTP──▶ collector ──▶ Kafka raw_metrics ──▶ anomaly_detector (Flink) ──▶ Kafka processed_metrics ──▶ metrics_writer ──▶ TimescaleDB
 ```
 
-ClickHouse is started by `docker-compose.yml` and `shared/clickhouse.py` can open an async client. No pipeline service queries or inserts into it.
+## Project layout
 
-## Package layout
+One package, `src/activityreporter/`, split by application. Every application has the same shape:
 
-The tree under `src/activityreporter/` is split by process, with a service module for the workflow and a repository module for I/O.
+| File            | Layer        | Holds                                                         |
+|-----------------|--------------|---------------------------------------------------------------|
+| `main.py`       | entrypoint   | wiring and process start (`cli()`), nothing else              |
+| `api.py`        | entrypoint   | HTTP routes (agent only)                                      |
+| `service.py`    | service      | the application's logic                                       |
+| `repository.py` | data access  | every read/write of data, one `<Source><Data>Repository` each |
+| `discovery.py`  | infra        | mDNS advertising / browsing                                   |
+| `models.py`     | domain       | types used only by this application                           |
 
-| Path | Role |
-| --- | --- |
-| `agent/main.py` | Uvicorn entry. Binds `0.0.0.0:8080`. Advertises the process over mDNS for the process lifetime. |
-| `agent/api.py` | FastAPI routes under `/v1`. |
-| `agent/service.py` | Samples host gauges (`MetricFactory`). |
-| `agent/models.py` | `Machine` inventory (`MachineFactory`). |
-| `agent/discovery.py` | mDNS advertiser. |
-| `collector/main.py` | Scrape loop entry. Flushes Kafka on `SIGTERM`. |
-| `collector/service.py` | HTTP scrape and response parsing. |
-| `collector/repository.py` | Kafka producer for raw samples. |
-| `collector/discovery.py` | mDNS browser. Builds scrape URLs. |
-| `anomaly_detector/main.py` | PyFlink job `Anomaly Detection`. |
-| `anomaly_detector/mad.py` | Median absolute deviation test. |
-| `metrics_writer/main.py` | Consumer entry. Stops the loop on `SIGTERM`. |
-| `metrics_writer/service.py` | Polls Kafka and flushes batches. |
-| `metrics_writer/repository.py` | Inserts batches into TimescaleDB. |
-| `shared/metrics.py` | `Metric` and `ProcessedMetric`. |
-| `shared/discovery.py` | mDNS service type and metrics path. |
-| `shared/clickhouse.py` | Async ClickHouse client. |
+```
+src/activityreporter/
+  shared/            code used by more than one application: Metric, mDNS constants, ClickHouse client
+  agent/             runs on every machine, serves /v1/metrics
+  collector/         scrapes agents, publishes to raw_metrics
+  anomaly_detector/  PyFlink job, raw_metrics → processed_metrics with is_anomaly
+  metrics_writer/    processed_metrics → TimescaleDB
+tests/               mirrors src/activityreporter/
+```
 
-Imports, console scripts, the Hatch package list, and tests use `activityreporter.*`. Commands are in [docs/operations.md](docs/operations.md).
+## Running
+
+| Command                 | Does                                                                 |
+|-------------------------|----------------------------------------------------------------------|
+| `make up`               | (re)starts the whole stack in Docker; Kafka is reset, TimescaleDB is kept |
+| `make down`             | stops the stack                                                      |
+| `make agent`            | runs the agent locally                                               |
+| `make collector`        | runs the collector locally                                           |
+| `make metrics-writer`   | runs the metrics writer locally                                      |
+| `make anomaly-detector` | runs the Flink job locally (creates `flink/.venv` with Python 3.11)  |
+| `make test`             | runs the tests                                                       |
+
+In Docker, `anomaly-detector-submitter` submits the Flink job once the cluster is up and skips it if a job
+is already running. To resubmit after a change, cancel the job in the Flink UI (http://localhost:8081) and run
+`docker compose up anomaly-detector-submitter`.
+
+Environment variables, Compose details, and troubleshooting are in [docs/operations.md](docs/operations.md).
 
 ## HTTP API
 
@@ -81,7 +75,7 @@ Interactive docs: `GET /` redirects to `/docs`.
 }
 ```
 
-`timestamp` is UTC `datetime.now().isoformat()`. Each observation is produced by `MetricFactory.create_metrics()`.
+`timestamp` is the sample time from `service.collect_metrics()` (`time.time()`), formatted as UTC ISO-8601.
 
 | Name | Unit | When present |
 | --- | --- | --- |
@@ -147,7 +141,7 @@ Kafka record shape:
 - Parallelism is 2. The stream is keyed by `(machine_id, name)` so each series keeps its own state. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`.
 - State is the last hour of `(event_time, value)` pairs for that key.
 
-Scoring rules in `AnomalyDetector.process_element`:
+Scoring rules in `AnomalyDetector.process_element` (`anomaly_detector/service.py`):
 
 - `type` other than `gauge`, and the names `system.battery.charging`, `system.battery.utilization`, and `system.memory.limit`, are passed through with `is_anomaly=false` and no state. Those series are flags or values that barely move, so a modified z-score flags ordinary steps.
 - Fewer than 20 values in the hour window sets `is_anomaly=false`.
@@ -159,17 +153,17 @@ Scoring rules in `AnomalyDetector.process_element`:
 - Modified z-score uses scale `1.4826` and threshold `3.5`.
 - When the median absolute deviation is 0, the last value is an anomaly when it differs from the median.
 
-The row schema matches `ProcessedMetric` (`Metric` fields plus `is_anomaly`). The collector does not send `is_anomaly`; the JSON row deserializer leaves it at the boolean default so the operator can set it. `METRIC_FIELD_TYPES` must name the same fields as `ProcessedMetric` or the job raises `RuntimeError` at import.
+The row schema matches `ProcessedMetric` (`Metric` fields plus `is_anomaly`). The collector does not send `is_anomaly`; the JSON row deserializer leaves it at the boolean default so the operator can set it. `PROCESSED_METRIC_FIELD_TYPES` in `anomaly_detector/repository.py` must name the same fields as `ProcessedMetric` or the job raises `RuntimeError` at import.
 
 Job submission, the Kafka connector jar, and consumer-group rules are in [docs/operations.md](docs/operations.md).
 
 ## Metrics writer
 
-`metrics_writer/service.py` reads `KAFKA_PROCESSED_METRICS_TOPIC` (default `processed_metrics`) in group `KAFKA_CONSUMER_GROUP_ID` (default `timescale-writer`). Auto-commit is off. Offset reset is `earliest`.
+`KafkaProcessedMetricsRepository` (`metrics_writer/repository.py`) reads `KAFKA_PROCESSED_METRICS_TOPIC` (default `processed_metrics`) in group `KAFKA_CONSUMER_GROUP_ID` (default `timescale-writer`). Auto-commit is off. Offset reset is `earliest`.
 
-Records are decoded as JSON into `ProcessedMetric`. A batch flushes when it reaches `CONSUMER_BATCH_SIZE` (default 100) or when `CONSUMER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into `ProcessedMetric`. A batch flushes when it reaches `METRICS_WRITER_BATCH_SIZE` (default 100) or when `METRICS_WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
-`insert_batch` writes the TimescaleDB `metrics` table, then the consumer commits offsets. A failed insert leaves the offsets uncommitted so the batch is replayed. The insert is idempotent:
+`TimescaleMetricsRepository.insert_batch` writes the TimescaleDB `metrics` table, then `MetricsWriter` commits offsets. A failed insert leaves the offsets uncommitted so the batch is replayed. The insert is idempotent:
 
 ```sql
 ON CONFLICT (machine_id, name, attributes, "timestamp") DO NOTHING

@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Submits the anomaly detector, plus any extra PyFlink jobs dropped in
-# /opt/flink/jobs, to the session cluster, detached.
 set -u
 
 JOBMANAGER="jobmanager:8081"
@@ -18,21 +16,4 @@ if ! flink list -r -m "$JOBMANAGER" | grep -q "No running jobs"; then
     exit 0
 fi
 
-shopt -s nullglob
-jobs=(/opt/flink/src/activityreporter/anomaly_detector/main.py /opt/flink/jobs/*.py)
-if [ ${#jobs[@]} -eq 0 ]; then
-    echo "No Flink jobs to submit" >&2
-    exit 1
-fi
-
-status=0
-for job in "${jobs[@]}"; do
-    echo "Submitting $job"
-    # -pyfs puts src/ on PYTHONPATH for both this client and the taskmanager's
-    # Python workers, so jobs can import the activityreporter package.
-    if ! flink run -d -m "$JOBMANAGER" -pyfs /opt/flink/src -py "$job"; then
-        echo "Failed to submit $job" >&2
-        status=1
-    fi
-done
-exit $status
+exec flink run -d -m "$JOBMANAGER" -pyfs /opt/flink/src -pym activityreporter.anomaly_detector.main

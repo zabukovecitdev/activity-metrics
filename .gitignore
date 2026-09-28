@@ -1,6 +1,6 @@
 .venv/
 __pycache__/
 *.pyc
-flink-jobs/.idea/
-flink-jobs/lib/
 .idea/
+dist/
+flink/

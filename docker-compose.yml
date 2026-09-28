@@ -1,8 +1,9 @@
 services:
-  activityreporter:
+  agent:
     build: .
     image: activityreporter:latest
-    container_name: activityreporter
+    container_name: agent
+    command: agent
     restart: unless-stopped
     environment:
       PYTHONUNBUFFERED: "1"
@@ -82,11 +83,10 @@ services:
       - timescaledb
 
   collector:
-    build:
-      context: .
-      dockerfile: docker/collector/Dockerfile
-    image: activityreporter-collector:latest
+    build: .
+    image: activityreporter:latest
     container_name: collector
+    command: collector
     restart: unless-stopped
     # mDNS multicast doesn't cross the Docker bridge, so the collector joins the host's
     # network to discover clients on the LAN. Service names like "kafka" don't resolve
@@ -100,19 +100,18 @@ services:
       COLLECTOR_ENDPOINTS: ""
     depends_on:
       - kafka
-      - activityreporter
+      - agent
 
   metrics-writer:
-    build:
-      context: .
-      dockerfile: docker/consumer/Dockerfile
-    image: activityreporter-consumer:latest
+    build: .
+    image: activityreporter:latest
     container_name: metrics-writer
+    command: metrics-writer
     restart: unless-stopped
     environment:
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: kafka:9092
-      KAFKA_RAW_METRICS_TOPIC: raw_metrics
+      KAFKA_PROCESSED_METRICS_TOPIC: processed_metrics
       KAFKA_CONSUMER_GROUP_ID: timescale-writer
       TIMESCALE_HOST: timescaledb
       TIMESCALE_PORT: "5432"
@@ -140,8 +139,6 @@ services:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         restart-strategy.type: exponential-delay
-    volumes:
-      - ./flink-jobs:/opt/flink/jobs
     depends_on:
       - kafka
 
@@ -156,26 +153,21 @@ services:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         taskmanager.numberOfTaskSlots: 2
-    volumes:
-      - ./flink-jobs:/opt/flink/jobs
     depends_on:
       - jobmanager
 
-  flink-jobs-submitter:
+  anomaly-detector-submitter:
     build:
       context: ./docker/flink
     image: activityreporter-flink:1.19.1
-    container_name: flink-jobs-submitter
+    container_name: anomaly-detector-submitter
     restart: "no"
     entrypoint: ["bash", "/opt/flink/submit-jobs.sh"]
     environment:
       KAFKA_CONNECTION_STRING: kafka:9092
       KAFKA_RAW_METRICS_TOPIC: raw_metrics
       KAFKA_PROCESSED_METRICS_TOPIC: processed_metrics
-      # The Kafka connector jar is already in the image's /opt/flink/lib.
-      KAFKA_CONNECTOR_JAR: ""
     volumes:
-      - ./flink-jobs:/opt/flink/jobs:ro
       - ./src:/opt/flink/src:ro
       - ./docker/flink/submit-jobs.sh:/opt/flink/submit-jobs.sh:ro
     depends_on:

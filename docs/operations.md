@@ -4,7 +4,7 @@ Setup, configuration, and failure modes for the agent, collector, Flink job, and
 
 ## Local stack
 
-`make run` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. Named volumes are kept (`timescaledb-data`, `clickhouse_data`). Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place.
+`make up` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. Named volumes are kept (`timescaledb-data`, `clickhouse_data`). Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place.
 
 | Published port | Service |
 | --- | --- |
@@ -13,21 +13,21 @@ Setup, configuration, and failure modes for the agent, collector, Flink job, and
 | `8123`, `9000` | ClickHouse HTTP and native protocol. |
 | `8081` | Flink Web UI. |
 
-The `activityreporter` Compose service does not publish port `8080`. The collector uses `network_mode: host` because mDNS multicast does not cross the Docker bridge, and on the host network the DNS name `kafka` does not resolve. Its `KAFKA_CONNECTION_STRING` is therefore `localhost:9094`.
+The `agent` Compose service does not publish port `8080`. The collector uses `network_mode: host` because mDNS multicast does not cross the Docker bridge, and on the host network the DNS name `kafka` does not resolve. Its `KAFKA_CONNECTION_STRING` is therefore `localhost:9094`.
 
-An agent run on the host (`make client`) advertises on the LAN, which that collector can discover. The Compose agent is on the bridge network with no published port, and `COLLECTOR_ENDPOINTS` defaults to empty, so this collector has no URL for it unless you set `COLLECTOR_ENDPOINTS` to an address the host network can reach.
+An agent run on the host (`make agent`) advertises on the LAN, which that collector can discover. The Compose agent is on the bridge network with no published port, and `COLLECTOR_ENDPOINTS` defaults to empty, so this collector has no URL for it unless you set `COLLECTOR_ENDPOINTS` to an address the host network can reach.
 
 Process commands from the `Makefile`:
 
 | Target | Command | Entry module in `pyproject.toml` |
 | --- | --- | --- |
-| `client` | `uv run activityreporter` | `activityreporter.agent.main:cli` |
+| `agent` | `uv run agent` | `activityreporter.agent.main:cli` |
 | `collector` | `uv run collector` | `activityreporter.collector.main:cli` |
-| `metrics-writer` | `uv run metrics-writer` | `activityreporter.metrics_writer.main:main` |
+| `metrics-writer` | `uv run metrics-writer` | `activityreporter.metrics_writer.main:cli` |
 | `test` | `uv run pytest` | |
-| `mad` | `flink-jobs/.venv/bin/python src/activityreporter/anomaly_detector/main.py` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
+| `anomaly-detector` | `flink/.venv/bin/python -m activityreporter.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
-`mad` downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink-jobs/lib/` and exports that absolute path as `KAFKA_CONNECTOR_JAR`. Without the variable, the job looks next to `anomaly_detector/main.py`.
+`anomaly-detector` creates `flink/.venv` with Python 3.11 and `apache-flink==1.19.1`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
 
 ## Environment
 
@@ -45,14 +45,14 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 
 ### Anomaly detector
 
-| Variable | Default | Compose (`flink-jobs-submitter`) |
+| Variable | Default | Compose (`anomaly-detector-submitter`) |
 | --- | --- | --- |
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
 | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `raw_metrics` |
 | `KAFKA_PROCESSED_METRICS_TOPIC` | `processed_metrics` | `processed_metrics` |
-| `KAFKA_CONNECTOR_JAR` | `anomaly_detector/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` | empty |
+| `KAFKA_CONNECTOR_JAR` | empty | unset (default applies) |
 
-An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already has that connector in `/opt/flink/lib`, and loading it a second time is what the submitter avoids. Local runs need the jar on the classpath because the `apache-flink` wheel does not include it. Pass an absolute `file://` path via `KAFKA_CONNECTOR_JAR`.
+An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already has that connector in `/opt/flink/lib`, and loading it a second time is what the submitter avoids. Local runs need the jar on the classpath because the `apache-flink` wheel does not include it. `make anomaly-detector` sets it; the job turns the path into a `file://` URI.
 
 `docker/flink/Dockerfile` fetches the same jar (`3.2.0-1.19` on Flink `1.19.1`) and runs `chmod 644` on it. `ADD` from a URL otherwise leaves the file mode `600`, owned by root, and the `flink` user (uid 9999) cannot read it. The job then fails at submission with the connector classes unresolved.
 
@@ -63,17 +63,15 @@ The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The 
 | Variable | Default | Compose |
 | --- | --- | --- |
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
-| `KAFKA_PROCESSED_METRICS_TOPIC` | `processed_metrics` | unset (default applies) |
+| `KAFKA_PROCESSED_METRICS_TOPIC` | `processed_metrics` | `processed_metrics` |
 | `KAFKA_CONSUMER_GROUP_ID` | `timescale-writer` | `timescale-writer` |
-| `CONSUMER_BATCH_SIZE` | `100` | unset |
-| `CONSUMER_BATCH_TIMEOUT_SECONDS` | `5.0` | unset |
+| `METRICS_WRITER_BATCH_SIZE` | `100` | unset |
+| `METRICS_WRITER_BATCH_TIMEOUT_SECONDS` | `5.0` | unset |
 | `TIMESCALE_HOST` | `localhost` | `timescaledb` |
 | `TIMESCALE_PORT` | `5432` | `5432` |
 | `TIMESCALE_DB` | `activityreporter` | `activityreporter` |
 | `TIMESCALE_USER` | `activityreporter` | `activityreporter` |
 | `TIMESCALE_PASSWORD` | `activityreporter` | `activityreporter` |
-
-Compose sets `KAFKA_RAW_METRICS_TOPIC` on this service. The writer does not read that variable. It consumes `KAFKA_PROCESSED_METRICS_TOPIC`.
 
 From the host, Timescale is `localhost:5433` with the same database, user, and password. Inside Compose the writer uses host `timescaledb` port `5432`, and it waits until the Flyway `migrate` container exits successfully.
 
@@ -89,14 +87,14 @@ From the host, Timescale is `localhost:5433` with the same database, user, and p
 
 `ClickHouseConnector.from_env` sets `autogenerate_session_id=False`. One client is shared across coroutines, and a per-client session rejects concurrent queries. Running `shared/clickhouse.py` as a script prints the result of `SELECT version()`. Nothing else in the repo calls the connector.
 
-## Flink jobs
+## Flink job
 
-`jobmanager` and `taskmanager` mount `./flink-jobs` at `/opt/flink/jobs`. `flink-jobs-submitter` runs `docker/flink/submit-jobs.sh`, which submits `src/activityreporter/anomaly_detector/main.py` (mounted at `/opt/flink/src`) and any extra `/opt/flink/jobs/*.py`, with `-pyfs /opt/flink/src` and `-d`.
+`anomaly-detector-submitter` runs `docker/flink/submit-jobs.sh`, which submits the module `activityreporter.anomaly_detector.main` from `./src` (mounted at `/opt/flink/src`) with `-pyfs /opt/flink/src -pym` and `-d`.
 
 The submitter waits until `flink list -m jobmanager:8081` succeeds. If the cluster already has a running job, it prints `Cluster already has running jobs, skipping submission.` and exits 0. To submit again, cancel the job in the Web UI at `http://localhost:8081`, then:
 
 ```bash
-docker compose up flink-jobs-submitter
+docker compose up anomaly-detector-submitter
 ```
 
 Give the Flink source and the writer different consumer groups. Both start at `earliest` and each must see every record on its topic.
@@ -116,11 +114,11 @@ The wheel contains `src/activityreporter`. Console scripts:
 
 | Script | Entry |
 | --- | --- |
-| `activityreporter` | `activityreporter.agent.main:cli` |
+| `agent` | `activityreporter.agent.main:cli` |
 | `collector` | `activityreporter.collector.main:cli` |
-| `metrics-writer` | `activityreporter.metrics_writer.main:main` |
+| `metrics-writer` | `activityreporter.metrics_writer.main:cli` |
 
-`docker/collector/Dockerfile` and `docker/consumer/Dockerfile` install that wheel and start `collector` and `metrics-writer`. The root `Dockerfile` starts `activityreporter`. The anomaly detector is `src/activityreporter/anomaly_detector/main.py`. `/v1/metrics` is sampled by `MetricFactory` in `agent/service.py`. `InsufficientDataError` lives in `anomaly_detector/errors.py`.
+The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent`, `collector`, and `metrics-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
 
 ## Troubleshooting
 
@@ -128,7 +126,7 @@ The wheel contains `src/activityreporter`. Console scripts:
 
 **Scrape errors every 10 seconds.** The collector logs `Failed to scrape metrics from ...` for transport and HTTP errors, and `Malformed response from ...` for a 200 body that is missing `machine_id`, `timestamp`, or a complete metric object. A trailing slash or a path other than `/v1/metrics` only works when the agent's TXT `path` matches the route you serve.
 
-**Kafka send failures.** `KafkaConnector.send` logs `Failed to send metrics to Kafka` and re-raises. The collector swallows `KafkaError` after that log so the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host and from the host-network collector, `kafka:9092` from bridge-network services.
+**Kafka send failures.** When `KafkaRawMetricsRepository.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host and from the host-network collector, `kafka:9092` from bridge-network services.
 
 **Writer is idle while raw samples are flowing.** It reads `processed_metrics`, which is filled by the Flink job. Raw samples on `raw_metrics` do not reach TimescaleDB. Confirm the job is running in the Web UI and that the writer group is `timescale-writer`.
 
@@ -136,8 +134,8 @@ The wheel contains `src/activityreporter`. Console scripts:
 
 **`is_anomaly` stays false.** The operator needs 20 samples of that `(machine_id, name)` in the last hour, the series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, or `system.memory.limit`. Battery series are omitted entirely when the agent has no power supply.
 
-**Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The submitter must leave `KAFKA_CONNECTOR_JAR` empty so the image copy is the only one on the classpath.
+**Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The submitter leaves `KAFKA_CONNECTOR_JAR` unset so the image copy is the only one on the classpath.
 
-**Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), a job file failed (`Failed to submit ...`), or a job is already running and submission was skipped. The anomaly detector is submitted from `/opt/flink/src/activityreporter/anomaly_detector/main.py` even when `./flink-jobs` is empty.
+**Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), `flink run` failed (the container exits non-zero), or a job is already running and submission was skipped.
 
-**`make run` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. TimescaleDB rows in `metrics` remain, subject to the 24-hour retention policy.
+**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. TimescaleDB rows in `metrics` remain, subject to the 24-hour retention policy.
