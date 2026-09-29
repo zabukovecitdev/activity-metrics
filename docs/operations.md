@@ -27,7 +27,9 @@ Process commands from the `Makefile`:
 | `test` | `uv run pytest` | |
 | `anomaly-detector` | `flink/.venv/bin/python -m activityreporter.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
-`anomaly-detector` creates `flink/.venv` with Python 3.11 and `apache-flink==1.19.1`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
+`anomaly-detector` creates `flink/.venv` with Python 3.11 and `apache-flink==1.19.1`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`. The host needs `python3.11` on `PATH` for that venv.
+
+The agent, collector, and writers need Python 3.14 (`requires-python` in `pyproject.toml`). The collector calls `uuid.uuid7()` for `metric_id`. PyFlink 1.19 runs on CPython 3.8–3.11, which is the interpreter in the Flink image and in `flink/.venv`. `make test` imports `detection.py` under 3.14; `make anomaly-detector` runs the job under 3.11.
 
 ## Environment
 
@@ -52,7 +54,9 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | `KAFKA_ANOMALIES_TOPIC` | `anomalies` | `anomalies` |
 | `KAFKA_CONNECTOR_JAR` | empty | unset (default applies) |
 
-An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already has that connector in `/opt/flink/lib`, and loading it a second time is what the submitter avoids. Local runs need the jar on the classpath because the `apache-flink` wheel does not include it. `make anomaly-detector` sets it; the job turns the path into a `file://` URI.
+An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already has that connector in `/opt/flink/lib`, and loading it a second time is what the submitter avoids. Local runs need the jar on the classpath because the `apache-flink` wheel does not include it. `make anomaly-detector` sets a filesystem path; the job turns it into a `file://` URI with `Path(value).resolve().as_uri()`.
+
+The job's consumer group is the constant `anomaly-detector` in `anomaly_detector/repository.py`. `KAFKA_CONSUMER_GROUP_ID` applies to the ClickHouse writers. Setting it on the submitter leaves the Flink group unchanged.
 
 `docker/flink/Dockerfile` fetches the same jar (`3.2.0-1.19` on Flink `1.19.1`) and runs `chmod 644` on it. `ADD` from a URL otherwise leaves the file mode `600`, owned by root, and the `flink` user (uid 9999) cannot read it. The job then fails at submission with the connector classes unresolved.
 
@@ -144,9 +148,13 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 
 **Writer reprocesses the same batch.** Offsets commit only after `insert_batch` returns. A ClickHouse error is logged as `Failed to write <table> batch to ClickHouse (attempt n/5)` and retried. After five failures the exception propagates and the process exits; Compose restarts it (`restart: unless-stopped`) and the uncommitted batch is read again. The replayed rows are inserted again and collapsed by `ReplacingMergeTree` on merge; query with `FINAL` to hide them before that.
 
-**`Skipping malformed record` in a writer log.** The record is not valid JSON, lacks a required field, or has no valid `metric_id`. Records published before `metric_id` existed have none; they are skipped, not retried.
+**`Skipping malformed record` in a writer log.** The record is not valid JSON, lacks a required field, or has no valid `metric_id`. Records published before `metric_id` existed have none. The offset for a skipped record is committed together with the next batch that inserts. A stretch of only skipped records leaves the committed offset where it was, so a restart reads them again and logs the same line.
 
-**`anomalies` stays empty.** Most samples are not anomalies, so an empty table is normal. Confirm the Flink job runs and that `anomalies` receives records (`kafka-console-consumer.sh --topic anomalies`). The operator needs 20 samples of that `(machine_id, name)` in the last hour, the series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, or `system.memory.limit`. Battery series are omitted entirely when the agent has no power supply.
+**Writer exits on a bad map value.** `parse_record` drops bad JSON and bad `metric_id`s. Map checks happen in `client.insert`. A non-string `attributes` or `metric_attributes` value raises `AttributeError`. A non-numeric `details` value, or `None` in `details`, raises `ValueError` or `TypeError`. `insert_batch` catches `ClickHouseError` only, so the process exits and Compose restarts onto the same uncommitted batch. `None` inside `attributes` or `metric_attributes` raises `DataError` and is retried as `Failed to write <table> batch to ClickHouse (attempt n/5)`. Integers in `details` are accepted. The columns are `Map(String, String)` and `Map(LowCardinality(String), Float64)`.
+
+**`anomalies` stays empty.** Most samples are not anomalies, so an empty table is normal. The job prints each anomaly on the taskmanager as well as producing the Kafka record, so the taskmanager log shows rows that have not reached ClickHouse. Confirm the Flink job runs and that `anomalies` receives records (`kafka-console-consumer.sh --topic anomalies`). The operator needs 20 samples of that `(machine_id, name)` in the last hour. Samples that differ only in `attributes` share that window. The series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, or `system.memory.limit`. Battery series are omitted entirely when the agent has no power supply.
+
+**Ctrl-C during a writer batch.** `SIGINT` leaves `ClickHouseWriter.run` before the partial-batch flush. `SIGTERM` (Compose stop) flushes, then commits. An open batch at Ctrl-C is read again on the next start.
 
 **Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The submitter leaves `KAFKA_CONNECTOR_JAR` unset so the image copy is the only one on the classpath.
 

@@ -20,7 +20,7 @@ One package, `src/activityreporter/`, split by application. Every application ha
 
 ```
 src/activityreporter/
-  shared/            code used by more than one application: Metric, mDNS constants
+  shared/            code used by more than one application: Metric, Anomaly, mDNS constants
   agent/             runs on every machine, serves /v1/metrics
   collector/         scrapes agents, publishes to raw_metrics
   anomaly_detector/  PyFlink job, raw_metrics → anomalies (only the anomalous samples)
@@ -142,16 +142,16 @@ Kafka record shape:
 `anomaly_detector/main.py` is the PyFlink job `Anomaly Detection`.
 
 - Source topic: `KAFKA_RAW_METRICS_TOPIC` (default `raw_metrics`), consumer group `anomaly-detector`, starting offset `earliest`.
-- Sink topic: `KAFKA_ANOMALIES_TOPIC` (default `anomalies`). Only anomalous samples are published; everything else produces no output.
+- Sink topic: `KAFKA_ANOMALIES_TOPIC` (default `anomalies`). Only anomalous samples are published; everything else produces no output. The same rows are printed on the taskmanager (`anomalies.print()`).
 - Event time is `timestamp * 1000` milliseconds. Out-of-orderness bound is 5 seconds. Kafka record timestamps are not used.
-- Parallelism is 2. The stream is keyed by `(machine_id, name)` so each series keeps its own state. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`.
-- State is the last hour of `(event_time, value)` pairs for that key.
+- Parallelism is 2. The stream is keyed by `(machine_id, name)`. Samples that share those two fields share one window, including when `attributes` differ. `metric_attributes` is copied onto the anomaly so the row can be read on its own. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`.
+- State is the last hour of `(event_time, value)` pairs for that key. Each scored record drops pairs older than one hour before its own event time, appends itself, and leaves the list until the next scored record. Unscored names never enter the list.
 
 Scoring rules (`anomaly_detector/detection.py`, called from `AnomalyDetector.process_element` in `service.py`):
 
 - `type` other than `gauge`, and the names `system.battery.charging`, `system.battery.utilization`, and `system.memory.limit`, are dropped without state. Those series are flags or values that barely move, so a modified z-score flags ordinary steps.
 - Fewer than 20 values in the hour window: no anomaly.
-- Otherwise `MAD.score` scores the latest value against the window, and a score of at least `MAD.THRESHOLD` is an anomaly.
+- Otherwise `MAD.score` scores the appended value (`values[-1]`, this record) against the window. That is the record being processed, including when it arrives out of timestamp order. A score of at least `MAD.THRESHOLD` is an anomaly.
 
 `detection.py` does not import PyFlink, so its tests run in the regular `uv` environment.
 
@@ -189,7 +189,7 @@ Published on `anomalies` as JSON, without a Kafka key:
 - `metric_id` is the anomalous sample's id. With `machine_id`, `metric_name`, and `timestamp` it is that sample's key in `metrics`. `timestamp` is the sample time, not the detection time (`detected_at`); both are epoch seconds, like `raw_metrics`. `metric_attributes` repeats the sample's attributes so an anomaly reads on its own.
 - `direction` is `up` when `value` is above the window median, else `down`. A name such as "cpu spike" is `metric_name` + `direction`.
 - `algorithm` and `details` carry algorithm-specific numbers (`median`, `scale`, `window_size` for `mad`), so another algorithm fits without a schema change.
-- `schema_version` changes only for a change that is not additive. Consumers ignore fields they do not know, so a producer may add a field first.
+- `schema_version` changes only for a change that is not additive. Consumers ignore fields they do not know, so a producer may add a field first. JSON that omits `schema_version` is stored as `1`, the `Anomaly` default.
 
 Job submission, the Kafka connector jar, and consumer-group rules are in [docs/operations.md](docs/operations.md).
 
@@ -204,7 +204,9 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 `KAFKA_TOPIC` and `KAFKA_CONSUMER_GROUP_ID` override the defaults. Auto-commit is off. Offset reset is `earliest`.
 
-Records are decoded as JSON into the sink's dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key or without a valid `metric_id` is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A batch flushes when it reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into the sink's dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key or without a valid `metric_id` is logged as `Skipping malformed record` and left out of the batch. Its offset is committed with the next batch that inserts successfully. A prefix of such records, with no valid row after them, is read again after a restart.
+
+A batch flushes when it reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `KafkaRecordsRepository.poll` waits up to 1 second. The timeout is checked when a poll returns, so a timeout under a second still waits for that poll. An empty poll does not write or commit. `SIGTERM` stops the loop and flushes a partial batch. `SIGINT` raises `KeyboardInterrupt` out of `run()` before that flush, and the open batch stays uncommitted.
 
 `ClickHouseRepository.insert_batch` writes the table over HTTP (`clickhouse-connect`), then `ClickHouseWriter` commits offsets. A failed insert leaves the offsets uncommitted so the batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 
@@ -212,7 +214,13 @@ Records are decoded as JSON into the sink's dataclass and converted to a ClickHo
 SELECT machine_id, name, count() FROM metrics FINAL GROUP BY machine_id, name
 ```
 
-`None` maps are stored as empty maps. Epoch-second times are converted to UTC `datetime`s (`DateTime64(3, 'UTC')`).
+`None` maps are stored as empty maps. Epoch-second times are converted to UTC `datetime`s (`DateTime64(3, 'UTC')`). Sink columns are the dataclass fields. ClickHouse fills `ingested_at` with `DEFAULT now64(3)`, and `ReplacingMergeTree` keeps the row with the greatest `ingested_at`.
+
+`attributes` and `metric_attributes` values are strings (`Map(String, String)`). `details` values are numbers (`Map(LowCardinality(String), Float64)`); ints are stored as floats. `parse_record` drops a record when JSON decoding, dataclass construction, or `uuid.UUID` raises `TypeError` or `ValueError`. Map values are checked later, inside `client.insert`:
+
+- A non-string attribute value raises `AttributeError` (`str.encode`). A non-numeric `details` value, including `None`, raises `ValueError` or `TypeError` from `float()`. `insert_batch` catches `ClickHouseError` only, so the process exits and the uncommitted batch is read again on restart.
+- `None` inside `attributes` or `metric_attributes` raises `DataError`, which is a `ClickHouseError` and follows the retry below.
+- A map that is `None` as a whole is stored as `{}` before insert.
 
 ClickHouse errors retry up to 5 times. Backoff is `backoff_base_seconds * 2^(attempt-1)` with a 1 second base (1s, 2s, 4s, 8s). The HTTP client holds no transaction, so the same client is reused.
 
