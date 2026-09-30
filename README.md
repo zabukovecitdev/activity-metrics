@@ -48,6 +48,8 @@ In Docker, `anomaly-detector-submitter` submits the Flink job once the cluster i
 is already running. To resubmit after a change, cancel the job in the Flink UI (http://localhost:8081) and run
 `docker compose up anomaly-detector-submitter`.
 
+Grafana is at http://localhost:3000. Compose does not set an admin password, so the image default `admin` / `admin` applies until it is changed. The provisioned dashboard is **Machine usage metrics**.
+
 Environment variables, Compose details, and troubleshooting are in [docs/operations.md](docs/operations.md).
 
 ## HTTP API
@@ -244,6 +246,14 @@ JOIN metrics AS m FINAL
 Identity trade-off: `metric_id` is assigned per collector. If two collectors ever scraped the same agent, the same reading would become two rows with different ids, where a key of `(machine_id, name, attributes, timestamp)` would have collapsed them. With one collector that does not happen.
 
 The TimescaleDB schema (Flyway `V1`–`V5`) was removed along with TimescaleDB; it is in git history.
+
+## Dashboards
+
+Grafana (`grafana/grafana:13.2.3`) starts with `make up` and reads ClickHouse. It is not a writer. `GF_PLUGINS_PREINSTALL_SYNC` installs `grafana-clickhouse-datasource` before the process starts, then Grafana loads `docker/grafana/provisioning` and `docker/grafana/dashboards`.
+
+The datasource `ClickHouse` (`uid: clickhouse`) uses the native protocol at `clickhouse:9000`, database `metrics`, user `user`. The writers use HTTP on port `8123`.
+
+**Machine usage metrics** (uid `ad8rn6h`) defaults to the last 30 minutes and refreshes every 5 seconds. Pick a machine, then a metric name. Battery, charging, and memory are fixed series. The anomaly count follows the selected metric. The CPU panel always plots `system.cpu.utilization` and marks samples whose `metric_id` is in `anomalies`. Variable queries, `FINAL`, and the read-only dashboard mount are in [docs/operations.md](docs/operations.md).
 
 ## Tests
 
