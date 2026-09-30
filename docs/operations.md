@@ -1,16 +1,17 @@
 # Operations
 
-Setup, configuration, and failure modes for the agent, collector, Flink job, metrics writer, and migrations. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
+Setup, configuration, and failure modes for the agent, collector, Flink job, metrics writer, migrations, and Grafana. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
 
 ## Local stack
 
-`make up` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. The named volume `clickhouse_data` is kept. Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place.
+`make up` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. The named volumes `clickhouse_data` and `grafana_data` are kept. Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place.
 
 | Published port | Service |
 | --- | --- |
 | `9094` | Kafka listener advertised as `localhost:9094` (`PLAINTEXT_HOST`). Containers on the Compose network use `kafka:9092`. |
 | `8123`, `9000` | ClickHouse HTTP and native protocol. |
 | `8081` | Flink Web UI. |
+| `3000` | Grafana. |
 
 The `agent` Compose service does not publish port `8080`. The collector uses `network_mode: host` because mDNS multicast does not cross the Docker bridge, and on the host network the DNS name `kafka` does not resolve. Its `KAFKA_CONNECTION_STRING` is therefore `localhost:9094`.
 
@@ -132,6 +133,50 @@ The wheel contains `src/activityreporter`. Console scripts:
 
 The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent`, `collector`, `metrics-writer`, and `anomalies-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
 
+## Grafana
+
+The `grafana` service runs `grafana/grafana:13.2.3`, publishes `3000`, and restarts unless stopped. `depends_on` waits until ClickHouse is healthy. Table creation is the `migrate` container's job, so a dashboard opened in that gap reports missing tables until `migrate` has exited 0.
+
+Compose sets `GF_PLUGINS_PREINSTALL_SYNC` to `grafana-clickhouse-datasource` and no other `GF_*` variables. The plugin is installed before Grafana starts, with no version pin, so the first start downloads it. The image signs in as `admin` / `admin` until that password is changed. The new password and the installed plugin live in the `grafana_data` volume.
+
+Provisioning is two read-only mounts:
+
+| Host path | Container path |
+| --- | --- |
+| `docker/grafana/provisioning` | `/etc/grafana/provisioning` |
+| `docker/grafana/dashboards` | `/var/lib/grafana/dashboards` |
+
+`provisioning/datasources/clickhouse.yml` defines datasource `ClickHouse` (`uid: clickhouse`, default). `jsonData` sets host `clickhouse`, port `9000`, protocol `native`, username `user`, database `metrics`. The password is `password` under `secureJsonData`. That host name is Compose DNS. The Grafana container reaches ClickHouse on the native port; the writers' `CLICKHOUSE_PORT` `8123` is the HTTP interface and is not what this datasource uses.
+
+`provisioning/dashboards/dashboards.yml` is a file provider named `activityreporter` with `allowUiUpdates: true` and `options.path` `/var/lib/grafana/dashboards`. `updateIntervalSeconds` is unset, so Grafana uses 10. A value of 10 or less watches the directory for changes. A Docker bind mount often drops those events, and the dashboard then stays on the copy from process start until `docker compose restart grafana`. Setting `updateIntervalSeconds` above 10 makes Grafana poll on that interval instead. With `allowUiUpdates: true`, a save in the UI is stored in `grafana_data`. The dashboards mount is read-only, so that save leaves `docker/grafana/dashboards/*.json` unchanged. A file change that Grafana loads replaces the UI copy.
+
+### Machine usage metrics
+
+`docker/grafana/dashboards/machine-usage-metrics.json` is the dashboard **Machine usage metrics** (uid `ad8rn6h`). The time picker defaults to `now-30m` through `now`, refresh is `5s`, and the timezone is `browser`.
+
+Both variables use datasource `clickhouse`, refresh on dashboard load, and allow a custom value:
+
+| Variable | SQL |
+| --- | --- |
+| `machine_id` | `SELECT DISTINCT metrics.machine_id from metrics` |
+| `metric_name` | `SELECT DISTINCT metrics.name from metrics WHERE machine_id IN ('${machine_id}')` |
+
+The JSON still contains the machine id and metric name selected when the dashboard was exported. With custom values allowed, Grafana keeps that selection on a database that has never seen it. Choose a machine from the dropdown before reading the panels.
+
+| Panel | Query | Display |
+| --- | --- | --- |
+| Battery level | `metrics.value` where `name = 'system.battery.utilization'`, `$__timeFilter(timestamp)` | Time series. No unit is set on the panel. |
+| Charging | Newest `system.battery.charging` row for the machine (`ORDER BY timestamp DESC LIMIT 1`). There is no `$__timeFilter`, so the stat can sit outside the dashboard range. | Stat, unit `bool`. Thresholds: red at `0`, green at `1`. |
+| Total anomaly events | `count()` from `anomalies FINAL` for `machine_id`, `metric_name`, and `$__timeFilter(timestamp)` | Stat of that count. |
+| Memory usage | `system.memory.usage` over the time range | Stat, unit `bytes`, reduced with `lastNotNull`, sparkline of the series. |
+| CPU usage | `system.cpu.utilization` over the time range, plus column `anomaly` | Time series, unit `percent`. `anomaly` is `value` when `metric_id` is in `anomalies` for this machine and `system.cpu.utilization`, otherwise `NULL`, and is drawn as red points. |
+
+`machine_id` is interpolated with `${machine_id:singlequote}`. `metric_name` is used by the anomaly count. Battery, charging, memory, and CPU each name their series in the query. The CPU anomaly subquery has no time filter; `metric_id` already identifies the sample.
+
+Battery and charging stay empty when the agent has no power supply. `sensors_battery()` failing with `FileNotFoundError` (typical in a container) omits both series. An anomaly count of 0 is the usual case. The detector publishes a gauge only after its score reaches the MAD threshold, and this panel counts the metric selected in the dropdown.
+
+The four `metrics` queries are plain `SELECT`s. The anomaly count is the panel that uses `FINAL`. After a writer replay, duplicate metric points remain visible on the charts until `ReplacingMergeTree` merges them.
+
 ## Troubleshooting
 
 **Collector logs no discovered clients.** The collector must share a multicast network with the agent. In Compose it uses the host network for that reason. Confirm the agent is on the host (or another host on the LAN) and that UDP 5353 is not blocked. Add a full URL to `COLLECTOR_ENDPOINTS` to bypass mDNS. The collector logs `Static endpoints: none` when that variable is empty.
@@ -152,4 +197,14 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 
 **Flink submitter exits immediately.** Either the jobmanager was not up (`Waiting for Flink jobmanager` repeats until it is), `flink run` failed (the container exits non-zero), or a job is already running and submission was skipped.
 
-**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL.
+**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL. Grafana's admin password and installed plugin remain in `grafana_data`.
+
+**Grafana is up and every panel is empty.** The dashboard JSON still has the machine id from the environment that exported it, and custom values are allowed, so the dropdown can show an id this database has never stored. Pick a machine the `machine_id` variable query returns. Also confirm `migrate` exited 0: Grafana waits for ClickHouse's healthcheck, and the tables appear only after migrations. Battery and charging stay empty on a machine with no power supply, including the Compose agent.
+
+**A dashboard JSON edit never shows up.** `updateIntervalSeconds` is unset (Grafana treats that as 10) and Grafana watches the files instead of polling. Restart the container: `docker compose restart grafana`. To poll, set `updateIntervalSeconds` above 10 in `docker/grafana/provisioning/dashboards/dashboards.yml`.
+
+**UI edits to the dashboard disappeared.** They live in `grafana_data` until provisioning loads a changed `machine-usage-metrics.json`, which replaces them. Edit the JSON to keep a change.
+
+**Grafana rejects `admin` / `admin`.** That password is stored on first start. `make down` keeps `grafana_data`, so a later change to the environment does not reset it. Set a new one with `docker compose exec grafana grafana cli admin reset-admin-password <password>`.
+
+**ClickHouse panels say the plugin is missing.** `GF_PLUGINS_PREINSTALL_SYNC` installs `grafana-clickhouse-datasource` before provisioning runs. The value has no version. The first start downloads it into `/var/lib/grafana/plugins` on `grafana_data` and needs outbound network. The grafana log is the record of that install.
