@@ -76,18 +76,24 @@ class EwmaDetector:
     version = 1
     min_points = EMWA.MINIMAL_POINT_COUNT
 
+    def __init__(self, min_deviation: float = EMWA.MIN_DEVIATION, min_relative: float = 0.0):
+        """See EMWA: the smallest rise, absolute or as a fraction of the average, that can be flagged."""
+        self.min_deviation = min_deviation
+        self.min_relative = min_relative
+
     def params(self) -> dict[str, float]:
         return {
             "alpha": EMWA.ALPHA,
             "warmup_readings": float(EMWA.WARMUP_READINGS),
             "threshold_multiplier": EMWA.THRESHOLD_MULTIPLIER,
-            "min_deviation": EMWA.MIN_DEVIATION,
+            "min_deviation": self.min_deviation,
+            "min_relative": self.min_relative,
             "anomaly_damping": EMWA.ANOMALY_DAMPING,
             "threshold": EMWA.THRESHOLD,
         }
 
     def evaluate(self, window: list[float]) -> Result:
-        score = EMWA().score(window)
+        score = EMWA(self.min_deviation, self.min_relative).score(window)
         return Result(
             baseline=score.average,
             # EMWA flags only rises above the average, so it has no lower band.

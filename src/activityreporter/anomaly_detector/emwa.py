@@ -17,11 +17,17 @@ class EMWA:
     WARMUP_READINGS = 10
     MINIMAL_POINT_COUNT = WARMUP_READINGS + 1
     THRESHOLD_MULTIPLIER = 3.0
-    # A reading must beat both the statistical threshold and this absolute jump.
+    # A reading must beat both the statistical threshold and this absolute jump, by default.
     MIN_DEVIATION = 10.0
     # Anomalies still nudge the average slightly, so it can't get stuck.
     ANOMALY_DAMPING = 0.1
     THRESHOLD = 1.0
+
+    def __init__(self, min_deviation: float = MIN_DEVIATION, min_relative: float = 0.0):
+        """The smallest rise that can be flagged: `min_deviation` in the values' units, or
+        `min_relative` of the moving average, whichever is larger."""
+        self.min_deviation = min_deviation
+        self.min_relative = min_relative
 
     def score(self, values: list[float]) -> Score:
         """Deviation of the last (most recent) value above the moving average, in units of the allowed margin."""
@@ -33,7 +39,8 @@ class EMWA:
         for index, value in enumerate(values[1:], start=1):
             # Compare against the previous average: the new one would already contain the spike.
             deviation = value - average
-            scale = max(self.THRESHOLD_MULTIPLIER * math.sqrt(variance), self.MIN_DEVIATION)
+            floor = max(self.min_deviation, self.min_relative * abs(average))
+            scale = max(self.THRESHOLD_MULTIPLIER * math.sqrt(variance), floor)
             score = deviation / scale
             if index == len(values) - 1:
                 return Score(score=score, average=average, scale=scale)

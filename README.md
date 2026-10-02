@@ -160,9 +160,9 @@ Scoring rules (`anomaly_detector/detection.py`, called from `AnomalyDetector.pro
 
 | Metric | `mad` | `ewma` |
 | --- | --- | --- |
-| `system.cpu.utilization` | `min_deviation=5.0` (percentage points) | defaults |
-| `system.memory.usage` | `min_relative=0.02` (2% of the median) | defaults |
-| any other scored gauge | `min_relative=0.01` | defaults |
+| `system.cpu.utilization` | `min_deviation=5.0` (percentage points) | `min_deviation=10.0` |
+| `system.memory.usage` | `min_relative=0.02` (2% of the median) | `min_relative=0.02` (2% of the average) |
+| any other scored gauge | `min_relative=0.01` | `min_relative=0.01` |
 
 `detection.py` and `detectors.py` do not import PyFlink, so their tests run in the regular `uv` environment.
 
@@ -193,7 +193,7 @@ To add an algorithm, write a class with that shape and add it to `DEFAULT_DETECT
 To tune the floors, look at the stored scores, for example `SELECT metric_name, algorithm, quantiles(0.5, 0.99, 0.999, 0.9999)(score) FROM evaluations FINAL GROUP BY metric_name, algorithm`. At one sample every 10 seconds a series has 8,640 a day, so a threshold at the 99.99th percentile of a normal day flags about one a day.
 - Returned numbers are Python `float`s; numpy scalars cannot be encoded by PyFlink's coders.
 
-`EMWA` (`anomaly_detector/emwa.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, 10)`. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
+`EMWA` (`anomaly_detector/emwa.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
 
 Input rows follow `Metric` (`shared/metrics.py`) and output rows follow `Evaluation` (`shared/evaluations.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/repository.py` must name the same fields as those dataclasses or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
 
