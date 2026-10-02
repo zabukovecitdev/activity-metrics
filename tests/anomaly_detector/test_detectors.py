@@ -60,3 +60,15 @@ def test_ewma_does_not_flag_a_drop():
 def test_params_are_numbers(detector):
     assert detector.params()
     assert all(isinstance(v, float) for v in detector.params().values())
+
+
+def test_mad_reports_its_floors_as_params():
+    params = MadDetector(min_deviation=5.0, min_relative=0.02).params()
+
+    assert (params["min_deviation"], params["min_relative"]) == (5.0, 0.02)
+
+
+def test_mad_band_widens_to_the_floor():
+    result = MadDetector(min_deviation=7.0).evaluate([5.0] * 25)
+
+    assert (result.lower, result.baseline, result.upper) == (pytest.approx(-2.0), 5.0, pytest.approx(12.0))
