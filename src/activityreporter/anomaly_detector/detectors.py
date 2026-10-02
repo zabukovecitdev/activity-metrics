@@ -42,11 +42,22 @@ class MadDetector:
     version = 1
     min_points = 20
 
+    def __init__(self, min_deviation: float = 0.0, min_relative: float = 0.0):
+        """See MAD: the smallest deviation, absolute or as a fraction of the median, that can be flagged."""
+        self.min_deviation = min_deviation
+        self.min_relative = min_relative
+
     def params(self) -> dict[str, float]:
-        return {"threshold": MAD.THRESHOLD, "sigma": MAD.SIGMA, "min_points": float(self.min_points)}
+        return {
+            "threshold": MAD.THRESHOLD,
+            "sigma": MAD.SIGMA,
+            "min_points": float(self.min_points),
+            "min_deviation": self.min_deviation,
+            "min_relative": self.min_relative,
+        }
 
     def evaluate(self, window: list[float]) -> Result:
-        score = MAD().score(window)
+        score = MAD(self.min_deviation, self.min_relative).score(window)
         margin = MAD.THRESHOLD * score.scale
         return Result(
             baseline=score.median,
@@ -56,7 +67,7 @@ class MadDetector:
             threshold=MAD.THRESHOLD,
             is_anomaly=score.score >= MAD.THRESHOLD,
             direction=sign(window[-1] - score.median),
-            details={"scale": score.scale, "window_size": float(len(window))},
+            details={"scale": score.scale, "spread_scale": score.spread_scale, "window_size": float(len(window))},
         )
 
 

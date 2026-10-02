@@ -156,7 +156,13 @@ On the first scrape of an endpoint, and then every 300 seconds (`MACHINE_REFRESH
 Scoring rules (`anomaly_detector/detection.py`, called from `AnomalyDetector.process_element` in `service.py`):
 
 - `type` other than `gauge`, and the names `system.battery.charging`, `system.battery.utilization`, `system.memory.limit`, and `system.uptime`, are dropped without state. Those series are flags, values that barely move, or ever-growing counters, so every small step would be flagged.
-- Each detector in `DETECTORS` scores the latest value against the window once the window has `min_points` values. Until then that detector emits nothing for the series.
+- `detectors_for(name)` picks the detectors for the series: `METRIC_DETECTORS` for a metric listed there, `DEFAULT_DETECTORS` otherwise. Each scores the latest value against the window once the window has `min_points` values. Until then that detector emits nothing for the series.
+
+| Metric | `mad` | `ewma` |
+| --- | --- | --- |
+| `system.cpu.utilization` | `min_deviation=5.0` (percentage points) | defaults |
+| `system.memory.usage` | `min_relative=0.02` (2% of the median) | defaults |
+| any other scored gauge | `min_relative=0.01` | defaults |
 
 `detection.py` and `detectors.py` do not import PyFlink, so their tests run in the regular `uv` environment.
 
@@ -173,15 +179,18 @@ A detector (`anomaly_detector/detectors.py`) has a `name`, a `version`, `min_poi
 | `direction` | sign of value − median | sign of the score |
 | `min_points` | 20 | 11 (`EMWA.WARMUP_READINGS + 1`) |
 
-`params()` returns the detector's inputs (thresholds, `alpha`, ...); the job adds `window_ms`. `details` holds what it computed (`scale`, `window_size`). A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
+`params()` returns the detector's inputs (thresholds, `alpha`, ...); the job adds `window_ms`. `details` holds what it computed (`scale`, `window_size`, and for `mad` `spread_scale`, the scale before its floor). A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
 
-To add an algorithm, write a class with that shape and append it to `DETECTORS`. No schema, writer, or dashboard change is needed: its anomalies show up on every chart, labelled with its name. Bump `version` when a code change alters a detector's results, so old and new evaluations can be told apart.
+To add an algorithm, write a class with that shape and add it to `DEFAULT_DETECTORS` and the lists in `METRIC_DETECTORS`. No schema, writer, or dashboard change is needed: its anomalies show up on every chart, labelled with its name. Bump `version` when a code change alters a detector's results, so old and new evaluations can be told apart. A changed setting needs no bump: settings are stored in `params` on every evaluation.
 
 `MAD` (`anomaly_detector/mad.py`):
 
 - Needs at least 2 values; below that it raises `InsufficientDataError` from `anomaly_detector/errors.py`.
 - Modified z-score: `|last - median| / (1.4826 × median absolute deviation)`, threshold `3.5`.
 - When the median absolute deviation is 0 (over half the values equal the median), the scale is `1.253314 × mean absolute deviation` instead (Iglewicz & Hoaglin). When that is 0 too, every value is equal and the score is 0. The score is always finite, so it can be encoded as JSON.
+- The scale has a floor, `max(min_deviation, min_relative × |median|) / THRESHOLD`, so a deviation smaller than `min_deviation` and than `min_relative` of the median never reaches the threshold. Without it, a series that barely moves has a tiny MAD and every step is flagged: memory in use changing by 32 KB on a 470 MB median scored 8, against a threshold of 3.5. Both default to 0, the textbook modified z-score.
+
+To tune the floors, look at the stored scores, for example `SELECT metric_name, algorithm, quantiles(0.5, 0.99, 0.999, 0.9999)(score) FROM evaluations FINAL GROUP BY metric_name, algorithm`. At one sample every 10 seconds a series has 8,640 a day, so a threshold at the 99.99th percentile of a normal day flags about one a day.
 - Returned numbers are Python `float`s; numpy scalars cannot be encoded by PyFlink's coders.
 
 `EMWA` (`anomaly_detector/emwa.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, 10)`. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.

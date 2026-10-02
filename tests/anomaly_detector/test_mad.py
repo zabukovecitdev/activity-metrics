@@ -87,3 +87,34 @@ def test_mad_score_is_modified_z_score_of_last_value():
     assert score.median == 5.0
     assert score.scale == pytest.approx(MAD.SIGMA * 2)
     assert score.score == pytest.approx(4 / (MAD.SIGMA * 2))
+
+
+def test_min_deviation_is_the_smallest_deviation_that_reaches_the_threshold():
+    values = [5.0] * 19
+
+    assert MAD(min_deviation=2.0).score(values + [6.9]).score < MAD.THRESHOLD
+    assert MAD(min_deviation=2.0).score(values + [7.0]).score == pytest.approx(MAD.THRESHOLD)
+
+
+def test_min_relative_floors_the_scale_at_a_fraction_of_the_median():
+    values = [1000.0, 1001.0, 999.0] * 7
+
+    score = MAD(min_relative=0.02).score(values + [1015.0])
+
+    assert score.spread_scale == pytest.approx(MAD.SIGMA * 1.0)
+    assert score.scale == pytest.approx(0.02 * 1000.0 / MAD.THRESHOLD)
+    assert score.score < MAD.THRESHOLD
+    assert MAD().score(values + [1015.0]).score >= MAD.THRESHOLD
+
+
+def test_floor_does_not_lower_a_wider_spread():
+    values = [1, 3, 5, 7, 9]
+
+    assert MAD(min_deviation=0.1).score(values).scale == pytest.approx(MAD.SIGMA * 2)
+
+
+def test_floor_gives_equal_values_a_scale():
+    score = MAD(min_deviation=1.0).score([5.0, 5.0, 5.0])
+
+    assert score.score == 0.0
+    assert score.scale == pytest.approx(1.0 / MAD.THRESHOLD)

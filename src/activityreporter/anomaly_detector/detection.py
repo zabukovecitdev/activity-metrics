@@ -4,7 +4,20 @@ from typing import Any
 from activityreporter.anomaly_detector.detectors import Detector, EwmaDetector, MadDetector
 from activityreporter.shared.evaluations import Evaluation
 
-DETECTORS: list[Detector] = [MadDetector(), EwmaDetector()]
+# Detectors per metric. The MAD floors are the smallest deviation worth flagging for that
+# metric: a series that barely moves would otherwise be flagged on every small step.
+METRIC_DETECTORS: dict[str, list[Detector]] = {
+    # Percentage points.
+    "system.cpu.utilization": [MadDetector(min_deviation=5.0), EwmaDetector()],
+    # Memory in use sits near one level and drifts, so only a change of 2% of it counts.
+    "system.memory.usage": [MadDetector(min_relative=0.02), EwmaDetector()],
+}
+# For any other scored metric.
+DEFAULT_DETECTORS: list[Detector] = [MadDetector(min_relative=0.01), EwmaDetector()]
+
+
+def detectors_for(metric_name: str) -> list[Detector]:
+    return METRIC_DETECTORS.get(metric_name, DEFAULT_DETECTORS)
 # Flags, near-constant gauges and ever-growing counters would be flagged on every small step.
 NOT_ANOMALY_SCORED = {
     "system.battery.charging",
@@ -23,7 +36,7 @@ def evaluate(
     window: list[float],
     window_ms: int,
     detected_at: float,
-    detectors: list[Detector] = DETECTORS,
+    detectors: list[Detector] | None = None,
 ) -> list[Evaluation]:
     """One evaluation per detector for `metric`, the last value of `window`.
 
@@ -32,7 +45,7 @@ def evaluate(
     tested without a Flink runtime.
     """
     evaluations: list[Evaluation] = []
-    for detector in detectors:
+    for detector in detectors if detectors is not None else detectors_for(metric["name"]):
         if len(window) < detector.min_points:
             continue
         result = detector.evaluate(window)
