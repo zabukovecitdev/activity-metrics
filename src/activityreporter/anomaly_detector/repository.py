@@ -13,12 +13,12 @@ from pyflink.datastream.connectors.kafka import (
 )
 from pyflink.datastream.formats.json import JsonRowDeserializationSchema, JsonRowSerializationSchema
 
-from activityreporter.shared.anomalies import Anomaly
+from activityreporter.shared.evaluations import Evaluation
 from activityreporter.shared.metrics import Metric
 
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094")
 KAFKA_RAW_METRICS_TOPIC = os.environ.get("KAFKA_RAW_METRICS_TOPIC", "raw_metrics")
-KAFKA_ANOMALIES_TOPIC = os.environ.get("KAFKA_ANOMALIES_TOPIC", "anomalies")
+KAFKA_EVALUATIONS_TOPIC = os.environ.get("KAFKA_EVALUATIONS_TOPIC", "evaluations")
 KAFKA_CONSUMER_GROUP_ID = "anomaly-detector"
 MAX_OUT_OF_ORDERNESS = Duration.of_seconds(5)
 
@@ -32,19 +32,24 @@ METRIC_FIELD_TYPES = {
     "metric_id": Types.STRING(),
     "attributes": Types.MAP(Types.STRING(), Types.STRING()),
 }
-ANOMALY_FIELD_TYPES = {
+EVALUATION_FIELD_TYPES = {
     "metric_id": Types.STRING(),
     "machine_id": Types.STRING(),
     "metric_name": Types.STRING(),
     "timestamp": Types.DOUBLE(),
     "value": Types.DOUBLE(),
     "algorithm": Types.STRING(),
+    "algorithm_version": Types.INT(),
+    "params": Types.MAP(Types.STRING(), Types.DOUBLE()),
+    "baseline": Types.DOUBLE(),
+    "lower": Types.DOUBLE(),
+    "upper": Types.DOUBLE(),
     "score": Types.DOUBLE(),
     "threshold": Types.DOUBLE(),
-    "direction": Types.STRING(),
-    "detected_at": Types.DOUBLE(),
-    "metric_attributes": Types.MAP(Types.STRING(), Types.STRING()),
+    "is_anomaly": Types.BOOLEAN(),
+    "direction": Types.INT(),
     "details": Types.MAP(Types.STRING(), Types.DOUBLE()),
+    "detected_at": Types.DOUBLE(),
     "schema_version": Types.INT(),
 }
 
@@ -60,7 +65,7 @@ def row_type_info(record_type: type, field_types: dict):
 
 
 METRIC_TYPE_INFO = row_type_info(Metric, METRIC_FIELD_TYPES)
-ANOMALY_TYPE_INFO = row_type_info(Anomaly, ANOMALY_FIELD_TYPES)
+EVALUATION_TYPE_INFO = row_type_info(Evaluation, EVALUATION_FIELD_TYPES)
 
 
 class EpochSecondsTimestampAssigner(TimestampAssigner):
@@ -85,13 +90,13 @@ def kafka_raw_metrics_source() -> KafkaSource:
         .build()
 
 
-def kafka_anomalies_sink() -> KafkaSink:
+def kafka_evaluations_sink() -> KafkaSink:
     return KafkaSink.builder() \
         .set_bootstrap_servers(KAFKA_BOOTSTRAP_SERVERS) \
         .set_record_serializer(
             KafkaRecordSerializationSchema.builder()
-            .set_topic(KAFKA_ANOMALIES_TOPIC)
+            .set_topic(KAFKA_EVALUATIONS_TOPIC)
             .set_value_serialization_schema(
-                JsonRowSerializationSchema.builder().with_type_info(ANOMALY_TYPE_INFO).build()
+                JsonRowSerializationSchema.builder().with_type_info(EVALUATION_TYPE_INFO).build()
             ).build()
         ).build()

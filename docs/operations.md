@@ -1,6 +1,6 @@
 # Operations
 
-Setup, configuration, and failure modes for the agent, collector, Flink job, metrics writer, and migrations. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
+Setup, configuration, and failure modes for the agent, collector, Flink job, ClickHouse writers, and migrations. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
 
 ## Local stack
 
@@ -23,7 +23,8 @@ Process commands from the `Makefile`:
 | `agent` | `uv run agent` | `activityreporter.agent.main:cli` |
 | `collector` | `uv run collector` | `activityreporter.collector.main:cli` |
 | `metrics-writer` | `uv run metrics-writer` | `activityreporter.clickhouse_writer.main:metrics_cli` |
-| `anomalies-writer` | `uv run anomalies-writer` | `activityreporter.clickhouse_writer.main:anomalies_cli` |
+| `evaluations-writer` | `uv run evaluations-writer` | `activityreporter.clickhouse_writer.main:evaluations_cli` |
+| `machines-writer` | `uv run machines-writer` | `activityreporter.clickhouse_writer.main:machines_cli` |
 | `test` | `uv run pytest` | |
 | `anomaly-detector` | `flink/.venv/bin/python -m activityreporter.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
@@ -39,6 +40,7 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | --- | --- | --- |
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `localhost:9094` |
 | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `raw_metrics` |
+| `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
 | `COLLECTOR_ENDPOINTS` | empty | empty |
 
 `COLLECTOR_ENDPOINTS` is split on commas. Empty items are dropped. Example: `http://192.168.1.20:8080/v1/metrics,http://192.168.1.21:8080/v1/metrics`.
@@ -49,7 +51,7 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | --- | --- | --- |
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
 | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `raw_metrics` |
-| `KAFKA_ANOMALIES_TOPIC` | `anomalies` | `anomalies` |
+| `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` |
 | `KAFKA_CONNECTOR_JAR` | empty | unset (default applies) |
 
 An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already has that connector in `/opt/flink/lib`, and loading it a second time is what the submitter avoids. Local runs need the jar on the classpath because the `apache-flink` wheel does not include it. `make anomaly-detector` sets it; the job turns the path into a `file://` URI.
@@ -60,22 +62,22 @@ The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The 
 
 ### ClickHouse writers
 
-`metrics-writer` and `anomalies-writer` read the same variables. Defaults for the topic and group come from the writer's sink.
+`metrics-writer`, `evaluations-writer`, and `machines-writer` read the same variables. Defaults for the topic and group come from the writer's sink, and Compose sets them to the same values.
 
-| Variable | Default | Compose `metrics-writer` | Compose `anomalies-writer` |
-| --- | --- | --- | --- |
-| `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` | `kafka:9092` |
-| `KAFKA_TOPIC` | `raw_metrics` / `anomalies` | `raw_metrics` | `anomalies` |
-| `KAFKA_CONSUMER_GROUP_ID` | `clickhouse-metrics-writer` / `clickhouse-anomalies-writer` | `clickhouse-metrics-writer` | `clickhouse-anomalies-writer` |
-| `WRITER_BATCH_SIZE` | `100` | unset | unset |
-| `WRITER_BATCH_TIMEOUT_SECONDS` | `5.0` | unset | unset |
-| `CLICKHOUSE_HOST` | `localhost` | `clickhouse` | `clickhouse` |
-| `CLICKHOUSE_PORT` | `8123` | `8123` | `8123` |
-| `CLICKHOUSE_DB` | `metrics` | `metrics` | `metrics` |
-| `CLICKHOUSE_USER` | `user` | `user` | `user` |
-| `CLICKHOUSE_PASSWORD` | `password` | `password` | `password` |
+| Variable | Default | Compose |
+| --- | --- | --- |
+| `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
+| `KAFKA_TOPIC` | `raw_metrics` / `evaluations` / `machines` | same |
+| `KAFKA_CONSUMER_GROUP_ID` | `clickhouse-metrics-writer` / `clickhouse-evaluations-writer` / `clickhouse-machines-writer` | same |
+| `WRITER_BATCH_SIZE` | `100` | unset |
+| `WRITER_BATCH_TIMEOUT_SECONDS` | `5.0` | unset |
+| `CLICKHOUSE_HOST` | `localhost` | `clickhouse` |
+| `CLICKHOUSE_PORT` | `8123` | `8123` |
+| `CLICKHOUSE_DB` | `metrics` | `metrics` |
+| `CLICKHOUSE_USER` | `user` | `user` |
+| `CLICKHOUSE_PASSWORD` | `password` | `password` |
 
-`CLICKHOUSE_PORT` is the HTTP port. From the host, ClickHouse is `localhost:8123` (HTTP) and `localhost:9000` (native) with the same database, user, and password. Inside Compose both writers wait until the `migrate` container exits successfully.
+`CLICKHOUSE_PORT` is the HTTP port. From the host, ClickHouse is `localhost:8123` (HTTP) and `localhost:9000` (native) with the same database, user, and password. Inside Compose every writer waits until the `migrate` container exits successfully.
 
 ## Migrations
 
@@ -86,6 +88,7 @@ Writing a migration:
 - One DDL change per file, with `IF [NOT] EXISTS`, and a `.down.sql` that undoes it.
 - ClickHouse DDL is not transactional. A file that fails halfway leaves some statements applied.
 - Test `make migrate-down && make migrate` locally before committing.
+- `x-multi-statement` splits on every `;`, including one inside a `--` comment, so keep semicolons out of comments.
 
 **`Dirty database version N. Fix and force version.`** Migration `N` failed. `schema_migrations` marks it dirty and `migrate` refuses to run. Undo whatever part of `N` did apply (or finish it by hand), then record the real state and rerun:
 
@@ -111,7 +114,8 @@ Every reader has its own consumer group. They all start at `earliest`, and each 
 | --- | --- | --- |
 | Metrics writer | `clickhouse-metrics-writer` | `raw_metrics` |
 | Anomaly detector | `anomaly-detector` | `raw_metrics` |
-| Anomalies writer | `clickhouse-anomalies-writer` | `anomalies` |
+| Evaluations writer | `clickhouse-evaluations-writer` | `evaluations` |
+| Machines writer | `clickhouse-machines-writer` | `machines` |
 
 The metrics writer does not depend on the Flink job: `metrics` fills even while the job is down.
 
@@ -128,9 +132,10 @@ The wheel contains `src/activityreporter`. Console scripts:
 | `agent` | `activityreporter.agent.main:cli` |
 | `collector` | `activityreporter.collector.main:cli` |
 | `metrics-writer` | `activityreporter.clickhouse_writer.main:metrics_cli` |
-| `anomalies-writer` | `activityreporter.clickhouse_writer.main:anomalies_cli` |
+| `evaluations-writer` | `activityreporter.clickhouse_writer.main:evaluations_cli` |
+| `machines-writer` | `activityreporter.clickhouse_writer.main:machines_cli` |
 
-The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent`, `collector`, `metrics-writer`, and `anomalies-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
+The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent`, `collector`, `metrics-writer`, `evaluations-writer`, and `machines-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
 
 ## Troubleshooting
 
@@ -144,9 +149,13 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 
 **Writer reprocesses the same batch.** Offsets commit only after `insert_batch` returns. A ClickHouse error is logged as `Failed to write <table> batch to ClickHouse (attempt n/5)` and retried. After five failures the exception propagates and the process exits; Compose restarts it (`restart: unless-stopped`) and the uncommitted batch is read again. The replayed rows are inserted again and collapsed by `ReplacingMergeTree` on merge; query with `FINAL` to hide them before that.
 
-**`Skipping malformed record` in a writer log.** The record is not valid JSON, lacks a required field, or has no valid `metric_id`. Records published before `metric_id` existed have none; they are skipped, not retried.
+**`Skipping malformed record` in a writer log.** The record is not valid JSON, lacks a required field, or has no valid `metric_id` (metrics, evaluations). For machines, an empty `machine_id` or a `last_boot` without a UTC offset is rejected too. Records published before `metric_id` existed have none; they are skipped, not retried.
 
-**`anomalies` stays empty.** Most samples are not anomalies, so an empty table is normal. Confirm the Flink job runs and that `anomalies` receives records (`kafka-console-consumer.sh --topic anomalies`). The operator needs 20 samples of that `(machine_id, name)` in the last hour, the series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, or `system.memory.limit`. Battery series are omitted entirely when the agent has no power supply.
+**`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing for a series until the last hour holds `min_points` samples of that `(machine_id, name)`: 11 for `ewma` and 20 for `mad`, about 2 and 3.5 minutes at the 10-second scrape interval. The series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, `system.memory.limit`, or `system.uptime`. Battery series are omitted entirely when the agent has no power supply. A job submitted before this change still publishes to `anomalies`; cancel it in the Flink UI and resubmit.
+
+**Bands drop to 0 in a custom Grafana query.** A `LEFT JOIN` from `metrics` to `evaluations` fills unmatched rows with `0` unless the query ends with `SETTINGS join_use_nulls = 1`.
+
+**The machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after; check its log for `Failed to fetch machine info` or `Malformed machine info` (an agent older than this change has no `observed_at`), and that `machines-writer` is running.
 
 **Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The submitter leaves `KAFKA_CONNECTOR_JAR` unset so the image copy is the only one on the classpath.
 

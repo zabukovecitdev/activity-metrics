@@ -4,19 +4,22 @@ import json
 import os
 import uuid
 from collections.abc import Iterable
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from datetime import datetime
-from typing import Any
+from typing import Any, Self
+from urllib.parse import urljoin
 
 import httpx
 from kafka import KafkaProducer
 
+from activityreporter.shared.machines import Machine
 from activityreporter.shared.metrics import Metric
 
 CONNECT_TIMEOUT_SECONDS = 2
 READ_TIMEOUT_SECONDS = 2
 MAX_CONNECTIONS = 200
 SEND_TIMEOUT_SECONDS = 10
+MACHINE_PATH = "/v1/machine"
 
 
 class HttpAgentMetricsRepository:
@@ -30,6 +33,12 @@ class HttpAgentMetricsRepository:
         response = await self._client.get(endpoint)
         response.raise_for_status()
         return parse_metrics(response.json())
+
+    async def fetch_machine(self, endpoint: str) -> Machine:
+        """The machine behind the metrics URL `endpoint`, from the same agent's /v1/machine."""
+        response = await self._client.get(machine_url(endpoint))
+        response.raise_for_status()
+        return parse_machine(response.json())
 
     async def __aenter__(self) -> HttpAgentMetricsRepository:
         return self
@@ -56,7 +65,21 @@ def parse_metrics(payload: dict[str, Any]) -> list[Metric]:
     ]
 
 
-class KafkaRawMetricsRepository:
+def machine_url(metrics_url: str) -> str:
+    return urljoin(metrics_url, MACHINE_PATH)
+
+
+def parse_machine(payload: dict[str, Any]) -> Machine:
+    # Every field is required; an agent that doesn't send one is reported as malformed.
+    machine = Machine(**{f.name: payload[f.name] for f in fields(Machine)})
+    if not machine.machine_id:
+        raise ValueError("machine_id is empty")
+    return machine
+
+
+class KafkaJsonProducer:
+    """JSON records to one Kafka topic, keyed by machine id."""
+
     def __init__(self, bootstrap_servers: str, topic: str):
         self._topic = topic
         self._producer = KafkaProducer(
@@ -67,6 +90,23 @@ class KafkaRawMetricsRepository:
             retries=3,
         )
 
+    def _publish(self, records: Iterable[Metric | Machine]) -> None:
+        queued = [self._producer.send(self._topic, value=asdict(r), key=r.machine_id) for r in records]
+        for future in queued:
+            future.get(timeout=SEND_TIMEOUT_SECONDS)
+
+    def close(self) -> None:
+        self._producer.flush(timeout=SEND_TIMEOUT_SECONDS)
+        self._producer.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+class KafkaRawMetricsRepository(KafkaJsonProducer):
     @classmethod
     def from_env(cls) -> KafkaRawMetricsRepository:
         return cls(
@@ -75,16 +115,16 @@ class KafkaRawMetricsRepository:
         )
 
     def publish(self, metrics: Iterable[Metric]) -> None:
-        queued = [self._producer.send(self._topic, value=asdict(m), key=m.machine_id) for m in metrics]
-        for future in queued:
-            future.get(timeout=SEND_TIMEOUT_SECONDS)
+        self._publish(metrics)
 
-    def close(self) -> None:
-        self._producer.flush(timeout=SEND_TIMEOUT_SECONDS)
-        self._producer.close()
 
-    def __enter__(self) -> KafkaRawMetricsRepository:
-        return self
+class KafkaMachinesRepository(KafkaJsonProducer):
+    @classmethod
+    def from_env(cls) -> KafkaMachinesRepository:
+        return cls(
+            bootstrap_servers=os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094"),
+            topic=os.environ.get("KAFKA_MACHINES_TOPIC", "machines"),
+        )
 
-    def __exit__(self, *exc) -> None:
-        self.close()
+    def publish(self, machine: Machine) -> None:
+        self._publish([machine])

@@ -2,7 +2,7 @@ FLINK_PYTHON := flink/.venv/bin/python
 KAFKA_CONNECTOR_JAR := flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar
 KAFKA_CONNECTOR_URL := https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.2.0-1.19/flink-sql-connector-kafka-3.2.0-1.19.jar
 
-.PHONY: agent collector metrics-writer anomalies-writer anomaly-detector test up down migrate migrate-down migrate-new
+.PHONY: agent collector metrics-writer evaluations-writer machines-writer anomaly-detector test up down migrate migrate-down migrate-new
 
 agent:
 	uv run agent
@@ -13,8 +13,11 @@ collector:
 metrics-writer:
 	uv run metrics-writer
 
-anomalies-writer:
-	uv run anomalies-writer
+evaluations-writer:
+	uv run evaluations-writer
+
+machines-writer:
+	uv run machines-writer
 
 anomaly-detector: $(FLINK_PYTHON) $(KAFKA_CONNECTOR_JAR)
 	PYTHONPATH=src KAFKA_CONNECTOR_JAR=$(abspath $(KAFKA_CONNECTOR_JAR)) $(FLINK_PYTHON) -m activityreporter.anomaly_detector.main

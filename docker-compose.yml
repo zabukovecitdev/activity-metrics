@@ -88,6 +88,7 @@ services:
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: localhost:9094
       KAFKA_RAW_METRICS_TOPIC: raw_metrics
+      KAFKA_MACHINES_TOPIC: machines
       # Scraped in addition to clients discovered over mDNS, comma separated.
       COLLECTOR_ENDPOINTS: ""
     depends_on:
@@ -116,16 +117,28 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  anomalies-writer:
+  evaluations-writer:
     build: .
     image: activityreporter:latest
-    container_name: anomalies-writer
-    command: anomalies-writer
+    container_name: evaluations-writer
+    command: evaluations-writer
     restart: unless-stopped
     environment:
       <<: *clickhouse-writer-env
-      KAFKA_TOPIC: anomalies
-      KAFKA_CONSUMER_GROUP_ID: clickhouse-anomalies-writer
+      KAFKA_TOPIC: evaluations
+      KAFKA_CONSUMER_GROUP_ID: clickhouse-evaluations-writer
+    depends_on: *clickhouse-writer-depends-on
+
+  machines-writer:
+    build: .
+    image: activityreporter:latest
+    container_name: machines-writer
+    command: machines-writer
+    restart: unless-stopped
+    environment:
+      <<: *clickhouse-writer-env
+      KAFKA_TOPIC: machines
+      KAFKA_CONSUMER_GROUP_ID: clickhouse-machines-writer
     depends_on: *clickhouse-writer-depends-on
 
   jobmanager:
@@ -170,7 +183,7 @@ services:
     environment:
       KAFKA_CONNECTION_STRING: kafka:9092
       KAFKA_RAW_METRICS_TOPIC: raw_metrics
-      KAFKA_ANOMALIES_TOPIC: anomalies
+      KAFKA_EVALUATIONS_TOPIC: evaluations
     volumes:
       - ./src:/opt/flink/src:ro
       - ./docker/flink/submit-jobs.sh:/opt/flink/submit-jobs.sh:ro

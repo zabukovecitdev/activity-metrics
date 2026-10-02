@@ -2,7 +2,8 @@ import logging
 import signal
 
 from activityreporter.clickhouse_writer.repository import (
-    ANOMALIES,
+    EVALUATIONS,
+    MACHINES,
     METRICS,
     ClickHouseRepository,
     KafkaRecordsRepository,
@@ -30,8 +31,12 @@ def metrics_cli() -> None:
     run(METRICS)
 
 
-def anomalies_cli() -> None:
-    run(ANOMALIES)
+def evaluations_cli() -> None:
+    run(EVALUATIONS)
+
+
+def machines_cli() -> None:
+    run(MACHINES)
 
 
 if __name__ == "__main__":

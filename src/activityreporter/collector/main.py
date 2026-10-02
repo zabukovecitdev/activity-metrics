@@ -4,7 +4,11 @@ import os
 import signal
 
 from activityreporter.collector.discovery import ServiceDiscovery
-from activityreporter.collector.repository import HttpAgentMetricsRepository, KafkaRawMetricsRepository
+from activityreporter.collector.repository import (
+    HttpAgentMetricsRepository,
+    KafkaMachinesRepository,
+    KafkaRawMetricsRepository,
+)
 from activityreporter.collector.service import Collector
 
 
@@ -16,9 +20,9 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     endpoints = static_endpoints(os.environ.get("COLLECTOR_ENDPOINTS", ""))
     logging.info("Static endpoints: %s", sorted(endpoints) or "none")
-    with KafkaRawMetricsRepository.from_env() as raw_metrics:
+    with KafkaRawMetricsRepository.from_env() as raw_metrics, KafkaMachinesRepository.from_env() as machines:
         async with ServiceDiscovery() as discovery, HttpAgentMetricsRepository() as agent_metrics:
-            collector = Collector(lambda: endpoints | discovery.urls(), agent_metrics, raw_metrics)
+            collector = Collector(lambda: endpoints | discovery.urls(), agent_metrics, raw_metrics, machines)
             await collector.run()
 
 

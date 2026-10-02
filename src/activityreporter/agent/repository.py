@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import machineid
 import psutil
 
-from activityreporter.agent.models import Machine
+from activityreporter.shared.machines import Machine
 
 
 def read_machine_id() -> str:
@@ -28,17 +28,21 @@ def read_battery():
         return None
 
 
+def read_uptime() -> float:
+    return time.time() - psutil.boot_time()
+
+
 def read_machine() -> Machine:
-    boot_time = psutil.boot_time()
     return Machine(
         machine_id=read_machine_id(),
         hostname=platform.node(),
         os=platform.system().lower(),
         os_version=platform.release(),
         architecture=platform.machine(),
-        cores=psutil.cpu_count(),
-        total_disk_memory=psutil.disk_usage(os.path.abspath(os.sep)).total,
+        # cpu_count() is None when the platform can't tell.
+        cores=psutil.cpu_count() or 0,
         total_memory=psutil.virtual_memory().total,
-        uptime=time.time() - boot_time,
-        last_boot=datetime.fromtimestamp(boot_time, timezone.utc).isoformat(),
+        total_disk=psutil.disk_usage(os.path.abspath(os.sep)).total,
+        last_boot=datetime.fromtimestamp(psutil.boot_time(), timezone.utc).isoformat(),
+        observed_at=time.time(),
     )
