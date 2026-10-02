@@ -12,7 +12,7 @@ Setup, configuration, and failure modes for the agent, collector, Flink job, Cli
 | `8123`, `9000` | ClickHouse HTTP and native protocol. |
 | `8081` | Flink Web UI. |
 
-The `agent` Compose service does not publish port `8080`. The collector uses `network_mode: host` because mDNS multicast does not cross the Docker bridge, and on the host network the DNS name `kafka` does not resolve. Its `KAFKA_CONNECTION_STRING` is therefore `localhost:9094`.
+The `agent` Compose service is in the `dev` profile, so `make up` doesn't start it; `docker compose --profile dev up -d` does. It does not publish port `8080`. The collector uses `network_mode: host` because mDNS multicast does not cross the Docker bridge, and on the host network the DNS name `kafka` does not resolve. Its `KAFKA_CONNECTION_STRING` is therefore `localhost:9094`.
 
 An agent run on the host (`make agent`) advertises on the LAN, which that collector can discover. The Compose agent is on the bridge network with no published port, and `COLLECTOR_ENDPOINTS` defaults to empty, so this collector has no URL for it unless you set `COLLECTOR_ENDPOINTS` to an address the host network can reach.
 
@@ -22,9 +22,7 @@ Process commands from the `Makefile`:
 | --- | --- | --- |
 | `agent` | `uv run agent` | `activityreporter.agent.main:cli` |
 | `collector` | `uv run collector` | `activityreporter.collector.main:cli` |
-| `metrics-writer` | `uv run metrics-writer` | `activityreporter.clickhouse_writer.main:metrics_cli` |
-| `evaluations-writer` | `uv run evaluations-writer` | `activityreporter.clickhouse_writer.main:evaluations_cli` |
-| `machines-writer` | `uv run machines-writer` | `activityreporter.clickhouse_writer.main:machines_cli` |
+| `clickhouse-writer` | `uv run clickhouse-writer` | `activityreporter.clickhouse_writer.main:cli` |
 | `test` | `uv run pytest` | |
 | `anomaly-detector` | `flink/.venv/bin/python -m activityreporter.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
@@ -60,15 +58,15 @@ An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already ha
 
 The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The job calls `env.set_python_executable(sys.executable)` so keyed Python operators use that interpreter. A worker started as plain `python` on `PATH` dies with `ModuleNotFoundError: pyflink`.
 
-### ClickHouse writers
-
-`metrics-writer`, `evaluations-writer`, and `machines-writer` read the same variables. Defaults for the topic and group come from the writer's sink, and Compose sets them to the same values.
+### ClickHouse writer
 
 | Variable | Default | Compose |
 | --- | --- | --- |
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
-| `KAFKA_TOPIC` | `raw_metrics` / `evaluations` / `machines` | same |
-| `KAFKA_CONSUMER_GROUP_ID` | `clickhouse-metrics-writer` / `clickhouse-evaluations-writer` / `clickhouse-machines-writer` | same |
+| `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `raw_metrics` |
+| `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` |
+| `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
+| `KAFKA_CONSUMER_GROUP_ID` | `clickhouse-writer` | `clickhouse-writer` |
 | `WRITER_BATCH_SIZE` | `100` | unset |
 | `WRITER_BATCH_TIMEOUT_SECONDS` | `5.0` | unset |
 | `CLICKHOUSE_HOST` | `localhost` | `clickhouse` |
@@ -77,7 +75,9 @@ The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The 
 | `CLICKHOUSE_USER` | `user` | `user` |
 | `CLICKHOUSE_PASSWORD` | `password` | `password` |
 
-`CLICKHOUSE_PORT` is the HTTP port. From the host, ClickHouse is `localhost:8123` (HTTP) and `localhost:9000` (native) with the same database, user, and password. Inside Compose every writer waits until the `migrate` container exits successfully.
+`CLICKHOUSE_PORT` is the HTTP port. From the host, ClickHouse is `localhost:8123` (HTTP) and `localhost:9000` (native) with the same database, user, and password. Inside Compose the writer waits until the `migrate` container exits successfully.
+
+The topic names are set once, in the `x-topics` block of `docker-compose.yml`, and merged into every service that produces or consumes them. Services built from the root `Dockerfile` share the `x-app` block (`build`, `image`, `restart`).
 
 ## Migrations
 
@@ -112,12 +112,12 @@ Every reader has its own consumer group. They all start at `earliest`, and each 
 
 | Process | Group id | Topic it reads |
 | --- | --- | --- |
-| Metrics writer | `clickhouse-metrics-writer` | `raw_metrics` |
+| ClickHouse writer | `clickhouse-writer` | `raw_metrics`, `evaluations`, `machines` |
 | Anomaly detector | `anomaly-detector` | `raw_metrics` |
-| Evaluations writer | `clickhouse-evaluations-writer` | `evaluations` |
-| Machines writer | `clickhouse-machines-writer` | `machines` |
 
-The metrics writer does not depend on the Flink job: `metrics` fills even while the job is down.
+The writer does not depend on the Flink job: `metrics` and `machines` fill even while the job is down.
+
+The writer's group replaced the three per-table groups `clickhouse-metrics-writer`, `clickhouse-evaluations-writer`, and `clickhouse-machines-writer`. A new group starts at `earliest`, so on its first run it rewrites what Kafka still holds; `ReplacingMergeTree` collapses those rows.
 
 `jobmanager` sets `restart-strategy.type: exponential-delay`. Without a restart strategy the job stops for good on the first error, including starting before the collector has created `raw_metrics`.
 
@@ -131,11 +131,9 @@ The wheel contains `src/activityreporter`. Console scripts:
 | --- | --- |
 | `agent` | `activityreporter.agent.main:cli` |
 | `collector` | `activityreporter.collector.main:cli` |
-| `metrics-writer` | `activityreporter.clickhouse_writer.main:metrics_cli` |
-| `evaluations-writer` | `activityreporter.clickhouse_writer.main:evaluations_cli` |
-| `machines-writer` | `activityreporter.clickhouse_writer.main:machines_cli` |
+| `clickhouse-writer` | `activityreporter.clickhouse_writer.main:cli` |
 
-The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent`, `collector`, `metrics-writer`, `evaluations-writer`, and `machines-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
+The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent` (`dev` profile only), `collector`, and `clickhouse-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
 
 ## Troubleshooting
 
@@ -145,9 +143,9 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 
 **Kafka send failures.** When `KafkaRawMetricsRepository.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host and from the host-network collector, `kafka:9092` from bridge-network services.
 
-**`metrics` stays empty while raw samples are flowing.** The metrics writer reads `raw_metrics` directly. Check its logs and that its group is `clickhouse-metrics-writer`, not a group another process also uses.
+**`metrics` stays empty while raw samples are flowing.** The writer reads `raw_metrics` directly. Check its logs and that its group is `clickhouse-writer`, not a group another process also uses.
 
-**Writer reprocesses the same batch.** Offsets commit only after `insert_batch` returns. A ClickHouse error is logged as `Failed to write <table> batch to ClickHouse (attempt n/5)` and retried. After five failures the exception propagates and the process exits; Compose restarts it (`restart: unless-stopped`) and the uncommitted batch is read again. The replayed rows are inserted again and collapsed by `ReplacingMergeTree` on merge; query with `FINAL` to hide them before that.
+**Writer reprocesses the same batch.** Offsets commit only after `insert_batch` returns for every table in the flush. A ClickHouse error is logged as `Failed to write <table> batch to ClickHouse (attempt n/5)` and retried. After five failures the exception propagates and the process exits; Compose restarts it (`restart: unless-stopped`) and the uncommitted batch is read again. The replayed rows are inserted again and collapsed by `ReplacingMergeTree` on merge; query with `FINAL` to hide them before that.
 
 **`Skipping malformed record` in a writer log.** The record is not valid JSON, lacks a required field, or has no valid `metric_id` (metrics, evaluations). For machines, an empty `machine_id` or a `last_boot` without a UTC offset is rejected too. Records published before `metric_id` existed have none; they are skipped, not retried.
 
@@ -155,7 +153,7 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 
 **Bands drop to 0 in a custom Grafana query.** A `LEFT JOIN` from `metrics` to `evaluations` fills unmatched rows with `0` unless the query ends with `SETTINGS join_use_nulls = 1`.
 
-**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after; check its log for `Failed to fetch machine info` or `Malformed machine info` (an agent older than this change has no `observed_at`), and that `machines-writer` is running.
+**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after; check its log for `Failed to fetch machine info` or `Malformed machine info` (an agent older than this change has no `observed_at`), and that `clickhouse-writer` is running.
 
 **Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The submitter leaves `KAFKA_CONNECTOR_JAR` unset so the image copy is the only one on the classpath.
 
