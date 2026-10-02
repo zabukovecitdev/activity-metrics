@@ -101,6 +101,10 @@ def mad_of(evaluations):
     return by_algorithm(evaluations)["mad"]
 
 
+def ewma_of(evaluations):
+    return by_algorithm(evaluations)["ewma"]
+
+
 def test_cpu_moving_less_than_five_points_on_an_idle_machine_is_not_an_anomaly():
     idle = [11.0, 11.2, 10.9] * 7
 
@@ -126,3 +130,20 @@ def test_memory_jumping_more_than_two_percent_is_an_anomaly():
     metric = build_metric(560_000_000.0, name="system.memory.usage", unit="By")
 
     assert mad_of(evaluate(metric, memory + [560_000_000.0], WINDOW_MS, detected_at=0.0)).is_anomaly
+
+
+def test_memory_creeping_up_a_few_pages_is_not_an_ewma_anomaly():
+    memory = [492_711_936.0, 492_720_128.0, 492_703_744.0, 492_711_936.0] * 5
+    metric = build_metric(492_744_704.0, name="system.memory.usage", unit="By")
+
+    evaluation = ewma_of(evaluate(metric, memory + [492_744_704.0], WINDOW_MS, detected_at=0.0))
+
+    assert not evaluation.is_anomaly
+    assert evaluation.params["min_relative"] == 0.02
+
+
+def test_cpu_rise_of_ten_points_on_an_idle_machine_is_an_ewma_anomaly():
+    idle = [11.0, 11.2, 10.9] * 7
+
+    assert ewma_of(evaluate(build_metric(22.0), idle + [22.0], WINDOW_MS, detected_at=0.0)).is_anomaly
+    assert not ewma_of(evaluate(build_metric(19.0), idle + [19.0], WINDOW_MS, detected_at=0.0)).is_anomaly
