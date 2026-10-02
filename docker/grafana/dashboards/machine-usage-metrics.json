@@ -19,14 +19,38 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "liveNow": false,
+  "preload": false,
+  "refresh": "5s",
+  "schemaVersion": 42,
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ]
+  },
+  "timezone": "browser",
+  "title": "Machine usage metrics",
+  "uid": "ad8rn6h",
   "panels": [
     {
       "collapsed": false,
       "gridPos": {
-        "h": 1,
-        "w": 24,
         "x": 0,
-        "y": 0
+        "y": 0,
+        "w": 24,
+        "h": 1
       },
       "id": 6,
       "panels": [],
@@ -37,6 +61,15 @@
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
+      },
+      "id": 7,
+      "title": "Machine",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 18,
+        "h": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -49,13 +82,6 @@
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 6,
-        "w": 18,
-        "x": 0,
-        "y": 1
-      },
-      "id": 7,
       "options": {
         "cellHeight": "sm",
         "showHeader": true
@@ -74,14 +100,21 @@
           "rawSql": "SELECT\n    hostname AS Host,\n    os AS OS,\n    os_version AS `OS version`,\n    architecture AS Architecture,\n    cores AS Cores,\n    formatReadableSize(total_memory) AS Memory,\n    formatReadableSize(total_disk) AS Disk,\n    last_boot AS `Last boot`,\n    observed_at AS `Last seen`\nFROM machines FINAL\nWHERE machine_id = ${machine_id:singlequote}",
           "refId": "A"
         }
-      ],
-      "title": "Machine",
-      "type": "table"
+      ]
     },
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
+      },
+      "id": 8,
+      "title": "Uptime",
+      "type": "stat",
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -94,13 +127,6 @@
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 6,
-        "w": 6,
-        "x": 18,
-        "y": 1
-      },
-      "id": 8,
       "options": {
         "colorMode": "none",
         "graphMode": "none",
@@ -127,91 +153,65 @@
           "format": 1,
           "pluginVersion": "4.21.3",
           "queryType": "table",
-          "rawSql": "SELECT timestamp AS time, value\nFROM metrics\nWHERE machine_id = ${machine_id:singlequote}\n  AND name = 'system.uptime'\nORDER BY timestamp DESC\nLIMIT 1",
+          "rawSql": "SELECT value\nFROM metrics\nWHERE machine_id = ${machine_id:singlequote}\n  AND name = 'system.uptime'\nORDER BY timestamp DESC\nLIMIT 1",
           "refId": "A"
         }
-      ],
-      "title": "Uptime",
-      "type": "stat"
+      ]
     },
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
       },
+      "id": 11,
+      "title": "CPU",
+      "type": "gauge",
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 6,
+        "h": 5
+      },
       "fieldConfig": {
         "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
           "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 25,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": 0
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 70
               },
               {
                 "color": "red",
-                "value": 80
+                "value": 90
               }
             ]
           }
-        }
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 7
-      },
-      "id": 4,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
         },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "auto"
       },
       "pluginVersion": "13.2.3",
       "targets": [
@@ -221,56 +221,58 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "format": 0,
+          "format": 1,
           "pluginVersion": "4.21.3",
-          "rawSql": "SELECT\n       timestamp AS time,\n       value\nFROM metrics\nWHERE machine_id = ${machine_id:singlequote}\n  AND name = 'system.battery.utilization'\n  AND $__timeFilter(timestamp)\nORDER BY timestamp ASC;",
-          "refId": "A",
-          "queryType": "timeseries"
+          "queryType": "table",
+          "rawSql": "SELECT value\nFROM metrics\nWHERE machine_id = ${machine_id:singlequote}\n  AND name = 'system.cpu.utilization'\nORDER BY timestamp DESC\nLIMIT 1",
+          "refId": "A"
         }
-      ],
-      "title": "Battery level",
-      "type": "timeseries"
+      ]
     },
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
       },
+      "id": 12,
+      "title": "Memory",
+      "type": "gauge",
+      "gridPos": {
+        "x": 6,
+        "y": 6,
+        "w": 6,
+        "h": 5
+      },
       "fieldConfig": {
         "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
           "color": {
-            "fixedColor": "#ad46ff",
             "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
-                "value": 0
+                "color": "green",
+                "value": null
               },
               {
-                "color": "green",
-                "value": 1
+                "color": "#EAB839",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
               }
             ]
-          },
-          "unit": "bool"
-        }
+          }
+        },
+        "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 7
-      },
-      "id": 5,
       "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -278,117 +280,56 @@
           "fields": "",
           "values": false
         },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "auto"
       },
       "pluginVersion": "13.2.3",
       "targets": [
         {
-          "builderOptions": {
-            "aggregates": [],
-            "columns": [
-              {
-                "alias": "value",
-                "custom": false,
-                "name": "value",
-                "type": "Float64"
-              },
-              {
-                "alias": "timestamp",
-                "custom": false,
-                "name": "timestamp",
-                "type": "DateTime64(3, 'UTC')"
-              }
-            ],
-            "database": "metrics",
-            "filters": [
-              {
-                "condition": "AND",
-                "filterType": "custom",
-                "key": "name",
-                "label": "name",
-                "operator": "=",
-                "type": "LowCardinality(String)",
-                "value": "system.battery.charging"
-              },
-              {
-                "condition": "AND",
-                "filterType": "custom",
-                "key": "machine_id",
-                "label": "machine_id",
-                "operator": "=",
-                "type": "LowCardinality(String)",
-                "value": "${machine_id:singlequote}"
-              }
-            ],
-            "groupBy": [],
-            "limit": 1,
-            "meta": {},
-            "mode": "list",
-            "orderBy": [
-              {
-                "dir": "DESC",
-                "name": "timestamp"
-              }
-            ],
-            "queryType": "table",
-            "table": "metrics"
-          },
           "datasource": {
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "editorType": "builder",
+          "editorType": "sql",
           "format": 1,
           "pluginVersion": "4.21.3",
-          "rawSql": "SELECT value, timestamp FROM \"metrics\".\"metrics\" WHERE ( name = 'system.battery.charging' ) AND ( machine_id = ${machine_id:singlequote} ) ORDER BY timestamp DESC LIMIT 1",
+          "queryType": "table",
+          "rawSql": "SELECT 100 * argMaxIf(value, timestamp, name = 'system.memory.usage') / nullIf(argMaxIf(value, timestamp, name = 'system.memory.limit'), 0) AS value\nFROM metrics\nWHERE machine_id = ${machine_id:singlequote}\n  AND name IN ('system.memory.usage', 'system.memory.limit')\n  AND timestamp >= now() - INTERVAL 1 HOUR",
           "refId": "A"
         }
-      ],
-      "title": "Charging",
-      "type": "stat"
+      ]
     },
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
       },
+      "id": 13,
+      "title": "Memory used",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 6,
+        "h": 5
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "light-red",
-            "mode": "fixed"
+            "mode": "fixed",
+            "fixedColor": "text"
           },
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        }
+          "unit": "bytes",
+          "decimals": 1
+        },
+        "overrides": []
       },
-      "gridPos": {
-        "h": 9,
-        "w": 5,
-        "x": 0,
-        "y": 15
-      },
-      "id": 3,
       "options": {
-        "colorMode": "background",
-        "graphMode": "area",
+        "colorMode": "none",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
-        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -396,8 +337,7 @@
           "fields": "",
           "values": false
         },
-        "showPercentChange": false,
-        "textMode": "auto",
+        "textMode": "value",
         "wideLayout": true
       },
       "pluginVersion": "13.2.3",
@@ -411,54 +351,40 @@
           "format": 1,
           "pluginVersion": "4.21.3",
           "queryType": "table",
-          "rawSql": "SELECT countIf(is_anomaly) AS value\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = ${metric_name:singlequote}\n  AND algorithm = ${algorithm:singlequote}\n  AND $__timeFilter(timestamp)",
+          "rawSql": "SELECT argMaxIf(value, timestamp, name = 'system.memory.usage') AS value\nFROM metrics\nWHERE machine_id = ${machine_id:singlequote}\n  AND name IN ('system.memory.usage', 'system.memory.limit')\n  AND timestamp >= now() - INTERVAL 1 HOUR",
           "refId": "A"
         }
-      ],
-      "title": "Anomalous samples \u00b7 ${algorithm}",
-      "type": "stat"
+      ]
     },
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
       },
+      "id": 3,
+      "title": "Anomalies",
+      "type": "stat",
+      "gridPos": {
+        "x": 18,
+        "y": 6,
+        "w": 6,
+        "h": 5
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "blue",
-            "mode": "fixed"
+            "mode": "fixed",
+            "fixedColor": "red"
           },
-          "displayName": "Memory usage",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "bytes"
-        }
+          "decimals": 0
+        },
+        "overrides": []
       },
-      "gridPos": {
-        "h": 9,
-        "w": 19,
-        "x": 5,
-        "y": 15
-      },
-      "id": 2,
       "options": {
         "colorMode": "background",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
-        "orientation": "horizontal",
-        "percentChangeColorMode": "standard",
+        "orientation": "auto",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -466,8 +392,7 @@
           "fields": "",
           "values": false
         },
-        "showPercentChange": false,
-        "textMode": "value_and_name",
+        "textMode": "value",
         "wideLayout": true
       },
       "pluginVersion": "13.2.3",
@@ -478,475 +403,27 @@
             "uid": "clickhouse"
           },
           "editorType": "sql",
-          "format": 0,
-          "meta": {
-            "builderOptions": {
-              "columns": [],
-              "database": "",
-              "limit": 1000,
-              "mode": "list",
-              "queryType": "table",
-              "table": ""
-            }
-          },
+          "format": 1,
           "pluginVersion": "4.21.3",
-          "queryType": "timeseries",
-          "rawSql": "SELECT\n       m.value AS value,\n       m.timestamp AS time\nFROM metrics AS m\nWHERE m.machine_id = ${machine_id:singlequote}\n  AND m.name = 'system.memory.usage'\n  AND $__timeFilter(m.timestamp)\nORDER BY time ASC;",
+          "queryType": "table",
+          "rawSql": "SELECT countIf(is_anomaly) AS value\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND $__timeFilter(timestamp)",
           "refId": "A"
         }
-      ],
-      "title": "Memory usage",
-      "type": "stat"
+      ]
     },
     {
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic",
-            "seriesBy": "last"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "axisSoftMax": 100,
-            "axisSoftMin": 0,
-            "barAlignment": 0,
-            "barWidthFactor": 0.4,
-            "drawStyle": "line",
-            "fillOpacity": 57,
-            "gradientMode": "hue",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineStyle": {
-              "fill": "solid"
-            },
-            "lineWidth": 2,
-            "pointSize": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "percentage",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "#EAB839",
-                "value": 40
-              },
-              {
-                "color": "red",
-                "value": 60
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "baseline"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    6,
-                    6
-                  ],
-                  "fill": "dash"
-                }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 1
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "upper"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.fillBelowTo",
-                "value": "lower"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 15
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              },
-              {
-                "id": "custom.gradientMode",
-                "value": "none"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "lower"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "anomaly"
-            },
-            "properties": [
-              {
-                "id": "custom.drawStyle",
-                "value": "points"
-              },
-              {
-                "id": "custom.pointSize",
-                "value": 9
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 24,
-        "x": 0,
-        "y": 24
       },
       "id": 1,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.2.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "pluginVersion": "4.21.3",
-          "queryType": "timeseries",
-          "rawSql": "SELECT\n    m.timestamp AS time,\n    m.value AS value,\n    e.baseline AS baseline,\n    e.lower AS lower,\n    e.upper AS upper,\n    if(e.is_anomaly, m.value, NULL) AS anomaly\nFROM\n(\n    SELECT metric_id, timestamp, value\n    FROM metrics FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND name = 'system.cpu.utilization'\n      AND $__timeFilter(timestamp)\n) AS m\nLEFT JOIN\n(\n    SELECT metric_id, baseline, lower, upper, is_anomaly\n    FROM evaluations FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND metric_name = 'system.cpu.utilization'\n      AND algorithm = ${algorithm:singlequote}\n      AND $__timeFilter(timestamp)\n) AS e USING (metric_id)\nORDER BY time\n-- Without it, samples with no evaluation (warm-up, unscored) get 0 bands instead of gaps.\nSETTINGS join_use_nulls = 1",
-          "refId": "A"
-        }
-      ],
-      "title": "CPU usage \u00b7 ${algorithm}",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic",
-            "seriesBy": "last"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.4,
-            "drawStyle": "line",
-            "fillOpacity": 57,
-            "gradientMode": "hue",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineStyle": {
-              "fill": "solid"
-            },
-            "lineWidth": 2,
-            "pointSize": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "percentage",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "#EAB839",
-                "value": 40
-              },
-              {
-                "color": "red",
-                "value": 60
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "baseline"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    6,
-                    6
-                  ],
-                  "fill": "dash"
-                }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 1
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "upper"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.fillBelowTo",
-                "value": "lower"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 15
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              },
-              {
-                "id": "custom.gradientMode",
-                "value": "none"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "lower"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "anomaly"
-            },
-            "properties": [
-              {
-                "id": "custom.drawStyle",
-                "value": "points"
-              },
-              {
-                "id": "custom.pointSize",
-                "value": 9
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              }
-            ]
-          }
-        ]
-      },
+      "title": "CPU usage",
+      "type": "timeseries",
       "gridPos": {
-        "h": 9,
-        "w": 24,
         "x": 0,
-        "y": 33
-      },
-      "id": 9,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.2.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "pluginVersion": "4.21.3",
-          "queryType": "timeseries",
-          "rawSql": "SELECT\n    m.timestamp AS time,\n    m.value AS value,\n    e.baseline AS baseline,\n    e.lower AS lower,\n    e.upper AS upper,\n    if(e.is_anomaly, m.value, NULL) AS anomaly\nFROM\n(\n    SELECT metric_id, timestamp, value\n    FROM metrics FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND name = ${metric_name:singlequote}\n      AND $__timeFilter(timestamp)\n) AS m\nLEFT JOIN\n(\n    SELECT metric_id, baseline, lower, upper, is_anomaly\n    FROM evaluations FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND metric_name = ${metric_name:singlequote}\n      AND algorithm = ${algorithm:singlequote}\n      AND $__timeFilter(timestamp)\n) AS e USING (metric_id)\nORDER BY time\n-- Without it, samples with no evaluation (warm-up, unscored) get 0 bands instead of gaps.\nSETTINGS join_use_nulls = 1",
-          "refId": "A"
-        }
-      ],
-      "title": "${metric_name} \u00b7 ${algorithm}",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
+        "y": 11,
+        "w": 24,
+        "h": 9
       },
       "fieldConfig": {
         "defaults": {
@@ -954,49 +431,87 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
             "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 0,
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "lineInterpolation": "linear"
-          }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "threshold"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "red",
+                  "fixedColor": "green",
                   "mode": "fixed"
                 }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
               },
               {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    6,
-                    6
-                  ],
-                  "fill": "dash"
-                }
+                "id": "custom.pointSize",
+                "value": 9
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "displayName",
+                "value": "${__field.labels.algorithm} anomaly"
               }
             ]
           }
         ]
       },
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 42
-      },
-      "id": 10,
       "options": {
         "legend": {
           "calcs": [],
@@ -1020,25 +535,561 @@
           "format": 0,
           "pluginVersion": "4.21.3",
           "queryType": "timeseries",
-          "rawSql": "SELECT timestamp AS time, score, threshold\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = ${metric_name:singlequote}\n  AND algorithm = ${algorithm:singlequote}\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "rawSql": "SELECT timestamp AS time, value AS `CPU`\nFROM metrics FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND name = 'system.cpu.utilization'\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "pluginVersion": "4.21.3",
+          "queryType": "timeseries",
+          "rawSql": "SELECT timestamp AS time, algorithm, value AS anomaly\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = 'system.cpu.utilization'\n  AND is_anomaly\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "id": 2,
+      "title": "Memory usage",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "bytes",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 9
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "displayName",
+                "value": "${__field.labels.algorithm} anomaly"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "text",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    6,
+                    6
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.2.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "pluginVersion": "4.21.3",
+          "queryType": "timeseries",
+          "rawSql": "SELECT timestamp AS time, value AS `Used`\nFROM metrics FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND name = 'system.memory.usage'\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "pluginVersion": "4.21.3",
+          "queryType": "timeseries",
+          "rawSql": "SELECT timestamp AS time, algorithm, value AS anomaly\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = 'system.memory.usage'\n  AND is_anomaly\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "pluginVersion": "4.21.3",
+          "queryType": "timeseries",
+          "rawSql": "SELECT timestamp AS time, value AS `Limit`\nFROM metrics FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND name = 'system.memory.limit'\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 24,
+        "h": 1
+      },
+      "id": 19,
+      "panels": [],
+      "title": "Detector explorer",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "id": 9,
+      "title": "${metric_name}",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 9
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "displayName",
+                "value": "${__field.labels.algorithm} anomaly"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    6,
+                    6
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "displayName",
+                "value": "${__field.labels.algorithm} ${__field.name}"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.2.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "pluginVersion": "4.21.3",
+          "queryType": "timeseries",
+          "rawSql": "SELECT timestamp AS time, value AS `value`\nFROM metrics FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND name = ${metric_name:singlequote}\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "pluginVersion": "4.21.3",
+          "queryType": "timeseries",
+          "rawSql": "SELECT timestamp AS time, algorithm, value AS anomaly\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = ${metric_name:singlequote}\n  AND is_anomaly\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "pluginVersion": "4.21.3",
+          "queryType": "timeseries",
+          "rawSql": "SELECT timestamp AS time, algorithm, baseline, lower, upper\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = ${metric_name:singlequote}\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "id": 10,
+      "title": "${metric_name} score / threshold",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 24,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "${__field.labels.algorithm}"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.2.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "pluginVersion": "4.21.3",
+          "queryType": "timeseries",
+          "rawSql": "-- Score divided by the algorithm's own threshold, so every algorithm crosses 1 when it flags.\nSELECT timestamp AS time, algorithm, score / nullIf(threshold, 0) AS score\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = ${metric_name:singlequote}\n  AND $__timeFilter(timestamp)\nORDER BY time",
           "refId": "A"
         }
-      ],
-      "title": "${metric_name} \u00b7 ${algorithm} score",
-      "type": "timeseries"
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "id": 20,
+      "title": "Recent anomalies",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 47,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "13.2.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "pluginVersion": "4.21.3",
+          "queryType": "table",
+          "rawSql": "SELECT\n    timestamp AS Time,\n    metric_name AS Metric,\n    algorithm AS Algorithm,\n    value AS Value,\n    round(score, 2) AS Score,\n    threshold AS Threshold,\n    multiIf(direction > 0, 'up', direction < 0, 'down', '') AS Direction\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND is_anomaly\n  AND $__timeFilter(timestamp)\nORDER BY timestamp DESC\nLIMIT 200",
+          "refId": "A"
+        }
+      ]
     }
   ],
-  "preload": false,
-  "refresh": "5s",
-  "schemaVersion": 42,
   "templating": {
     "list": [
       {
-        "allowCustomValue": true,
-        "current": {
-          "text": "e7fe3e1377ee4507ae4dac4078579ed2",
-          "value": "e7fe3e1377ee4507ae4dac4078579ed2"
-        },
+        "allowCustomValue": false,
+        "current": {},
         "datasource": {
           "type": "grafana-clickhouse-datasource",
           "uid": "clickhouse"
@@ -1048,22 +1099,46 @@
         "includeAll": false,
         "label": "Machine",
         "multi": false,
-        "name": "machine_id",
+        "name": "host",
         "options": [],
         "query": {
           "queryType": "sql",
-          "rawSql": "SELECT machine_id, if(h.hostname = '', machine_id, h.hostname) AS label\nFROM (SELECT DISTINCT machine_id FROM metrics) AS m\nLEFT JOIN (SELECT machine_id, hostname FROM machines FINAL) AS h USING (machine_id)\nORDER BY label",
+          "rawSql": "SELECT DISTINCT label\nFROM (\n    SELECT m.machine_id AS machine_id, if(h.hostname = '', m.machine_id, h.hostname) AS label\n    FROM (SELECT DISTINCT machine_id FROM metrics) AS m\n    LEFT JOIN (SELECT machine_id, hostname FROM machines FINAL) AS h USING (machine_id)\n)\nORDER BY label",
           "refId": "var"
         },
         "refresh": 1,
         "regex": "",
-        "regexApplyTo": "value",
         "skipUrlSync": false,
-        "sort": 0,
+        "sort": 1,
         "type": "query"
       },
       {
-        "allowCustomValue": true,
+        "allowCustomValue": false,
+        "current": {},
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "definition": "",
+        "hide": 2,
+        "includeAll": false,
+        "label": "Machine id",
+        "multi": false,
+        "name": "machine_id",
+        "options": [],
+        "query": {
+          "queryType": "sql",
+          "rawSql": "SELECT machine_id\nFROM (\n    SELECT m.machine_id AS machine_id, if(h.hostname = '', m.machine_id, h.hostname) AS label\n    FROM (SELECT DISTINCT machine_id FROM metrics) AS m\n    LEFT JOIN (SELECT machine_id, hostname FROM machines FINAL) AS h USING (machine_id)\n)\nWHERE label = ${host:singlequote}\nORDER BY machine_id\nLIMIT 1",
+          "refId": "var"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allowCustomValue": false,
         "current": {
           "text": "system.cpu.utilization",
           "value": "system.cpu.utilization"
@@ -1075,72 +1150,21 @@
         "definition": "",
         "hide": 0,
         "includeAll": false,
-        "label": "Metric",
+        "label": "Explorer metric",
         "multi": false,
         "name": "metric_name",
         "options": [],
         "query": {
           "queryType": "sql",
-          "rawSql": "SELECT DISTINCT metrics.name from metrics  WHERE machine_id IN ('${machine_id}');",
+          "rawSql": "SELECT DISTINCT metric_name\nFROM evaluations\nWHERE machine_id = ${machine_id:singlequote}\nORDER BY metric_name",
           "refId": "var"
         },
         "refresh": 1,
         "regex": "",
-        "regexApplyTo": "value",
         "skipUrlSync": false,
-        "sort": 0,
-        "type": "query"
-      },
-      {
-        "allowCustomValue": true,
-        "current": {
-          "text": "mad",
-          "value": "mad"
-        },
-        "datasource": {
-          "type": "grafana-clickhouse-datasource",
-          "uid": "clickhouse"
-        },
-        "definition": "",
-        "hide": 0,
-        "includeAll": false,
-        "label": "Algorithm",
-        "multi": false,
-        "name": "algorithm",
-        "options": [],
-        "query": {
-          "queryType": "sql",
-          "rawSql": "SELECT DISTINCT algorithm FROM evaluations ORDER BY algorithm",
-          "refId": "var"
-        },
-        "refresh": 1,
-        "regex": "",
-        "regexApplyTo": "value",
-        "skipUrlSync": false,
-        "sort": 0,
+        "sort": 1,
         "type": "query"
       }
     ]
-  },
-  "time": {
-    "from": "now-30m",
-    "to": "now"
-  },
-  "timepicker": {
-    "refresh_intervals": [
-      "5s",
-      "10s",
-      "30s",
-      "1m",
-      "5m",
-      "15m",
-      "30m",
-      "1h",
-      "2h",
-      "1d"
-    ]
-  },
-  "timezone": "browser",
-  "title": "Machine usage metrics",
-  "uid": "ad8rn6h"
+  }
 }
