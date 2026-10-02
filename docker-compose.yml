@@ -125,23 +125,35 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Application Mode: the jobmanager runs the anomaly detection job itself when it starts,
+  # so there is nothing to submit. Restart it to pick up a code change in ./src.
   jobmanager:
     build:
       context: ./docker/flink
     image: activityreporter-flink:1.19.1
     container_name: flink-jobmanager
     restart: unless-stopped
-    command: jobmanager
+    command:
+      - standalone-job
+      - -pym
+      - activityreporter.anomaly_detector.main
+      - -pyfs
+      - /opt/flink/src
     ports:
       - "8081:8081"
     environment:
+      <<: *topics
+      KAFKA_CONNECTION_STRING: kafka:9092
       # Without a restart strategy a job fails for good on its first error,
       # e.g. when it starts before the collector has created its Kafka topic.
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         restart-strategy.type: exponential-delay
+    volumes:
+      - ./src:/opt/flink/src:ro
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
 
   taskmanager:
     build:
@@ -156,27 +168,6 @@ services:
         taskmanager.numberOfTaskSlots: 2
     depends_on:
       - jobmanager
-
-  anomaly-detector-submitter:
-    build:
-      context: ./docker/flink
-    image: activityreporter-flink:1.19.1
-    container_name: anomaly-detector-submitter
-    restart: "no"
-    entrypoint: ["bash", "/opt/flink/submit-jobs.sh"]
-    environment:
-      <<: *topics
-      KAFKA_CONNECTION_STRING: kafka:9092
-    volumes:
-      - ./src:/opt/flink/src:ro
-      - ./docker/flink/submit-jobs.sh:/opt/flink/submit-jobs.sh:ro
-    depends_on:
-      jobmanager:
-        condition: service_started
-      taskmanager:
-        condition: service_started
-      kafka:
-        condition: service_healthy
 
   grafana:
     image: grafana/grafana:13.2.3

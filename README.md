@@ -45,9 +45,8 @@ tests/               mirrors src/activityreporter/
 | `make anomaly-detector` | runs the Flink job locally (creates `flink/.venv` with Python 3.11)  |
 | `make test`             | runs the tests                                                       |
 
-In Docker, `anomaly-detector-submitter` submits the Flink job once the cluster is up and skips it if a job
-is already running. To resubmit after a change, cancel the job in the Flink UI (http://localhost:8081) and run
-`docker compose up anomaly-detector-submitter`.
+In Docker, the Flink jobmanager runs in Application Mode: it starts the anomaly detection job itself, from
+`./src`. To run a code change, `docker compose restart jobmanager`. The Flink UI is at http://localhost:8081.
 
 Environment variables, Compose details, and troubleshooting are in [docs/operations.md](docs/operations.md).
 
