@@ -177,7 +177,7 @@ A detector (`anomaly_detector/detectors.py`) has a `name`, a `version`, `min_poi
 
 `params()` returns the detector's inputs (thresholds, `alpha`, ...); the job adds `window_ms`. `details` holds what it computed (`scale`, `window_size`). A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
 
-To add an algorithm, write a class with that shape and append it to `DETECTORS`. No schema, writer, or dashboard change is needed: it shows up in the `algorithm` drop-down. Bump `version` when a code change alters a detector's results, so old and new evaluations can be told apart.
+To add an algorithm, write a class with that shape and append it to `DETECTORS`. No schema, writer, or dashboard change is needed: its anomalies show up on every chart, labelled with its name. Bump `version` when a code change alters a detector's results, so old and new evaluations can be told apart.
 
 `MAD` (`anomaly_detector/mad.py`):
 
@@ -291,12 +291,20 @@ The TimescaleDB schema (Flyway `V1`–`V5`) was removed along with TimescaleDB; 
 
 ## Grafana
 
-`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Machine usage metrics*. Variables: `machine_id` (shows the hostname from `machines`, falls back to the id for a machine not described yet), `metric_name`, and `algorithm` (from `evaluations`). Panels:
+`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Machine usage metrics*. It uses only the metrics the agent already reports. Variables:
 
-- **Machine**: hostname, OS, architecture, cores, memory, disk, last boot, and last seen, from `machines`; **Uptime** from `system.uptime`.
-- **CPU usage** and **`${metric_name}`**: the raw series with the selected algorithm's baseline (dashed), band (shaded from `lower` to `upper`), and anomalies (red points), joined on `metric_id`.
-- **Score**: the selected algorithm's score against its threshold.
-- **Anomalous samples**: `countIf(is_anomaly)` in the time range.
+- `host` (shown as *Machine*): the hostname from `machines`, or the machine id for a machine the collector hasn't described yet.
+- `machine_id`: hidden, the id of the selected host; every panel filters on it. Two machines with the same hostname would both map to the first id, so give them different hostnames.
+- `metric_name` (*Explorer metric*): the metrics a detector has scored for that machine.
+
+Panels:
+
+- **Machine**: hostname, OS, architecture, cores, memory, disk, last boot, and last seen, from `machines`. **Uptime** from `system.uptime`.
+- **CPU** and **Memory** gauges (memory is `system.memory.usage / system.memory.limit`), **Memory used**, and **Anomalies**: anomalous evaluations of every metric and algorithm in the time range.
+- **CPU usage** and **Memory usage** (with the limit dashed): the series with every algorithm's anomalies as points, one colour per algorithm (query `B`, split by the `algorithm` column). Where two algorithms flag the same sample, their points overlap; the tooltip lists both.
+- **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then `score / threshold` per algorithm, which crosses the red line at 1 when that algorithm flags; then a table of the last 200 anomalies.
+
+Battery series are still collected when a machine has a battery, but the dashboard doesn't show them.
 
 ## Tests
 
