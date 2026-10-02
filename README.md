@@ -44,6 +44,7 @@ tests/               mirrors src/activityreporter/
 | `make clickhouse-writer` | runs the ClickHouse writer locally                                  |
 | `make anomaly-detector` | runs the Flink job locally (creates `flink/.venv` with Python 3.11)  |
 | `make test`             | runs the tests                                                       |
+| `make smoke`            | checks a running stack end to end (`WAIT=300 make smoke` retries)    |
 
 In Docker, the Flink jobmanager runs in Application Mode: it starts the anomaly detection job itself, from
 `./src`. To run a code change, `docker compose restart jobmanager`. The Flink UI is at http://localhost:8081.

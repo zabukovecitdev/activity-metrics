@@ -2,7 +2,7 @@ FLINK_PYTHON := flink/.venv/bin/python
 KAFKA_CONNECTOR_JAR := flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar
 KAFKA_CONNECTOR_URL := https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.2.0-1.19/flink-sql-connector-kafka-3.2.0-1.19.jar
 
-.PHONY: agent collector clickhouse-writer anomaly-detector test up down migrate migrate-down migrate-new
+.PHONY: agent collector clickhouse-writer anomaly-detector smoke test up down migrate migrate-down migrate-new
 
 agent:
 	uv run agent
@@ -23,6 +23,10 @@ $(FLINK_PYTHON):
 $(KAFKA_CONNECTOR_JAR):
 	mkdir -p $(dir $(KAFKA_CONNECTOR_JAR))
 	curl -sSL -o $(KAFKA_CONNECTOR_JAR) $(KAFKA_CONNECTOR_URL)
+
+# Checks a running stack end to end; WAIT=300 make smoke retries for up to 5 minutes.
+smoke:
+	scripts/smoke-test.sh
 
 test:
 	uv run pytest
