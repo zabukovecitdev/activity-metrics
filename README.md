@@ -160,7 +160,7 @@ Scoring rules (`anomaly_detector/detection.py`, called from `AnomalyDetector.pro
 
 | Metric | `mad` | `ewma` |
 | --- | --- | --- |
-| `system.cpu.utilization` | `min_deviation=5.0` (percentage points) | `min_deviation=10.0` |
+| `system.cpu.utilization` | `min_deviation=10.0` (percentage points) | `min_deviation=10.0` |
 | `system.memory.usage` | `min_relative=0.02` (2% of the median) | `min_relative=0.02` (2% of the average) |
 | any other scored gauge | `min_relative=0.01` | `min_relative=0.01` |
 

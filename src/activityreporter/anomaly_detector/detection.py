@@ -8,7 +8,7 @@ from activityreporter.shared.evaluations import Evaluation
 # a series that barely moves would otherwise be flagged on every small step.
 METRIC_DETECTORS: dict[str, list[Detector]] = {
     # Percentage points.
-    "system.cpu.utilization": [MadDetector(min_deviation=5.0), EwmaDetector(min_deviation=10.0)],
+    "system.cpu.utilization": [MadDetector(min_deviation=10.0), EwmaDetector(min_deviation=10.0)],
     # Memory in use sits near one level and drifts, so only a change of 2% of it counts.
     "system.memory.usage": [
         MadDetector(min_relative=0.02),

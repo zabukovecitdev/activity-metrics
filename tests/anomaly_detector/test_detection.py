@@ -51,7 +51,7 @@ def test_evaluation_carries_the_detector_parameters_and_window():
 
     assert evaluation.algorithm_version == MadDetector.version
     assert evaluation.params == {**detectors_for("system.cpu.utilization")[0].params(), "window_ms": float(WINDOW_MS)}
-    assert evaluation.params["min_deviation"] == 5.0
+    assert evaluation.params["min_deviation"] == 10.0
 
 
 def test_mad_flags_a_spike_and_reports_its_band():
@@ -61,10 +61,11 @@ def test_mad_flags_a_spike_and_reports_its_band():
     assert evaluation.direction == 1
     assert evaluation.threshold == MAD.THRESHOLD
     assert evaluation.baseline == 11.0
-    assert evaluation.lower == pytest.approx(11.0 - MAD.THRESHOLD * MAD.SIGMA)
-    assert evaluation.upper == pytest.approx(11.0 + MAD.THRESHOLD * MAD.SIGMA)
+    # The CPU floor (10 points) is wider than the spread, so the band is the median +- 10.
+    assert evaluation.lower == pytest.approx(1.0)
+    assert evaluation.upper == pytest.approx(21.0)
     assert evaluation.details == {
-        "scale": pytest.approx(MAD.SIGMA), "spread_scale": pytest.approx(MAD.SIGMA), "window_size": 21.0,
+        "scale": pytest.approx(10.0 / MAD.THRESHOLD), "spread_scale": pytest.approx(MAD.SIGMA), "window_size": 21.0,
     }
 
 
@@ -105,13 +106,14 @@ def ewma_of(evaluations):
     return by_algorithm(evaluations)["ewma"]
 
 
-def test_cpu_moving_less_than_five_points_on_an_idle_machine_is_not_an_anomaly():
+def test_cpu_moving_less_than_ten_points_on_an_idle_machine_is_not_an_anomaly():
     idle = [11.0, 11.2, 10.9] * 7
 
-    evaluation = mad_of(evaluate(build_metric(14.0), idle + [14.0], WINDOW_MS, detected_at=0.0))
+    evaluation = mad_of(evaluate(build_metric(19.0), idle + [19.0], WINDOW_MS, detected_at=0.0))
 
     assert not evaluation.is_anomaly
-    assert MadDetector().evaluate(idle + [14.0]).is_anomaly
+    assert MadDetector().evaluate(idle + [19.0]).is_anomaly
+    assert mad_of(evaluate(build_metric(22.0), idle + [22.0], WINDOW_MS, detected_at=0.0)).is_anomaly
 
 
 def test_memory_moving_a_few_pages_is_not_an_anomaly():
