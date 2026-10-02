@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter
 
 from activityreporter.agent import service
-from activityreporter.agent.models import Machine
+from activityreporter.shared.machines import Machine
 
 router = APIRouter(prefix="/v1")
 

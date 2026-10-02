@@ -15,7 +15,8 @@ from clickhouse_connect.driver.client import Client
 from clickhouse_connect.driver.exceptions import ClickHouseError
 from kafka import KafkaConsumer
 
-from activityreporter.shared.anomalies import Anomaly
+from activityreporter.shared.evaluations import Evaluation
+from activityreporter.shared.machines import Machine
 from activityreporter.shared.metrics import Metric
 
 logger = logging.getLogger(__name__)
@@ -54,20 +55,50 @@ METRICS = Sink(
     default_group_id="clickhouse-metrics-writer",
 )
 
-ANOMALIES = Sink(
-    table="anomalies",
+
+def iso_utc(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        raise ValueError(f"{value!r} has no UTC offset")
+    return parsed.astimezone(timezone.utc)
+
+
+def non_empty(value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"expected a non-empty string, got {value!r}")
+    return value
+
+
+EVALUATIONS = Sink(
+    table="evaluations",
     columns=[
-        "schema_version", "metric_id", "machine_id", "metric_name", "metric_attributes", "timestamp", "value",
-        "algorithm", "score", "threshold", "direction", "details", "detected_at",
+        "schema_version", "metric_id", "machine_id", "metric_name", "timestamp", "value", "algorithm",
+        "algorithm_version", "params", "baseline", "lower", "upper", "score", "threshold", "is_anomaly",
+        "direction", "details", "detected_at",
     ],
-    record_type=Anomaly,
-    to_row=lambda a: [
-        a.schema_version, metric_uuid(a.metric_id), a.machine_id, a.metric_name, a.metric_attributes or {},
-        utc(a.timestamp), a.value, a.algorithm, a.score, a.threshold, a.direction, a.details or {},
-        utc(a.detected_at),
+    record_type=Evaluation,
+    to_row=lambda e: [
+        e.schema_version, metric_uuid(e.metric_id), e.machine_id, e.metric_name, utc(e.timestamp), e.value,
+        e.algorithm, e.algorithm_version, e.params or {}, e.baseline, e.lower, e.upper, e.score, e.threshold,
+        bool(e.is_anomaly), e.direction, e.details or {}, utc(e.detected_at),
     ],
-    default_topic="anomalies",
-    default_group_id="clickhouse-anomalies-writer",
+    default_topic="evaluations",
+    default_group_id="clickhouse-evaluations-writer",
+)
+
+MACHINES = Sink(
+    table="machines",
+    columns=[
+        "machine_id", "hostname", "os", "os_version", "architecture", "cores", "total_memory", "total_disk",
+        "last_boot", "observed_at",
+    ],
+    record_type=Machine,
+    to_row=lambda m: [
+        non_empty(m.machine_id), m.hostname, m.os, m.os_version, m.architecture, int(m.cores), int(m.total_memory),
+        int(m.total_disk), iso_utc(m.last_boot), utc(m.observed_at),
+    ],
+    default_topic="machines",
+    default_group_id="clickhouse-machines-writer",
 )
 
 

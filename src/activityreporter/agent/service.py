@@ -1,7 +1,7 @@
 import time
 
 from activityreporter.agent import repository
-from activityreporter.agent.models import Machine
+from activityreporter.shared.machines import Machine
 from activityreporter.shared.metrics import Metric
 
 
@@ -10,6 +10,7 @@ async def collect_metrics() -> list[Metric]:
     cpu_utilization = repository.read_cpu_utilization()
     memory = repository.read_memory()
     battery = repository.read_battery()
+    uptime = repository.read_uptime()
     timestamp = time.time()
 
     def gauge(name: str, unit: str, value: float) -> Metric:
@@ -19,6 +20,7 @@ async def collect_metrics() -> list[Metric]:
         gauge("system.cpu.utilization", "%", cpu_utilization),
         gauge("system.memory.usage", "By", memory.used),
         gauge("system.memory.limit", "By", memory.total),
+        gauge("system.uptime", "s", uptime),
     ]
     if battery is not None and battery.percent is not None:
         metrics.append(gauge("system.battery.utilization", "%", battery.percent))

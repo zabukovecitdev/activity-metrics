@@ -1,41 +1,58 @@
 from collections.abc import Mapping
 from typing import Any
 
-from activityreporter.anomaly_detector.mad import MAD
-from activityreporter.shared.anomalies import Anomaly
+from activityreporter.anomaly_detector.detectors import Detector, EwmaDetector, MadDetector
+from activityreporter.shared.evaluations import Evaluation
 
-MIN_VALUES_FOR_MAD = 20
-# MAD's deviation is 0 for flags and near-constant gauges, so every small step would be flagged.
-NOT_ANOMALY_SCORED = {"system.battery.charging", "system.battery.utilization", "system.memory.limit"}
+DETECTORS: list[Detector] = [MadDetector(), EwmaDetector()]
+# Flags, near-constant gauges and ever-growing counters would be flagged on every small step.
+NOT_ANOMALY_SCORED = {
+    "system.battery.charging",
+    "system.battery.utilization",
+    "system.memory.limit",
+    "system.uptime",
+}
 
 
 def is_scored(metric: Mapping[str, Any]) -> bool:
     return metric["type"] == "gauge" and metric["name"] not in NOT_ANOMALY_SCORED
 
 
-def detect(metric: Mapping[str, Any], window: list[float], detected_at: float) -> Anomaly | None:
-    """The anomaly for `metric`, the last value of `window`, or None when it isn't one.
+def evaluate(
+    metric: Mapping[str, Any],
+    window: list[float],
+    window_ms: int,
+    detected_at: float,
+    detectors: list[Detector] = DETECTORS,
+) -> list[Evaluation]:
+    """One evaluation per detector for `metric`, the last value of `window`.
 
-    Kept free of PyFlink so it can be tested without a Flink runtime.
+    A detector without enough values yet is skipped, so a series has no
+    evaluations from it while it warms up. Kept free of PyFlink so it can be
+    tested without a Flink runtime.
     """
-    if len(window) < MIN_VALUES_FOR_MAD:
-        return None
-
-    score = MAD().score(window)
-    if score.score < MAD.THRESHOLD:
-        return None
-
-    return Anomaly(
-        metric_id=metric["metric_id"],
-        machine_id=metric["machine_id"],
-        metric_name=metric["name"],
-        metric_attributes=metric["attributes"],
-        timestamp=metric["timestamp"],
-        value=metric["value"],
-        algorithm="mad",
-        score=score.score,
-        threshold=MAD.THRESHOLD,
-        direction="up" if metric["value"] > score.median else "down",
-        details={"median": score.median, "scale": score.scale, "window_size": float(len(window))},
-        detected_at=detected_at,
-    )
+    evaluations: list[Evaluation] = []
+    for detector in detectors:
+        if len(window) < detector.min_points:
+            continue
+        result = detector.evaluate(window)
+        evaluations.append(Evaluation(
+            metric_id=metric["metric_id"],
+            machine_id=metric["machine_id"],
+            metric_name=metric["name"],
+            timestamp=metric["timestamp"],
+            value=metric["value"],
+            algorithm=detector.name,
+            algorithm_version=detector.version,
+            params={**detector.params(), "window_ms": float(window_ms)},
+            baseline=result.baseline,
+            lower=result.lower,
+            upper=result.upper,
+            score=result.score,
+            threshold=result.threshold,
+            is_anomaly=result.is_anomaly,
+            direction=result.direction,
+            details=result.details,
+            detected_at=detected_at,
+        ))
+    return evaluations
