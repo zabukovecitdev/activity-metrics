@@ -24,15 +24,25 @@ logger = logging.getLogger(__name__)
 POLL_TIMEOUT_MS = 1000
 
 
+DEFAULT_GROUP_ID = "clickhouse-writer"
+
+
 @dataclass(frozen=True)
 class Sink:
-    """One Kafka topic written to one ClickHouse table."""
+    """One Kafka topic written to one ClickHouse table.
+
+    The topic is read from the environment variable `topic_env`, the same one
+    the producer of that topic uses, and falls back to `default_topic`.
+    """
     table: str
     columns: list[str]
     record_type: type
     to_row: Callable[[Any], list]
+    topic_env: str
     default_topic: str
-    default_group_id: str
+
+    def topic(self) -> str:
+        return os.environ.get(self.topic_env, self.default_topic)
 
 
 def utc(epoch_seconds: float) -> datetime:
@@ -51,8 +61,8 @@ METRICS = Sink(
     to_row=lambda m: [
         metric_uuid(m.metric_id), m.machine_id, m.name, utc(m.timestamp), m.type, m.unit, m.value, m.attributes or {},
     ],
+    topic_env="KAFKA_RAW_METRICS_TOPIC",
     default_topic="raw_metrics",
-    default_group_id="clickhouse-metrics-writer",
 )
 
 
@@ -82,8 +92,8 @@ EVALUATIONS = Sink(
         e.algorithm, e.algorithm_version, e.params or {}, e.baseline, e.lower, e.upper, e.score, e.threshold,
         bool(e.is_anomaly), e.direction, e.details or {}, utc(e.detected_at),
     ],
+    topic_env="KAFKA_EVALUATIONS_TOPIC",
     default_topic="evaluations",
-    default_group_id="clickhouse-evaluations-writer",
 )
 
 MACHINES = Sink(
@@ -97,15 +107,16 @@ MACHINES = Sink(
         non_empty(m.machine_id), m.hostname, m.os, m.os_version, m.architecture, int(m.cores), int(m.total_memory),
         int(m.total_disk), iso_utc(m.last_boot), utc(m.observed_at),
     ],
+    topic_env="KAFKA_MACHINES_TOPIC",
     default_topic="machines",
-    default_group_id="clickhouse-machines-writer",
 )
+
+SINKS = [METRICS, EVALUATIONS, MACHINES]
 
 
 class ClickHouseRepository:
     def __init__(
         self,
-        sink: Sink,
         host: str,
         port: int,
         username: str,
@@ -114,16 +125,14 @@ class ClickHouseRepository:
         max_retries: int = 5,
         backoff_base_seconds: float = 1.0,
     ):
-        self._sink = sink
         self._connection = dict(host=host, port=port, username=username, password=password, database=database)
         self._max_retries = max_retries
         self._backoff_base_seconds = backoff_base_seconds
         self._client: Client | None = None
 
     @classmethod
-    def from_env(cls, sink: Sink) -> ClickHouseRepository:
+    def from_env(cls) -> ClickHouseRepository:
         return cls(
-            sink,
             host=os.environ.get("CLICKHOUSE_HOST", "localhost"),
             port=int(os.environ.get("CLICKHOUSE_PORT", 8123)),
             username=os.environ.get("CLICKHOUSE_USER", "user"),
@@ -134,18 +143,18 @@ class ClickHouseRepository:
     def connect(self) -> None:
         self._client = clickhouse_connect.get_client(**self._connection)
 
-    def insert_batch(self, rows: list[list]) -> None:
+    def insert_batch(self, sink: Sink, rows: list[list]) -> None:
         if not rows:
             return
 
         for attempt in range(1, self._max_retries + 1):
             try:
-                self._client.insert(self._sink.table, rows, column_names=self._sink.columns)
+                self._client.insert(sink.table, rows, column_names=sink.columns)
                 return
             except ClickHouseError:
                 logger.exception(
                     "Failed to write %s batch to ClickHouse (attempt %d/%d)",
-                    self._sink.table,
+                    sink.table,
                     attempt,
                     self._max_retries,
                 )
@@ -166,10 +175,12 @@ class ClickHouseRepository:
 
 
 class KafkaRecordsRepository:
-    def __init__(self, sink: Sink, bootstrap_servers: str, topic: str, group_id: str):
-        self._sink = sink
+    """One consumer for every sink's topic; each record is converted with its topic's sink."""
+
+    def __init__(self, sinks_by_topic: dict[str, Sink], bootstrap_servers: str, group_id: str):
+        self._sinks_by_topic = sinks_by_topic
         self._consumer = KafkaConsumer(
-            topic,
+            *sinks_by_topic,
             bootstrap_servers=[bootstrap_servers],
             group_id=group_id,
             key_deserializer=lambda k: k.decode("utf-8") if k else None,
@@ -178,22 +189,23 @@ class KafkaRecordsRepository:
         )
 
     @classmethod
-    def from_env(cls, sink: Sink) -> KafkaRecordsRepository:
+    def from_env(cls, sinks: list[Sink]) -> KafkaRecordsRepository:
         return cls(
-            sink,
+            {sink.topic(): sink for sink in sinks},
             bootstrap_servers=os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094"),
-            topic=os.environ.get("KAFKA_TOPIC", sink.default_topic),
-            group_id=os.environ.get("KAFKA_CONSUMER_GROUP_ID", sink.default_group_id),
+            group_id=os.environ.get("KAFKA_CONSUMER_GROUP_ID", DEFAULT_GROUP_ID),
         )
 
-    def poll(self, max_records: int) -> list[list]:
-        """ClickHouse rows for the polled records; malformed records are logged and dropped."""
+    def poll(self, max_records: int) -> dict[str, list[list]]:
+        """ClickHouse rows for the polled records by table; malformed records are logged and dropped."""
         polled = self._consumer.poll(timeout_ms=POLL_TIMEOUT_MS, max_records=max_records)
-        return [
-            row for records in polled.values()
-            for row in (parse_record(self._sink, record) for record in records)
-            if row is not None
-        ]
+        rows: dict[str, list[list]] = {}
+        for partition, records in polled.items():
+            sink = self._sinks_by_topic[partition.topic]
+            parsed = [row for row in (parse_record(sink, record) for record in records) if row is not None]
+            if parsed:
+                rows.setdefault(sink.table, []).extend(parsed)
+        return rows
 
     def commit(self) -> None:
         self._consumer.commit()

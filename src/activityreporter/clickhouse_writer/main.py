@@ -1,43 +1,24 @@
 import logging
 import signal
 
-from activityreporter.clickhouse_writer.repository import (
-    EVALUATIONS,
-    MACHINES,
-    METRICS,
-    ClickHouseRepository,
-    KafkaRecordsRepository,
-    Sink,
-)
+from activityreporter.clickhouse_writer.repository import SINKS, ClickHouseRepository, KafkaRecordsRepository
 from activityreporter.clickhouse_writer.service import ClickHouseWriter
 
 
-def main(sink: Sink) -> None:
+def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    with ClickHouseRepository.from_env(sink) as store, KafkaRecordsRepository.from_env(sink) as records:
-        writer = ClickHouseWriter.from_env(records, store)
+    with ClickHouseRepository.from_env() as store, KafkaRecordsRepository.from_env(SINKS) as records:
+        writer = ClickHouseWriter.from_env(records, store, SINKS)
         signal.signal(signal.SIGTERM, lambda *_: writer.stop())
         writer.run()
 
 
-def run(sink: Sink) -> None:
+def cli() -> None:
     try:
-        main(sink)
+        main()
     except KeyboardInterrupt:
         pass
 
 
-def metrics_cli() -> None:
-    run(METRICS)
-
-
-def evaluations_cli() -> None:
-    run(EVALUATIONS)
-
-
-def machines_cli() -> None:
-    run(MACHINES)
-
-
 if __name__ == "__main__":
-    metrics_cli()
+    cli()

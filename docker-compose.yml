@@ -1,10 +1,23 @@
+# Settings every service built from the root Dockerfile shares.
+x-app: &app
+  build: .
+  image: activityreporter:latest
+  restart: unless-stopped
+
+# Topic names, the same for whoever produces or consumes them.
+x-topics: &topics
+  KAFKA_RAW_METRICS_TOPIC: raw_metrics
+  KAFKA_EVALUATIONS_TOPIC: evaluations
+  KAFKA_MACHINES_TOPIC: machines
+
 services:
+  # Agents run on the machines being watched, not in this stack. This one is for trying
+  # things out locally: `docker compose --profile dev up`.
   agent:
-    build: .
-    image: activityreporter:latest
+    <<: *app
     container_name: agent
     command: agent
-    restart: unless-stopped
+    profiles: [dev]
     environment:
       PYTHONUNBUFFERED: "1"
 
@@ -75,71 +88,42 @@ services:
         condition: service_healthy
 
   collector:
-    build: .
-    image: activityreporter:latest
+    <<: *app
     container_name: collector
     command: collector
-    restart: unless-stopped
     # mDNS multicast doesn't cross the Docker bridge, so the collector joins the host's
     # network to discover clients on the LAN. Service names like "kafka" don't resolve
     # here, hence Kafka's host-published listener.
     network_mode: host
     environment:
+      <<: *topics
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: localhost:9094
-      KAFKA_RAW_METRICS_TOPIC: raw_metrics
-      KAFKA_MACHINES_TOPIC: machines
       # Scraped in addition to clients discovered over mDNS, comma separated.
       COLLECTOR_ENDPOINTS: ""
     depends_on:
       - kafka
-      - agent
 
-  metrics-writer:
-    build: .
-    image: activityreporter:latest
-    container_name: metrics-writer
-    command: metrics-writer
-    restart: unless-stopped
-    environment: &clickhouse-writer-env
+  # One consumer for raw_metrics, evaluations and machines, each into its own table.
+  clickhouse-writer:
+    <<: *app
+    container_name: clickhouse-writer
+    command: clickhouse-writer
+    environment:
+      <<: *topics
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: kafka:9092
-      KAFKA_TOPIC: raw_metrics
-      KAFKA_CONSUMER_GROUP_ID: clickhouse-metrics-writer
+      KAFKA_CONSUMER_GROUP_ID: clickhouse-writer
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: "8123"
       CLICKHOUSE_DB: metrics
       CLICKHOUSE_USER: user
       CLICKHOUSE_PASSWORD: password
-    depends_on: &clickhouse-writer-depends-on
+    depends_on:
       kafka:
         condition: service_started
       migrate:
         condition: service_completed_successfully
-
-  evaluations-writer:
-    build: .
-    image: activityreporter:latest
-    container_name: evaluations-writer
-    command: evaluations-writer
-    restart: unless-stopped
-    environment:
-      <<: *clickhouse-writer-env
-      KAFKA_TOPIC: evaluations
-      KAFKA_CONSUMER_GROUP_ID: clickhouse-evaluations-writer
-    depends_on: *clickhouse-writer-depends-on
-
-  machines-writer:
-    build: .
-    image: activityreporter:latest
-    container_name: machines-writer
-    command: machines-writer
-    restart: unless-stopped
-    environment:
-      <<: *clickhouse-writer-env
-      KAFKA_TOPIC: machines
-      KAFKA_CONSUMER_GROUP_ID: clickhouse-machines-writer
-    depends_on: *clickhouse-writer-depends-on
 
   jobmanager:
     build:
@@ -181,9 +165,8 @@ services:
     restart: "no"
     entrypoint: ["bash", "/opt/flink/submit-jobs.sh"]
     environment:
+      <<: *topics
       KAFKA_CONNECTION_STRING: kafka:9092
-      KAFKA_RAW_METRICS_TOPIC: raw_metrics
-      KAFKA_EVALUATIONS_TOPIC: evaluations
     volumes:
       - ./src:/opt/flink/src:ro
       - ./docker/flink/submit-jobs.sh:/opt/flink/submit-jobs.sh:ro

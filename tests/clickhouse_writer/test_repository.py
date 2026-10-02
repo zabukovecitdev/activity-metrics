@@ -7,10 +7,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from clickhouse_connect.driver.exceptions import OperationalError
 
+from kafka.structs import TopicPartition
+
 from activityreporter.clickhouse_writer.repository import (
+    DEFAULT_GROUP_ID,
     EVALUATIONS,
     MACHINES,
     METRICS,
+    SINKS as ALL_SINKS,
     ClickHouseRepository,
     KafkaRecordsRepository,
     parse_record,
@@ -96,9 +100,9 @@ def row_of(sink, record) -> dict:
 
 def insert_with(client: MagicMock, rows: list, **repository_kwargs) -> None:
     with patch("activityreporter.clickhouse_writer.repository.clickhouse_connect.get_client", return_value=client):
-        repository = ClickHouseRepository(METRICS, "localhost", 8123, "user", "password", "metrics", **repository_kwargs)
+        repository = ClickHouseRepository("localhost", 8123, "user", "password", "metrics", **repository_kwargs)
         repository.connect()
-        repository.insert_batch(rows)
+        repository.insert_batch(METRICS, rows)
 
 
 @SINKS
@@ -183,17 +187,60 @@ def test_parse_record_skips_records_without_a_valid_metric_id(sink, build, metri
     assert parse_record(sink, kafka_record(payload)) is None
 
 
-@SINKS
-@pytest.mark.parametrize("value", [b"not json", b"[]", json.dumps({"name": "x"}).encode()])
-def test_poll_skips_malformed_records(sink, build, value):
-    valid = kafka_record(asdict(build(1.0)))
+def build_consumer(sinks_by_topic=None):
     with patch("activityreporter.clickhouse_writer.repository.KafkaConsumer") as kafka_consumer:
-        repository = KafkaRecordsRepository(sink, "localhost:9094", sink.default_topic, sink.default_group_id)
-    kafka_consumer.return_value.poll.return_value = {f"{sink.default_topic}-0": [kafka_record(value), valid]}
+        repository = KafkaRecordsRepository(
+            sinks_by_topic or {sink.default_topic: sink for sink in ALL_SINKS}, "localhost:9094", DEFAULT_GROUP_ID
+        )
+    return repository, kafka_consumer
+
+
+def test_one_consumer_subscribes_to_every_sink_topic():
+    _, kafka_consumer = build_consumer()
+
+    assert set(kafka_consumer.call_args.args) == {"raw_metrics", "evaluations", "machines"}
+    assert kafka_consumer.call_args.kwargs["group_id"] == DEFAULT_GROUP_ID
+
+
+def test_sink_topics_follow_the_producers_environment(monkeypatch):
+    monkeypatch.setenv("KAFKA_EVALUATIONS_TOPIC", "scores")
+
+    assert EVALUATIONS.topic() == "scores"
+    assert METRICS.topic() == "raw_metrics"
+
+
+def test_poll_groups_rows_by_table_using_each_topics_sink():
+    repository, kafka_consumer = build_consumer()
+    metric, evaluation = kafka_record(asdict(build_metric())), kafka_record(asdict(build_evaluation()))
+    kafka_consumer.return_value.poll.return_value = {
+        TopicPartition("raw_metrics", 0): [metric],
+        TopicPartition("evaluations", 0): [evaluation],
+    }
 
     rows = repository.poll(max_records=10)
 
-    assert rows == [parse_record(sink, valid)]
+    assert rows == {"metrics": [parse_record(METRICS, metric)], "evaluations": [parse_record(EVALUATIONS, evaluation)]}
+
+
+@SINKS
+@pytest.mark.parametrize("value", [b"not json", b"[]", json.dumps({"name": "x"}).encode()])
+def test_poll_skips_malformed_records(sink, build, value):
+    repository, kafka_consumer = build_consumer()
+    valid = kafka_record(asdict(build(1.0)))
+    kafka_consumer.return_value.poll.return_value = {
+        TopicPartition(sink.default_topic, 0): [kafka_record(value), valid],
+    }
+
+    rows = repository.poll(max_records=10)
+
+    assert rows == {sink.table: [parse_record(sink, valid)]}
+
+
+def test_poll_leaves_out_tables_with_only_malformed_records():
+    repository, kafka_consumer = build_consumer()
+    kafka_consumer.return_value.poll.return_value = {TopicPartition("machines", 0): [kafka_record(b"not json")]}
+
+    assert repository.poll(max_records=10) == {}
 
 
 def test_insert_batch_inserts_rows_once_into_the_sink_table():

@@ -1,9 +1,9 @@
 # ActivityReporter
 
 ```
-agent ──HTTP──▶ collector ─┬─▶ Kafka raw_metrics ─┬─▶ metrics-writer ───────────────────────────────────────────────────────▶ ClickHouse metrics
-                           │                      └─▶ anomaly_detector (Flink) ──▶ Kafka evaluations ──▶ evaluations-writer ──▶ ClickHouse evaluations
-                           └─▶ Kafka machines ──▶ machines-writer ─────────────────────────────────────────────────────────▶ ClickHouse machines
+agent ──HTTP──▶ collector ─┬─▶ Kafka raw_metrics ─┬───────────────────────────────────────────────────┐
+                           │                      └─▶ anomaly_detector (Flink) ──▶ Kafka evaluations ─┼─▶ clickhouse-writer ──▶ ClickHouse metrics, evaluations, machines
+                           └─▶ Kafka machines ────────────────────────────────────────────────────────┘
 ```
 
 ## Project layout
@@ -25,8 +25,8 @@ src/activityreporter/
   agent/             runs on every machine, serves /v1/metrics and /v1/machine
   collector/         scrapes agents, publishes to raw_metrics and machines
   anomaly_detector/  PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
-  clickhouse_writer/ Kafka topic → ClickHouse table: raw_metrics → metrics, evaluations → evaluations,
-                     machines → machines
+  clickhouse_writer/ one consumer, Kafka topic → ClickHouse table: raw_metrics → metrics,
+                     evaluations → evaluations, machines → machines
 tests/               mirrors src/activityreporter/
 ```
 
@@ -41,9 +41,7 @@ tests/               mirrors src/activityreporter/
 | `make down`             | stops the stack                                                      |
 | `make agent`            | runs the agent locally                                               |
 | `make collector`        | runs the collector locally                                           |
-| `make metrics-writer`   | runs the metrics writer locally                                      |
-| `make evaluations-writer` | runs the evaluations writer locally                                |
-| `make machines-writer`  | runs the machines writer locally                                     |
+| `make clickhouse-writer` | runs the ClickHouse writer locally                                  |
 | `make anomaly-detector` | runs the Flink job locally (creates `flink/.venv` with Python 3.11)  |
 | `make test`             | runs the tests                                                       |
 
@@ -226,19 +224,19 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 ## ClickHouse writers
 
-`clickhouse_writer` moves one Kafka topic into one ClickHouse table. A `Sink` in `clickhouse_writer/repository.py` names the table, its columns, the record dataclass, and the row conversion. Three sinks exist, each with its own console script and consumer group:
+`clickhouse-writer` is one process with one Kafka consumer (group `clickhouse-writer`) subscribed to every sink's topic. A `Sink` in `clickhouse_writer/repository.py` names the table, its columns, the record dataclass, the row conversion, and the topic. A record is converted with the sink of the topic it came from:
 
-| Script | Sink | Default topic | Default group | Table |
-| --- | --- | --- | --- | --- |
-| `metrics-writer` | `METRICS` | `raw_metrics` | `clickhouse-metrics-writer` | `metrics` |
-| `evaluations-writer` | `EVALUATIONS` | `evaluations` | `clickhouse-evaluations-writer` | `evaluations` |
-| `machines-writer` | `MACHINES` | `machines` | `clickhouse-machines-writer` | `machines` |
+| Sink | Topic variable | Default topic | Table |
+| --- | --- | --- | --- |
+| `METRICS` | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `metrics` |
+| `EVALUATIONS` | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` |
+| `MACHINES` | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
 
-`KAFKA_TOPIC` and `KAFKA_CONSUMER_GROUP_ID` override the defaults. Auto-commit is off. Offset reset is `earliest`.
+The topic variables are the ones the producers read, so a renamed topic is set once. `KAFKA_CONSUMER_GROUP_ID` overrides the group. Auto-commit is off. Offset reset is `earliest`. To write another topic, add a `Sink` to `SINKS`.
 
-Records are decoded as JSON into the sink's dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, without a valid `metric_id` (metrics, evaluations), or with an empty `machine_id` or a `last_boot` without a UTC offset (machines) is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A batch flushes when it reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into the sink's dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, without a valid `metric_id` (metrics, evaluations), or with an empty `machine_id` or a `last_boot` without a UTC offset (machines) is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. Rows are batched per table. A flush happens when any table's batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush, and it writes every table with pending rows. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
-`ClickHouseRepository.insert_batch` writes the table over HTTP (`clickhouse-connect`), then `ClickHouseWriter` commits offsets. A failed insert leaves the offsets uncommitted so the batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
+`ClickHouseRepository.insert_batch` writes each table over HTTP (`clickhouse-connect`), then `ClickHouseWriter` commits offsets. Offsets belong to the consumer, not a table, so the commit waits until every table in the flush is written; a failed insert leaves them uncommitted and the whole flush is replayed, including tables that were already written. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 
 ```sql
 SELECT machine_id, name, count() FROM metrics FINAL GROUP BY machine_id, name
