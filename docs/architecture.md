@@ -51,6 +51,8 @@ On its own, each one flags tiny steps in a series that barely moves, so each has
 
 To add an algorithm: write a class in `anomaly_detector/detectors.py` that returns the shared result fields, and add it to the detector lists. The table and dashboard don't change.
 
+`experiments/emwa_app.py` (Streamlit) and `experiments/emwa.ipynb` retune that EWMA on a fixed CPU list. They are not on the pipeline: the job keeps using `EMWA` until that class changes. Details are in the README.
+
 ## Running it
 
 - `make up` starts the stack; `make agent` runs an agent on this machine.

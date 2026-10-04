@@ -191,7 +191,7 @@ To add an algorithm, write a class with that shape and add it to `DEFAULT_DETECT
 To tune the floors, count what they let through, for example `SELECT metric_name, algorithm, toDate(timestamp) AS day, countIf(is_anomaly) FROM evaluations FINAL GROUP BY ALL`. At one sample every 10 seconds a series has 8,640 a day.
 - Returned numbers are Python `float`s; numpy scalars cannot be encoded by PyFlink's coders.
 
-`EMWA` (`anomaly_detector/emwa.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
+`EMWA` (`anomaly_detector/emwa.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along. A standalone copy of that recurrence, on a fixed series and off the pipeline, is in [EWMA experiments](#ewma-experiments).
 
 Input rows follow `Metric` (`shared/metrics.py`) and output rows follow `Evaluation` (`shared/evaluations.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/repository.py` must name the same fields as those dataclasses or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
 
@@ -300,6 +300,47 @@ Panels:
 - **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then a table of the last 200 anomalies with their values.
 
 Battery series are still collected when a machine has a battery, but the dashboard doesn't show them.
+
+## EWMA experiments
+
+`experiments/` tries the EWMA recurrence on a fixed CPU list. Those files do not import `anomaly_detector`, and they do not read Kafka or ClickHouse. The job's detector is the `EMWA` class; the `algorithm` string it publishes is `ewma` (`EwmaDetector.name`). Editing a slider or a notebook constant leaves Flink unchanged. Change `EMWA` and `METRIC_DETECTORS`, then `docker compose restart jobmanager`.
+
+### Streamlit
+
+`experiments/emwa_app.py` draws one series with the same update as `EMWA.score`:
+
+```bash
+uv run streamlit run experiments/emwa_app.py
+```
+
+Streamlit serves http://localhost:8501. The sidebar defaults are the class constants.
+
+| Control | Default | `EMWA` attribute |
+| --- | --- | --- |
+| Alpha | `0.1` | `ALPHA` |
+| Threshold multiplier (std devs) | `3` | `THRESHOLD_MULTIPLIER` |
+| Minimum deviation (percentage points) | `10` | `MIN_DEVIATION` |
+| Anomaly damping | `0.1` | `ANOMALY_DAMPING` |
+
+`WARMUP_READINGS` is `10` and is fixed. Indexes `0`–`9` are never flagged, and the dashed threshold is omitted for them. A later point is flagged when it is strictly above `average + max(multiplier × stdev, min_deviation)`. A drop is never flagged. A flagged point still updates the average, with alpha replaced by `alpha × anomaly_damping`. Damping `0` leaves the average where it was; damping `1` lets the spike move it at the full alpha.
+
+The only floor in the app is that absolute minimum deviation. Production memory uses `min_deviation=0` and `min_relative=0.02` (2% of the average), which this chart does not apply. Production CPU uses `min_deviation=10`, matching the default slider. The plotted values are the `cpu_usage` list at the top of `emwa_app.py`, not live `system.cpu.utilization`.
+
+The dashed threshold is the production upper band for those defaults: the average from before the point, plus the scale. The solid EWMA line is that average after the point has already been folded in, so it sits ahead of the `baseline` Grafana draws. Red points are the per-step flag inside `EMWA.score` (`index >= 10` and `score > 1`) on this list with `min_relative=0`. With the default sliders that is 8 of the 100 readings (indexes 24, 26, 35, 50, 51, 54, 78, 98). `EMWA.is_anomaly` only answers for the last value of whatever window it is given.
+
+Scope differs too. `AnomalyDetector` keeps the last hour (`WINDOW_MS` in `anomaly_detector/service.py`) for each `(machine_id, name)` and emits one evaluation for the newest sample. The app walks its whole list in one pass and marks every point.
+
+### Notebook
+
+`experiments/emwa.ipynb` is an earlier sketch on a different 30-point series. The dashboard does not use it.
+
+- The comment above `ALPHA` describes `0.8` (follows the data) and `0.1` (smooth). The assignment is `ALPHA = 2 / (len(cpu_usage) + 1)`, which is `2/31` (`0.06451612903225806`) for that list. `EMWA.ALPHA` is `0.1`. The cell's saved output prints `Alpha:  0.06451612903225806`; the current source only assigns the two names, so running it again prints nothing.
+- Update rule, as the comment states: `new_average = alpha * current_value + (1 - alpha) * previous_average`, starting from `cpu_usage[0]`. There is no variance, no warm-up, and no minimum deviation.
+- The anomaly test runs after that update: `cpu > 3 * emwa`. The reading is compared with an average that already contains it, so it has to clear three times that updated average. On this list the largest such ratio is about `2.84` (the `88.5` step), and the test flags nothing.
+- `continue` leaves the updated average in place for the next step and omits that point from `calculated_emwa`. The plot draws `cpu_usage` and `[emwa[1] for emwa in calculated_emwa]`. With nothing skipped, both lines have 30 points. A reading that did trip the test would shorten the average line only.
+- `EMWA` compares against the average from before the point, scales by `max(3 × stdev, min_deviation, min_relative × |average|)`, and on a flag multiplies alpha by `ANOMALY_DAMPING` (`0.1`) instead of dropping the update.
+
+The kernel metadata stored in the file says Python 2.7. Run the cells with the project interpreter (`requires-python >= 3.14`). The notebook imports `matplotlib`, which is a project dependency. Jupyter itself is not, so `uv run jupyter lab` is not a project command; open the file in an editor whose kernel is that interpreter. `ipympl` is installed for interactive matplotlib and this notebook does not turn it on.
 
 ## Tests
 
