@@ -40,8 +40,6 @@ def is_scored(metric: Mapping[str, Any]) -> bool:
 def evaluate(
     metric: Mapping[str, Any],
     window: list[float],
-    window_ms: int,
-    detected_at: float,
     detectors: list[Detector] | None = None,
 ) -> list[Evaluation]:
     """One evaluation per detector for `metric`, the last value of `window`.
@@ -60,18 +58,10 @@ def evaluate(
             machine_id=metric["machine_id"],
             metric_name=metric["name"],
             timestamp=metric["timestamp"],
-            value=metric["value"],
             algorithm=detector.name,
-            algorithm_version=detector.version,
-            params={**detector.params(), "window_ms": float(window_ms)},
             baseline=result.baseline,
             lower=result.lower,
             upper=result.upper,
-            score=result.score,
-            threshold=result.threshold,
             is_anomaly=result.is_anomaly,
-            direction=result.direction,
-            details=result.details,
-            detected_at=detected_at,
         ))
     return evaluations

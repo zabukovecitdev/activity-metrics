@@ -82,15 +82,12 @@ def non_empty(value: str) -> str:
 EVALUATIONS = Sink(
     table="evaluations",
     columns=[
-        "schema_version", "metric_id", "machine_id", "metric_name", "timestamp", "value", "algorithm",
-        "algorithm_version", "params", "baseline", "lower", "upper", "score", "threshold", "is_anomaly",
-        "direction", "details", "detected_at",
+        "metric_id", "machine_id", "metric_name", "timestamp", "algorithm", "baseline", "lower", "upper", "is_anomaly",
     ],
     record_type=Evaluation,
     to_row=lambda e: [
-        e.schema_version, metric_uuid(e.metric_id), e.machine_id, e.metric_name, utc(e.timestamp), e.value,
-        e.algorithm, e.algorithm_version, e.params or {}, e.baseline, e.lower, e.upper, e.score, e.threshold,
-        bool(e.is_anomaly), e.direction, e.details or {}, utc(e.detected_at),
+        metric_uuid(e.metric_id), non_empty(e.machine_id), non_empty(e.metric_name), utc(e.timestamp), non_empty(e.algorithm),
+        float(e.baseline), None if e.lower is None else float(e.lower), float(e.upper), bool(e.is_anomaly),
     ],
     topic_env="KAFKA_EVALUATIONS_TOPIC",
     default_topic="evaluations",

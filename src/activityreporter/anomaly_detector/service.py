@@ -1,4 +1,3 @@
-import time
 from dataclasses import astuple
 
 from pyflink.common import Row
@@ -28,6 +27,6 @@ class AnomalyDetector(KeyedProcessFunction):
         window.append((event_time, value["value"]))
         self.recent_values.update(window)
 
-        for evaluation in evaluate(value, [v for _, v in window], WINDOW_MS, detected_at=time.time()):
+        for evaluation in evaluate(value, [v for _, v in window]):
             # Positional, in dataclass field order, which is the order of EVALUATION_TYPE_INFO.
             yield Row(*astuple(evaluation))

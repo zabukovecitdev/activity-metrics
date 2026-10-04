@@ -45,19 +45,11 @@ def build_evaluation(timestamp: float = 1.0) -> Evaluation:
         machine_id="machine-123",
         metric_name="system.cpu.utilization",
         timestamp=timestamp,
-        value=87.4,
         algorithm="ewma",
-        algorithm_version=1,
-        params={"alpha": 0.1, "threshold": 1.0, "window_ms": 3_600_000.0},
         baseline=21.3,
         lower=None,
         upper=31.3,
-        score=6.6,
-        threshold=1.0,
         is_anomaly=True,
-        direction=1,
-        details={"scale": 10.0, "window_size": 342.0},
-        detected_at=2.5,
     )
 
 
@@ -80,11 +72,6 @@ SINKS = pytest.mark.parametrize(
     "sink, build",
     [(METRICS, build_metric), (EVALUATIONS, build_evaluation), (MACHINES, build_machine)],
     ids=["metrics", "evaluations", "machines"],
-)
-SAMPLE_SINKS = pytest.mark.parametrize(
-    "sink, build",
-    [(METRICS, build_metric), (EVALUATIONS, build_evaluation)],
-    ids=["metrics", "evaluations"],
 )
 
 
@@ -123,34 +110,39 @@ def test_metric_row_matches_columns():
     }
 
 
-def test_evaluation_row_converts_id_and_both_timestamps():
-    row = row_of(EVALUATIONS, build_evaluation(1.5))
-
-    assert row["metric_id"] == uuid.UUID(METRIC_ID)
-    assert row["timestamp"] == datetime.fromtimestamp(1.5, timezone.utc)
-    assert row["detected_at"] == datetime.fromtimestamp(2.5, timezone.utc)
-    assert row["schema_version"] == 1
-
-
-def test_evaluation_row_keeps_missing_bands_as_null():
-    row = row_of(EVALUATIONS, build_evaluation())
-
-    assert (row["baseline"], row["lower"], row["upper"]) == (21.3, None, 31.3)
-    assert row["is_anomaly"] is True
-    assert row["params"] == {"alpha": 0.1, "threshold": 1.0, "window_ms": 3_600_000.0}
+def test_evaluation_row_matches_columns_and_keeps_a_missing_band_as_null():
+    assert row_of(EVALUATIONS, build_evaluation(1.5)) == {
+        "metric_id": uuid.UUID(METRIC_ID),
+        "machine_id": "machine-123",
+        "metric_name": "system.cpu.utilization",
+        "timestamp": datetime.fromtimestamp(1.5, timezone.utc),
+        "algorithm": "ewma",
+        "baseline": 21.3,
+        "lower": None,
+        "upper": 31.3,
+        "is_anomaly": True,
+    }
 
 
-def test_missing_maps_are_stored_as_empty_maps():
+def test_evaluation_values_are_stored_exactly_as_sent():
+    evaluation = build_evaluation()
+    evaluation.baseline = 11.280148426792852
+
+    assert row_of(EVALUATIONS, evaluation)["baseline"] == 11.280148426792852
+
+
+@pytest.mark.parametrize("overrides", [{"machine_id": ""}, {"algorithm": ""}, {"baseline": "n/a"}])
+def test_parse_record_skips_invalid_evaluations(overrides):
+    payload = {**asdict(build_evaluation()), **overrides}
+
+    assert parse_record(EVALUATIONS, kafka_record(payload)) is None
+
+
+def test_missing_attributes_are_stored_as_an_empty_map():
     metric = build_metric()
     metric.attributes = None
-    evaluation = build_evaluation()
-    evaluation.params = None
-    evaluation.details = None
 
     assert row_of(METRICS, metric)["attributes"] == {}
-    row = row_of(EVALUATIONS, evaluation)
-    assert row["params"] == {}
-    assert row["details"] == {}
 
 
 def test_machine_row_converts_both_times_to_utc():
@@ -179,7 +171,9 @@ def test_parse_record_ignores_unknown_fields(sink, build):
     assert parse_record(sink, kafka_record(payload)) == parse_record(sink, kafka_record(asdict(build())))
 
 
-@SAMPLE_SINKS
+@pytest.mark.parametrize(
+    "sink, build", [(METRICS, build_metric), (EVALUATIONS, build_evaluation)], ids=["metrics", "evaluations"],
+)
 @pytest.mark.parametrize("metric_id", [None, "not-a-uuid", 5])
 def test_parse_record_skips_records_without_a_valid_metric_id(sink, build, metric_id):
     payload = {**asdict(build()), "metric_id": metric_id}

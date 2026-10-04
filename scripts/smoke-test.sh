@@ -75,7 +75,7 @@ echo "ClickHouse"
 check "metrics has rows from the last 10 minutes" "docker compose logs clickhouse-writer" positive recent_rows metrics timestamp
 check "machines has a row seen in the last 10 minutes" "collector refreshes machine info every 5 minutes" positive recent_rows machines observed_at
 check "evaluations has rows from the last 10 minutes" "see the Flink job and the evaluations topic above" positive recent_rows evaluations timestamp
-check "every evaluation links to a stored sample" "metric_id mismatch between metrics and evaluations" evaluations_link_to_samples
+check "every evaluation links to a stored sample" "an evaluation's metric_id is not in metrics" evaluations_link_to_samples
 
 echo "Grafana"
 check "Grafana is healthy" "docker compose logs grafana" grafana_healthy
