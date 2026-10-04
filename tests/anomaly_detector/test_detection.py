@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from activityreporter.anomaly_detector.detection import DEFAULT_DETECTORS, detectors_for, evaluate, is_scored
@@ -102,6 +104,19 @@ def test_memory_moving_a_few_pages_is_not_an_anomaly():
         evaluations = by_algorithm(build_metric(value, name="system.memory.usage", unit="By"), MEMORY)
         assert not evaluations["mad"].is_anomaly
         assert not evaluations["ewma"].is_anomaly
+
+
+def test_memory_series_starting_at_zero_is_still_scored():
+    # used = total - available, so the first sample is 0 when the two match (some containers).
+    # Memory's EWMA floor is only a fraction of the average, which is 0 until it moves.
+    values = [0.0] + [1_000_000_000.0] * 19
+
+    evaluations = evaluate(build_metric(values[-1], name="system.memory.usage", unit="By"), values)
+
+    assert {e.algorithm for e in evaluations} == {"ewma", "mad"}
+    assert all(math.isfinite(e.baseline) and math.isfinite(e.upper) for e in evaluations)
+    flat = evaluate(build_metric(0.0, name="system.memory.usage", unit="By"), [0.0] * 11)
+    assert flat and not any(e.is_anomaly for e in flat)
 
 
 def test_memory_jumping_more_than_two_percent_is_an_anomaly():

@@ -68,6 +68,19 @@ def test_ewma_relative_floor_ignores_rises_below_it():
     assert detector.evaluate(STEADY_MEMORY + [1_030_000_000.0]).is_anomaly
 
 
+def test_ewma_relative_floor_scores_a_series_that_starts_at_zero():
+    # No absolute floor: while the average is still 0 the margin is 0, which used to divide by zero.
+    detector = EwmaDetector(min_deviation=0.0, min_relative=0.02)
+
+    flat = detector.evaluate([0.0] * 11)
+    assert not flat.is_anomaly
+    assert (flat.baseline, flat.upper) == (0.0, 0.0)
+
+    jump = detector.evaluate([0.0] * 10 + [500_000_000.0])
+    assert jump.is_anomaly
+    assert (jump.baseline, jump.upper) == (0.0, 0.0)
+
+
 def test_ewma_upper_band_is_at_least_the_floor_above_the_average():
     result = EwmaDetector(min_deviation=0.0, min_relative=0.02).evaluate(STEADY_MEMORY + [1_000_000_000.0])
 
