@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import machineid
 import psutil
 
-from activityreporter.shared.machines import Machine
+from activityreporter.shared.models import Machine
 
 
 def read_machine_id() -> str:
