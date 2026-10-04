@@ -37,20 +37,11 @@ EVALUATION_FIELD_TYPES = {
     "machine_id": Types.STRING(),
     "metric_name": Types.STRING(),
     "timestamp": Types.DOUBLE(),
-    "value": Types.DOUBLE(),
     "algorithm": Types.STRING(),
-    "algorithm_version": Types.INT(),
-    "params": Types.MAP(Types.STRING(), Types.DOUBLE()),
     "baseline": Types.DOUBLE(),
     "lower": Types.DOUBLE(),
     "upper": Types.DOUBLE(),
-    "score": Types.DOUBLE(),
-    "threshold": Types.DOUBLE(),
     "is_anomaly": Types.BOOLEAN(),
-    "direction": Types.INT(),
-    "details": Types.MAP(Types.STRING(), Types.DOUBLE()),
-    "detected_at": Types.DOUBLE(),
-    "schema_version": Types.INT(),
 }
 
 

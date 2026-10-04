@@ -168,20 +168,18 @@ Scoring rules (`anomaly_detector/detection.py`, called from `AnomalyDetector.pro
 
 ### Detectors
 
-A detector (`anomaly_detector/detectors.py`) has a `name`, a `version`, `min_points`, `params()`, and `evaluate(window) -> Result`. `Result` is the contract every algorithm fills, in the value's units:
+A detector (`anomaly_detector/detectors.py`) has a `name`, `min_points`, and `evaluate(window) -> Result`. `Result` is what the dashboard draws, in the value's units:
 
 | Field | `mad` | `ewma` |
 | --- | --- | --- |
 | `baseline` | window median | exponentially weighted average |
 | `lower` / `upper` | median ∓ `THRESHOLD × scale` | `None` / average + `THRESHOLD × scale` (only rises are flagged) |
-| `score` / `threshold` | modified z-score / `3.5` | deviation ÷ scale / `1.0` |
-| `is_anomaly` | `score >= 3.5` | `score > 1.0` |
-| `direction` | sign of value − median | sign of the score |
+| `is_anomaly` | modified z-score `>= 3.5` | deviation ÷ scale `> 1.0` |
 | `min_points` | 20 | 11 (`EMWA.WARMUP_READINGS + 1`) |
 
-`params()` returns the detector's inputs (thresholds, `alpha`, ...); the job adds `window_ms`. `details` holds what it computed (`scale`, `window_size`, and for `mad` `spread_scale`, the scale before its floor). A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
+The score and threshold behind `is_anomaly` stay inside the detector; only the flag is published. A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
 
-To add an algorithm, write a class with that shape and add it to `DEFAULT_DETECTORS` and the lists in `METRIC_DETECTORS`. No schema, writer, or dashboard change is needed: its anomalies show up on every chart, labelled with its name. Bump `version` when a code change alters a detector's results, so old and new evaluations can be told apart. A changed setting needs no bump: settings are stored in `params` on every evaluation.
+To add an algorithm, write a class with that shape and add it to `DEFAULT_DETECTORS` and the lists in `METRIC_DETECTORS`. No schema, writer, or dashboard change is needed: its anomalies show up on every chart, labelled with its name.
 
 `MAD` (`anomaly_detector/mad.py`):
 
@@ -190,7 +188,7 @@ To add an algorithm, write a class with that shape and add it to `DEFAULT_DETECT
 - When the median absolute deviation is 0 (over half the values equal the median), the scale is `1.253314 × mean absolute deviation` instead (Iglewicz & Hoaglin). When that is 0 too, every value is equal and the score is 0. The score is always finite, so it can be encoded as JSON.
 - The scale has a floor, `max(min_deviation, min_relative × |median|) / THRESHOLD`, so a deviation smaller than `min_deviation` and than `min_relative` of the median never reaches the threshold. Without it, a series that barely moves has a tiny MAD and every step is flagged: memory in use changing by 32 KB on a 470 MB median scored 8, against a threshold of 3.5. Both default to 0, the textbook modified z-score.
 
-To tune the floors, look at the stored scores, for example `SELECT metric_name, algorithm, quantiles(0.5, 0.99, 0.999, 0.9999)(score) FROM evaluations FINAL GROUP BY metric_name, algorithm`. At one sample every 10 seconds a series has 8,640 a day, so a threshold at the 99.99th percentile of a normal day flags about one a day.
+To tune the floors, count what they let through, for example `SELECT metric_name, algorithm, toDate(timestamp) AS day, countIf(is_anomaly) FROM evaluations FINAL GROUP BY ALL`. At one sample every 10 seconds a series has 8,640 a day.
 - Returned numbers are Python `float`s; numpy scalars cannot be encoded by PyFlink's coders.
 
 `EMWA` (`anomaly_detector/emwa.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
@@ -207,27 +205,16 @@ Published on `evaluations` as JSON, without a Kafka key:
   "machine_id": "server-42",
   "metric_name": "system.cpu.utilization",
   "timestamp": 1790595000.0,
-  "value": 87.4,
   "algorithm": "ewma",
-  "algorithm_version": 1,
-  "params": {"alpha": 0.1, "warmup_readings": 10.0, "threshold_multiplier": 3.0, "min_deviation": 10.0,
-             "anomaly_damping": 0.1, "threshold": 1.0, "window_ms": 3600000.0},
   "baseline": 21.3,
   "lower": null,
   "upper": 31.3,
-  "score": 6.6,
-  "threshold": 1.0,
-  "is_anomaly": true,
-  "direction": 1,
-  "details": {"scale": 10.0, "window_size": 342.0},
-  "detected_at": 1790595000.8,
-  "schema_version": 1
+  "is_anomaly": true
 }
 ```
 
-- `metric_id` is the scored sample's id in `metrics`. `timestamp` is the sample time, not the detection time (`detected_at`); both are epoch seconds, like `raw_metrics`. `value` repeats the sample's value so an evaluation reads on its own.
-- `direction` is `1` above the baseline, `-1` below, `0` on it.
-- `schema_version` changes only for a change that is not additive. Consumers ignore fields they do not know, so a producer may add a field first.
+- `metric_id` is the scored sample's id in `metrics`, which holds its value; it isn't repeated here. `machine_id`, `metric_name`, and `timestamp` (epoch seconds, like `raw_metrics`) are the sample's series and time, so the table is sorted like `metrics`.
+- Numbers are stored as computed, at full `Float64` precision.
 
 Job submission, the Kafka connector jar, and consumer-group rules are in [docs/operations.md](docs/operations.md).
 
@@ -243,7 +230,7 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 The topic variables are the ones the producers read, so a renamed topic is set once. `KAFKA_CONSUMER_GROUP_ID` overrides the group. Auto-commit is off. Offset reset is `earliest`. To write another topic, add a `Sink` to `SINKS`.
 
-Records are decoded as JSON into the sink's dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, without a valid `metric_id` (metrics, evaluations), or with an empty `machine_id` or a `last_boot` without a UTC offset (machines) is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. Rows are batched per table. A flush happens when any table's batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush, and it writes every table with pending rows. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into the sink's dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, an evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. Rows are batched per table. A flush happens when any table's batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush, and it writes every table with pending rows. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
 `ClickHouseRepository.insert_batch` writes each table over HTTP (`clickhouse-connect`), then `ClickHouseWriter` commits offsets. Offsets belong to the consumer, not a table, so the commit waits until every table in the flush is written; a failed insert leaves them uncommitted and the whole flush is replayed, including tables that were already written. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 
@@ -266,10 +253,11 @@ ClickHouse errors retry up to 5 times. Backoff is `backoff_base_seconds * 2^(att
 | 000003 | `evaluations` table, same engine, partitioning, and TTL. |
 | 000004 | `machines` table, `ReplacingMergeTree(observed_at)`, no TTL. |
 | 000005 | Drops `anomalies`; its `down` recreates it. |
+| 000006 | Replaces `evaluations` with the 9 columns the dashboard needs; its `down` recreates the 000003 table. |
 
 `metrics` holds only what devices report. Columns: `metric_id` (`UUID`), `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `ingested_at`. Sorting (and deduplication) key `(machine_id, name, timestamp, metric_id)`: queries filter by series and time, and `metric_id` makes each sample unique, including two series at the same instant that differ only in `attributes`. `ttl_only_drop_parts` drops whole expired hourly parts instead of rewriting them.
 
-`evaluations` columns are the fields of the evaluation record plus `ingested_at`. `params` and `details` are `Map(LowCardinality(String), Float64)`, `baseline`, `lower`, and `upper` are `Nullable(Float64)`, `is_anomaly` is `Bool`, `direction` is `Int8`. Sorting key `(machine_id, metric_name, algorithm, timestamp, metric_id)`: one algorithm's results for a series over time are contiguous. Anomalous samples are `WHERE is_anomaly`.
+`evaluations` columns are the fields of the evaluation record: `metric_id` is `UUID`, `baseline` and `upper` are `Float64`, `lower` is `Nullable(Float64)`, `is_anomaly` is `Bool`. Sorting (and deduplication) key `(machine_id, metric_name, algorithm, timestamp, metric_id)`: one algorithm's results for a series over time are contiguous, and a replayed evaluation collapses on merge. Anomalous samples are `WHERE is_anomaly`.
 
 `machines` holds the latest `Machine` per `machine_id`; `ReplacingMergeTree(observed_at)` keeps the newest on merge, so read it with `FINAL`. It has no TTL: a machine that stops reporting keeps its row, and `observed_at` is when it was last seen.
 
@@ -309,7 +297,7 @@ Panels:
 - **Machine**: hostname, OS, architecture, cores, memory, disk, last boot, and last seen, from `machines`. **Uptime** from `system.uptime`.
 - **CPU** and **Memory** gauges (memory is `system.memory.usage / system.memory.limit`), **Memory used**, and **Anomalies**: anomalous evaluations of every metric and algorithm in the time range.
 - **CPU usage** and **Memory usage** (with the limit dashed): the series with every algorithm's anomalies as points, one colour per algorithm (query `B`, split by the `algorithm` column). Where two algorithms flag the same sample, their points overlap; the tooltip lists both.
-- **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then `score / threshold` per algorithm, which crosses the red line at 1 when that algorithm flags; then a table of the last 200 anomalies.
+- **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then a table of the last 200 anomalies with their values.
 
 Battery series are still collected when a machine has a battery, but the dashboard doesn't show them.
 

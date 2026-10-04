@@ -547,7 +547,7 @@
           "format": 0,
           "pluginVersion": "4.21.3",
           "queryType": "timeseries",
-          "rawSql": "SELECT timestamp AS time, algorithm, value AS anomaly\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = 'system.cpu.utilization'\n  AND is_anomaly\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "rawSql": "SELECT m.timestamp AS time, e.algorithm AS algorithm, m.value AS anomaly\nFROM\n(\n    SELECT metric_id, algorithm\n    FROM evaluations FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND metric_name = 'system.cpu.utilization'\n      AND is_anomaly\n      AND $__timeFilter(timestamp)\n) AS e\nINNER JOIN\n(\n    SELECT metric_id, timestamp, value\n    FROM metrics FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND name = 'system.cpu.utilization'\n      AND $__timeFilter(timestamp)\n) AS m USING (metric_id)\nORDER BY time",
           "refId": "B"
         }
       ]
@@ -720,7 +720,7 @@
           "format": 0,
           "pluginVersion": "4.21.3",
           "queryType": "timeseries",
-          "rawSql": "SELECT timestamp AS time, algorithm, value AS anomaly\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = 'system.memory.usage'\n  AND is_anomaly\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "rawSql": "SELECT m.timestamp AS time, e.algorithm AS algorithm, m.value AS anomaly\nFROM\n(\n    SELECT metric_id, algorithm\n    FROM evaluations FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND metric_name = 'system.memory.usage'\n      AND is_anomaly\n      AND $__timeFilter(timestamp)\n) AS e\nINNER JOIN\n(\n    SELECT metric_id, timestamp, value\n    FROM metrics FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND name = 'system.memory.usage'\n      AND $__timeFilter(timestamp)\n) AS m USING (metric_id)\nORDER BY time",
           "refId": "B"
         },
         {
@@ -913,7 +913,7 @@
           "format": 0,
           "pluginVersion": "4.21.3",
           "queryType": "timeseries",
-          "rawSql": "SELECT timestamp AS time, algorithm, value AS anomaly\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = ${metric_name:singlequote}\n  AND is_anomaly\n  AND $__timeFilter(timestamp)\nORDER BY time",
+          "rawSql": "SELECT m.timestamp AS time, e.algorithm AS algorithm, m.value AS anomaly\nFROM\n(\n    SELECT metric_id, algorithm\n    FROM evaluations FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND metric_name = ${metric_name:singlequote}\n      AND is_anomaly\n      AND $__timeFilter(timestamp)\n) AS e\nINNER JOIN\n(\n    SELECT metric_id, timestamp, value\n    FROM metrics FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND name = ${metric_name:singlequote}\n      AND $__timeFilter(timestamp)\n) AS m USING (metric_id)\nORDER BY time",
           "refId": "B"
         },
         {
@@ -935,121 +935,12 @@
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
       },
-      "id": 10,
-      "title": "${metric_name} score / threshold",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 0,
-        "y": 40,
-        "w": 24,
-        "h": 7
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "opacity",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 4,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "line+area"
-            }
-          },
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "transparent",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byFrameRefID",
-              "options": "A"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "${__field.labels.algorithm}"
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.2.3",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-clickhouse-datasource",
-            "uid": "clickhouse"
-          },
-          "editorType": "sql",
-          "format": 0,
-          "pluginVersion": "4.21.3",
-          "queryType": "timeseries",
-          "rawSql": "-- Score divided by the algorithm's own threshold, so every algorithm crosses 1 when it flags.\nSELECT timestamp AS time, algorithm, score / nullIf(threshold, 0) AS score\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND metric_name = ${metric_name:singlequote}\n  AND $__timeFilter(timestamp)\nORDER BY time",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "grafana-clickhouse-datasource",
-        "uid": "clickhouse"
-      },
       "id": 20,
       "title": "Recent anomalies",
       "type": "table",
       "gridPos": {
         "x": 0,
-        "y": 47,
+        "y": 40,
         "w": 24,
         "h": 9
       },
@@ -1079,7 +970,7 @@
           "format": 1,
           "pluginVersion": "4.21.3",
           "queryType": "table",
-          "rawSql": "SELECT\n    timestamp AS Time,\n    metric_name AS Metric,\n    algorithm AS Algorithm,\n    value AS Value,\n    round(score, 2) AS Score,\n    threshold AS Threshold,\n    multiIf(direction > 0, 'up', direction < 0, 'down', '') AS Direction\nFROM evaluations FINAL\nWHERE machine_id = ${machine_id:singlequote}\n  AND is_anomaly\n  AND $__timeFilter(timestamp)\nORDER BY timestamp DESC\nLIMIT 200",
+          "rawSql": "SELECT m.timestamp AS Time, e.metric_name AS Metric, e.algorithm AS Algorithm, m.value AS Value\nFROM\n(\n    SELECT metric_id, metric_name, algorithm\n    FROM evaluations FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND is_anomaly\n      AND $__timeFilter(timestamp)\n) AS e\nINNER JOIN\n(\n    SELECT metric_id, timestamp, value\n    FROM metrics FINAL\n    WHERE machine_id = ${machine_id:singlequote}\n      AND $__timeFilter(timestamp)\n) AS m USING (metric_id)\nORDER BY Time DESC\nLIMIT 200",
           "refId": "A"
         }
       ]
