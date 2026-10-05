@@ -246,6 +246,8 @@ ClickHouse errors retry up to 5 times. Backoff is `backoff_base_seconds * 2^(att
 
 [golang-migrate](https://github.com/golang-migrate/migrate) runs `db/migrations` against ClickHouse (`metrics` database) from the `migrate` Compose service. Applied versions are recorded in `metrics.schema_migrations`. Every migration is a numbered pair, `NNNNNN_<name>.up.sql` and `NNNNNN_<name>.down.sql`; create one with `make migrate-new name=<name>`. Statements are split on every `;`, comments included, so comments in a migration must not contain one.
 
+Compose runs `clickhouse/clickhouse-server:26.3`. That image creates `metrics` from `CLICKHOUSE_DB` when `/var/lib/clickhouse/data` is still absent. `clickhouse/clickhouse-server:24.1` skips that step on a fresh volume, and a volume it has already started does not gain the database when the image tag changes. See [docs/operations.md](docs/operations.md).
+
 | Migration | Effect |
 | --- | --- |
 | 000001 | `metrics` table, `ReplacingMergeTree`, hourly partitions, 24-hour TTL. |
@@ -300,6 +302,8 @@ Panels:
 - **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then a table of the last 200 anomalies with their values.
 
 Battery series are still collected when a machine has a battery, but the dashboard doesn't show them.
+
+Grafana is at http://localhost:3000 (`admin` / `admin` unless the password was changed). **CPU** and **Uptime** are the latest sample in the table, and the memory stats are the last hour; they do not follow the time picker and they do not read with `FINAL`. The charts and the anomaly count do both. Provisioning, the native-protocol datasource, and a missing `metrics` database are in [docs/operations.md](docs/operations.md).
 
 ## Tests
 

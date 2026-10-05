@@ -53,7 +53,7 @@ To add an algorithm: write a class in `anomaly_detector/detectors.py` that retur
 
 ## Running it
 
-- `make up` starts the stack; `make agent` runs an agent on this machine.
+- `make up` starts the stack; `make agent` runs an agent on this machine. Grafana is http://localhost:3000.
 - `WAIT=300 make smoke` checks every step end to end.
 - After a change to the Flink job: `docker compose restart jobmanager`.
 

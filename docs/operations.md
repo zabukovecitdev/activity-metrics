@@ -1,16 +1,17 @@
 # Operations
 
-Setup, configuration, and failure modes for the agent, collector, Flink job, ClickHouse writers, and migrations. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
+Setup, configuration, and failure modes for the agent, collector, Flink job, ClickHouse, Grafana, and migrations. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
 
 ## Local stack
 
-`make up` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. The named volume `clickhouse_data` is kept. Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place.
+`make up` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. The named volumes `clickhouse_data` and `grafana_data` are kept. Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place. Neither command passes `-v`.
 
 | Published port | Service |
 | --- | --- |
 | `9094` | Kafka listener advertised as `localhost:9094` (`PLAINTEXT_HOST`). Containers on the Compose network use `kafka:9092`. |
 | `8123`, `9000` | ClickHouse HTTP and native protocol. |
 | `8081` | Flink Web UI. |
+| `3000` | Grafana. |
 
 The `agent` Compose service is in the `dev` profile, so `make up` doesn't start it; `docker compose --profile dev up -d` does. It does not publish port `8080`. The collector uses `network_mode: host` because mDNS multicast does not cross the Docker bridge, and on the host network the DNS name `kafka` does not resolve. Its `KAFKA_CONNECTION_STRING` is therefore `localhost:9094`.
 
@@ -79,6 +80,23 @@ The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The 
 
 The topic names are set once, in the `x-topics` block of `docker-compose.yml`, and merged into every service that produces or consumes them. Services built from the root `Dockerfile` share the `x-app` block (`build`, `image`, `restart`).
 
+## ClickHouse server
+
+The `clickhouse` service runs `clickhouse/clickhouse-server:26.3` (the 26.3 LTS line). `CLICKHOUSE_DB`, `CLICKHOUSE_USER`, and `CLICKHOUSE_PASSWORD` are `metrics`, `user`, and `password`. The `clickhouse_data` volume is mounted at `/var/lib/clickhouse`. The healthcheck is `SELECT 1` with that user and password and no database name, so the container can be healthy while `metrics` does not exist.
+
+The 26.3 entrypoint creates `CLICKHOUSE_DB` only when `/var/lib/clickhouse/data` is absent. It starts a server bound to localhost, runs `CREATE DATABASE IF NOT EXISTS metrics`, then replaces that process with the normal server. The next start finds `data` and logs `ClickHouse Database directory appears to contain a database; Skipping initialization`. Changing `CLICKHOUSE_DB` after that does not create another database.
+
+`clickhouse/clickhouse-server:24.1` inverts that test (the `v24.1.8.22-stable` entrypoint). On a volume that has no `data` directory it logs the same skipping line and never applies `CLICKHOUSE_DB`. The server still creates `data` on that first start. `migrate` then connects with `database=metrics` and fails with `Database metrics does not exist`. A second start of 24.1 would have taken the other branch and created the database. Pointing 26.3 at a volume 24.1 has already started does not: `data` is already there, so initialization is skipped. `24.8` uses the same direction as `26.3`.
+
+`make down` and `make up` keep the volume. To add the missing database without dropping it:
+
+```bash
+docker compose exec clickhouse clickhouse-client -u user --password password -q "CREATE DATABASE IF NOT EXISTS metrics"
+make migrate
+```
+
+To let 26.3 initialize a new volume, remove `clickhouse_data` (Compose names it `<project>_clickhouse_data`; `docker volume ls` shows it) and run `make up`. `docker compose down -v` removes every volume in this file, including `grafana_data`.
+
 ## Migrations
 
 The `migrate` service runs `migrate/migrate` with `up` on every `make up`, after the ClickHouse healthcheck passes. It connects over the native protocol (`clickhouse:9000`) with `x-multi-statement=true` (several statements per file) and `x-migrations-table-engine=MergeTree` (otherwise `schema_migrations` is a `TinyLog`). The URL lives once, in the service's `DATABASE_URL`; `docker compose run --rm migrate <args>` passes any CLI arguments through, which is what `make migrate`, `make migrate-down`, and `make migrate-new name=<name>` do.
@@ -143,6 +161,32 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 
 It needs an agent the collector can reach (`make agent` on the host) and, for the evaluation checks, a few minutes of samples: `WAIT=300 make smoke` retries failed checks for up to 300 seconds. Grafana is called as `admin:admin`; set `GRAFANA_AUTH` if you changed it.
 
+## Grafana
+
+`grafana` is `grafana/grafana:13.2.3`, published on port `3000`. Compose does not set `GF_SECURITY_ADMIN_USER` or `GF_SECURITY_ADMIN_PASSWORD`. A fresh `grafana_data` volume uses the image default, `admin` / `admin`, which is what `scripts/smoke-test.sh` sends unless `GRAFANA_AUTH` is set. A volume that already holds a Grafana database keeps the password stored in it.
+
+`GF_PLUGINS_PREINSTALL_SYNC=grafana-clickhouse-datasource` installs the ClickHouse plugin before Grafana starts, so the provisioned datasource's type exists. The plugin version is not pinned. Grafana waits until ClickHouse is healthy. It does not wait for `migrate`, so the UI can come up before `metrics`, `evaluations`, and `machines` exist.
+
+| Mount | Container path | Mode |
+| --- | --- | --- |
+| `grafana_data` | `/var/lib/grafana` | read-write |
+| `./docker/grafana/provisioning` | `/etc/grafana/provisioning` | read-only |
+| `./docker/grafana/dashboards` | `/var/lib/grafana/dashboards` | read-only |
+
+`docker/grafana/provisioning/datasources/clickhouse.yml` adds a datasource named `ClickHouse`, uid `clickhouse`, type `grafana-clickhouse-datasource`, and makes it the default. It uses the native protocol: host `clickhouse`, port `9000`, user `user`, password `password`, database `metrics`. That is not the HTTP port `8123` the writer uses. From the host, the same native port is `localhost:9000`.
+
+`docker/grafana/provisioning/dashboards/dashboards.yml` is a file provider named `activityreporter`. It reads `/var/lib/grafana/dashboards` and sets `allowUiUpdates: true`. It does not set `updateIntervalSeconds`. The only dashboard file is `machine-usage-metrics.json`: title *Machine usage metrics*, uid `ad8rn6h` (the uid `make smoke` requests). The JSON is mounted read-only, so an edit in the UI stays in Grafana's database on `grafana_data` and is not written back to the file. `make down` keeps that volume.
+
+Which queries follow the time picker:
+
+| Panel | Query |
+| --- | --- |
+| **CPU**, **Uptime** | Latest row in `metrics` for that series. No time filter, no `FINAL`. |
+| **Memory**, **Memory used** | Last hour (`now() - INTERVAL 1 HOUR`), no `FINAL`. Memory is `system.memory.usage / system.memory.limit`. |
+| **Anomalies**, **CPU usage**, **Memory usage**, **Detector explorer** | `$__timeFilter(timestamp)` and `FINAL`. Anomaly points join `evaluations` to `metrics` on `metric_id`. |
+
+A replayed batch can still show two rows for one sample until ClickHouse merges them. The stat panels can then disagree with the charts, which read `FINAL`. Panel contents are in the README.
+
 ## Troubleshooting
 
 **Collector logs no discovered clients.** The collector must share a multicast network with the agent. In Compose it uses the host network for that reason. Confirm the agent is on the host (or another host on the LAN) and that UDP 5353 is not blocked. Add a full URL to `COLLECTOR_ENDPOINTS` to bypass mDNS. The collector logs `Static endpoints: none` when that variable is empty.
@@ -167,4 +211,8 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Flink jobmanager keeps restarting.** In Application Mode the jobmanager exits when the job can't start, for example on a Python error in `main` or an import error in `./src`. `docker compose logs jobmanager` shows the traceback. A job that starts and then fails is restarted by Flink first, and shows up under *Exceptions* in the Web UI.
 
-**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL.
+**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL. `docker compose down -v` does remove `clickhouse_data` and `grafana_data`.
+
+**`migrate` fails with `Database metrics does not exist`.** ClickHouse can still be healthy: its healthcheck is `SELECT 1` and does not name a database. `CLICKHOUSE_DB` is applied only while `/var/lib/clickhouse/data` is absent, and only by an image whose entrypoint is not inverted (`24.8` and newer; this stack pins `26.3`). A volume that `24.1` already started has that directory and no `metrics` database, and changing the image tag does not create it. Recovery is in [ClickHouse server](#clickhouse-server).
+
+**Grafana panels error or the datasource is red.** The service starts after ClickHouse is healthy, not after `migrate`, so the tables may not exist yet. The datasource speaks native protocol to `clickhouse:9000` (database `metrics`, user `user`, password `password`); port `8123` is the HTTP port and will not answer it. If the plugin failed to install, the datasource type `grafana-clickhouse-datasource` is missing. `GF_PLUGINS_PREINSTALL_SYNC` installs it before startup; `docker compose logs grafana` shows that step.
