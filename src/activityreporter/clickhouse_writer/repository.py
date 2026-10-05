@@ -1,114 +1,17 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 import time
-import uuid
-from collections.abc import Callable
-from dataclasses import dataclass, fields
-from datetime import datetime, timezone
-from typing import Any
 
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 from clickhouse_connect.driver.exceptions import ClickHouseError
 from kafka import KafkaConsumer
 
-from activityreporter.shared.evaluations import Evaluation
-from activityreporter.shared.machines import Machine
-from activityreporter.shared.metrics import Metric
-
 logger = logging.getLogger(__name__)
 
 POLL_TIMEOUT_MS = 1000
-
-
-DEFAULT_GROUP_ID = "clickhouse-writer"
-
-
-@dataclass(frozen=True)
-class Sink:
-    """One Kafka topic written to one ClickHouse table.
-
-    The topic is read from the environment variable `topic_env`, the same one
-    the producer of that topic uses, and falls back to `default_topic`.
-    """
-    table: str
-    columns: list[str]
-    record_type: type
-    to_row: Callable[[Any], list]
-    topic_env: str
-    default_topic: str
-
-    def topic(self) -> str:
-        return os.environ.get(self.topic_env, self.default_topic)
-
-
-def utc(epoch_seconds: float) -> datetime:
-    return datetime.fromtimestamp(epoch_seconds, timezone.utc)
-
-
-def metric_uuid(metric_id: Any) -> uuid.UUID:
-    # str() turns None or a number into an invalid hex string, so every bad id raises ValueError.
-    return uuid.UUID(str(metric_id))
-
-
-METRICS = Sink(
-    table="metrics",
-    columns=["metric_id", "machine_id", "name", "timestamp", "type", "unit", "value", "attributes"],
-    record_type=Metric,
-    to_row=lambda m: [
-        metric_uuid(m.metric_id), m.machine_id, m.name, utc(m.timestamp), m.type, m.unit, m.value, m.attributes or {},
-    ],
-    topic_env="KAFKA_RAW_METRICS_TOPIC",
-    default_topic="raw_metrics",
-)
-
-
-def iso_utc(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        raise ValueError(f"{value!r} has no UTC offset")
-    return parsed.astimezone(timezone.utc)
-
-
-def non_empty(value: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"expected a non-empty string, got {value!r}")
-    return value
-
-
-EVALUATIONS = Sink(
-    table="evaluations",
-    columns=[
-        "metric_id", "machine_id", "metric_name", "timestamp", "algorithm", "baseline", "lower", "upper", "is_anomaly",
-    ],
-    record_type=Evaluation,
-    to_row=lambda e: [
-        metric_uuid(e.metric_id), non_empty(e.machine_id), non_empty(e.metric_name), utc(e.timestamp), non_empty(e.algorithm),
-        float(e.baseline), None if e.lower is None else float(e.lower), float(e.upper), bool(e.is_anomaly),
-    ],
-    topic_env="KAFKA_EVALUATIONS_TOPIC",
-    default_topic="evaluations",
-)
-
-MACHINES = Sink(
-    table="machines",
-    columns=[
-        "machine_id", "hostname", "os", "os_version", "architecture", "cores", "total_memory", "total_disk",
-        "last_boot", "observed_at",
-    ],
-    record_type=Machine,
-    to_row=lambda m: [
-        non_empty(m.machine_id), m.hostname, m.os, m.os_version, m.architecture, int(m.cores), int(m.total_memory),
-        int(m.total_disk), iso_utc(m.last_boot), utc(m.observed_at),
-    ],
-    topic_env="KAFKA_MACHINES_TOPIC",
-    default_topic="machines",
-)
-
-SINKS = [METRICS, EVALUATIONS, MACHINES]
 
 
 class ClickHouseRepository:
@@ -140,18 +43,18 @@ class ClickHouseRepository:
     def connect(self) -> None:
         self._client = clickhouse_connect.get_client(**self._connection)
 
-    def insert_batch(self, sink: Sink, rows: list[list]) -> None:
+    def insert_batch(self, table: str, columns: list[str], rows: list[list]) -> None:
         if not rows:
             return
 
         for attempt in range(1, self._max_retries + 1):
             try:
-                self._client.insert(sink.table, rows, column_names=sink.columns)
+                self._client.insert(table, rows, column_names=columns)
                 return
             except ClickHouseError:
                 logger.exception(
                     "Failed to write %s batch to ClickHouse (attempt %d/%d)",
-                    sink.table,
+                    table,
                     attempt,
                     self._max_retries,
                 )
@@ -172,12 +75,11 @@ class ClickHouseRepository:
 
 
 class KafkaRecordsRepository:
-    """One consumer for every sink's topic; each record is converted with its topic's sink."""
+    """One consumer on one topic."""
 
-    def __init__(self, sinks_by_topic: dict[str, Sink], bootstrap_servers: str, group_id: str):
-        self._sinks_by_topic = sinks_by_topic
+    def __init__(self, topic: str, bootstrap_servers: str, group_id: str):
         self._consumer = KafkaConsumer(
-            *sinks_by_topic,
+            topic,
             bootstrap_servers=[bootstrap_servers],
             group_id=group_id,
             key_deserializer=lambda k: k.decode("utf-8") if k else None,
@@ -186,23 +88,12 @@ class KafkaRecordsRepository:
         )
 
     @classmethod
-    def from_env(cls, sinks: list[Sink]) -> KafkaRecordsRepository:
-        return cls(
-            {sink.topic(): sink for sink in sinks},
-            bootstrap_servers=os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094"),
-            group_id=os.environ.get("KAFKA_CONSUMER_GROUP_ID", DEFAULT_GROUP_ID),
-        )
+    def from_env(cls, topic: str, group_id: str) -> KafkaRecordsRepository:
+        return cls(topic, os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094"), group_id)
 
-    def poll(self, max_records: int) -> dict[str, list[list]]:
-        """ClickHouse rows for the polled records by table; malformed records are logged and dropped."""
+    def poll(self, max_records: int) -> list:
         polled = self._consumer.poll(timeout_ms=POLL_TIMEOUT_MS, max_records=max_records)
-        rows: dict[str, list[list]] = {}
-        for partition, records in polled.items():
-            sink = self._sinks_by_topic[partition.topic]
-            parsed = [row for row in (parse_record(sink, record) for record in records) if row is not None]
-            if parsed:
-                rows.setdefault(sink.table, []).extend(parsed)
-        return rows
+        return [record for records in polled.values() for record in records]
 
     def commit(self) -> None:
         self._consumer.commit()
@@ -215,25 +106,3 @@ class KafkaRecordsRepository:
 
     def __exit__(self, *exc) -> None:
         self.close()
-
-
-def from_json(record_type: type, data: dict[str, Any]):
-    """`record_type` built from `data`, ignoring keys it doesn't know.
-
-    A producer may add fields before every consumer is deployed with them.
-    """
-    if not isinstance(data, dict):
-        raise TypeError(f"expected a JSON object, got {type(data).__name__}")
-    known = {f.name for f in fields(record_type)}
-    return record_type(**{k: v for k, v in data.items() if k in known})
-
-
-def parse_record(sink: Sink, record) -> list | None:
-    # Converting here, not at insert time, keeps a bad record from failing every retry of its batch.
-    try:
-        return sink.to_row(from_json(sink.record_type, json.loads(record.value)))
-    except (TypeError, ValueError) as e:
-        logger.error(
-            "Skipping malformed record %s[%s]@%s: %r", record.topic, record.partition, record.offset, e
-        )
-        return None

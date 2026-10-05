@@ -9,7 +9,7 @@ collector                     finds agents over mDNS, scrapes them
    │  Kafka: raw_metrics, machines
 Flink job                     scores each sample with MAD and EWMA
    │  Kafka: evaluations
-clickhouse-writer             writes each topic into its table
+clickhouse-writer             one thread per topic, each writes its table
    │  ClickHouse: metrics, evaluations, machines
 Grafana                       pick a host, see its series and anomalies
 ```
@@ -22,7 +22,7 @@ Grafana                       pick a host, see its series and anomalies
 | **collector** | Scrapes every agent every 10 s, fetches machine info every 5 min, and publishes both to Kafka. Gives each sample a `metric_id` (UUIDv7). | One place decides when and what to collect. `metric_id` follows the sample everywhere after this. |
 | **Kafka** | Topics `raw_metrics`, `machines`, `evaluations`. | Decouples collecting from scoring from storing: each can be down or replayed without losing data. *Learning goal.* |
 | **Flink job** | Keeps the last hour of each series (`machine_id`, `name`) and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. *Learning goal*: a plain Kafka consumer would do at this scale. |
-| **clickhouse-writer** | One consumer on all three topics. Batches rows per table and commits offsets only after every table is written. | One writer is simpler than one per table. Replays are safe because the tables deduplicate. |
+| **clickhouse-writer** | One process, one writer per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `TopicWriter` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its writer's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. |
 | **ClickHouse** | Tables `metrics`, `evaluations`, `machines`. Schema in `db/migrations`. | Fast time-range queries for Grafana, and a good fit for append-only data. |
 | **Grafana** | Dashboard `machine-usage-metrics.json`, provisioned on start. | Charts without writing a frontend. |
 

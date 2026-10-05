@@ -60,13 +60,14 @@ The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The 
 
 ### ClickHouse writer
 
+One process runs a writer per topic, each on its own thread; the variables below apply to all three.
+
 | Variable | Default | Compose |
 | --- | --- | --- |
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
 | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `raw_metrics` |
 | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` |
 | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
-| `KAFKA_CONSUMER_GROUP_ID` | `clickhouse-writer` | `clickhouse-writer` |
 | `WRITER_BATCH_SIZE` | `100` | unset |
 | `WRITER_BATCH_TIMEOUT_SECONDS` | `5.0` | unset |
 | `CLICKHOUSE_HOST` | `localhost` | `clickhouse` |
@@ -114,12 +115,14 @@ Every reader has its own consumer group. They all start at `earliest`, and each 
 
 | Process | Group id | Topic it reads |
 | --- | --- | --- |
-| ClickHouse writer | `clickhouse-writer` | `raw_metrics`, `evaluations`, `machines` |
+| ClickHouse writer (metrics) | `clickhouse-metrics-writer` | `raw_metrics` |
+| ClickHouse writer (evaluations) | `clickhouse-evaluations-writer` | `evaluations` |
+| ClickHouse writer (machines) | `clickhouse-machines-writer` | `machines` |
 | Anomaly detector | `anomaly-detector` | `raw_metrics` |
 
-The writer does not depend on the Flink job: `metrics` and `machines` fill even while the job is down.
+The writers do not depend on the Flink job: `metrics` and `machines` fill even while the job is down.
 
-The writer's group replaced the three per-table groups `clickhouse-metrics-writer`, `clickhouse-evaluations-writer`, and `clickhouse-machines-writer`. A new group starts at `earliest`, so on its first run it rewrites what Kafka still holds; `ReplacingMergeTree` collapses those rows.
+A second `clickhouse-writer` process shares each of these groups, so Kafka splits every topic's partitions between the two; more processes than partitions leave some idle. The groups replaced the single group `clickhouse-writer`. A new group starts at `earliest` unless it still has committed offsets, so on a first run it can rewrite what Kafka still holds; `ReplacingMergeTree` collapses those rows.
 
 `jobmanager` sets `restart-strategy.type: exponential-delay`. Without a restart strategy the job stops for good on the first error, including starting before the collector has created `raw_metrics`.
 
@@ -151,9 +154,9 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Kafka send failures.** When `KafkaRawMetricsRepository.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host and from the host-network collector, `kafka:9092` from bridge-network services.
 
-**`metrics` stays empty while raw samples are flowing.** The writer reads `raw_metrics` directly. Check its logs and that its group is `clickhouse-writer`, not a group another process also uses.
+**`metrics` stays empty while raw samples are flowing.** The writer reads `raw_metrics` directly. Check the writer logs and that its group is `clickhouse-metrics-writer`, not a group another process also uses.
 
-**Writer reprocesses the same batch.** Offsets commit only after `insert_batch` returns for every table in the flush. A ClickHouse error is logged as `Failed to write <table> batch to ClickHouse (attempt n/5)` and retried. After five failures the exception propagates and the process exits; Compose restarts it (`restart: unless-stopped`) and the uncommitted batch is read again. The replayed rows are inserted again and collapsed by `ReplacingMergeTree` on merge; query with `FINAL` to hide them before that.
+**Writer reprocesses the same batch.** Offsets commit only after `insert_batch` returns. A ClickHouse error is logged as `Failed to write <table> batch to ClickHouse (attempt n/5)` and retried. After five failures the exception propagates and the process exits; Compose restarts it (`restart: unless-stopped`) and the uncommitted batch is read again. The replayed rows are inserted again and collapsed by `ReplacingMergeTree` on merge; query with `FINAL` to hide them before that.
 
 **`Skipping malformed record` in a writer log.** The record is not valid JSON or lacks a required field. A metric or evaluation also needs a valid `metric_id`, an evaluation a non-empty `machine_id`, `metric_name`, and `algorithm`, and a machine a non-empty `machine_id` and a `last_boot` with a UTC offset. Records published before `metric_id` existed have none; they are skipped, not retried.
 

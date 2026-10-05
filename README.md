@@ -25,7 +25,7 @@ src/activityreporter/
   agent/             runs on every machine, serves /v1/metrics and /v1/machine
   collector/         scrapes agents, publishes to raw_metrics and machines
   anomaly_detector/  PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
-  clickhouse_writer/ one consumer, Kafka topic → ClickHouse table: raw_metrics → metrics,
+  clickhouse_writer/ one consumer per topic, Kafka topic → ClickHouse table: raw_metrics → metrics,
                      evaluations → evaluations, machines → machines
 tests/               mirrors src/activityreporter/
 ```
@@ -41,7 +41,7 @@ tests/               mirrors src/activityreporter/
 | `make down`             | stops the stack                                                      |
 | `make agent`            | runs the agent locally                                               |
 | `make collector`        | runs the collector locally                                           |
-| `make clickhouse-writer` | runs the ClickHouse writer locally                                  |
+| `make clickhouse-writer` | runs the ClickHouse writers locally                                 |
 | `make anomaly-detector` | runs the Flink job locally (creates `flink/.venv` with Python 3.11)  |
 | `make test`             | runs the tests                                                       |
 | `make smoke`            | checks a running stack end to end (`WAIT=300 make smoke` retries)    |
@@ -58,7 +58,7 @@ Interactive docs: `GET /` redirects to `/docs`.
 | Method | Path | Body |
 | --- | --- | --- |
 | `GET` | `/v1/health` | `{"status": "ok"}` |
-| `GET` | `/v1/machine` | `Machine` from `shared/machines.py` |
+| `GET` | `/v1/machine` | `Machine` from `shared/models/machine.py` |
 | `GET` | `/v1/metrics` | One snapshot of current gauges |
 
 `/v1/machine` fields: `machine_id`, `hostname`, `os` (lowercased `platform.system()`), `os_version`, `architecture`, `cores` (`0` when `psutil.cpu_count()` can't tell), `total_memory` and `total_disk` (bytes, disk of the root filesystem), `last_boot` (UTC ISO-8601), `observed_at` (epoch seconds when the agent answered). `machine_id` comes from `machineid.id()`. Only fields that rarely change are here; uptime is the `system.uptime` metric.
@@ -193,7 +193,7 @@ To tune the floors, count what they let through, for example `SELECT metric_name
 
 `EMWA` (`anomaly_detector/emwa.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
 
-Input rows follow `Metric` (`shared/metrics.py`) and output rows follow `Evaluation` (`shared/evaluations.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/repository.py` must name the same fields as those dataclasses or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
+Input rows follow `Metric` (`shared/models/metric.py`) and output rows follow `Evaluation` (`shared/models/evaluation.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/repository.py` must name the same fields as those dataclasses or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
 
 ### Evaluation record
 
@@ -220,17 +220,17 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 ## ClickHouse writers
 
-`clickhouse-writer` is one process with one Kafka consumer (group `clickhouse-writer`) subscribed to every sink's topic. A `Sink` in `clickhouse_writer/repository.py` names the table, its columns, the record dataclass, the row conversion, and the topic. A record is converted with the sink of the topic it came from:
+`clickhouse-writer` is one process that runs one writer per topic on its own thread, each with its own Kafka consumer and ClickHouse client, so each topic has its own offsets and its own batches. `TopicWriter` in `clickhouse_writer/service.py` is the abstract base: it polls, converts, batches, writes and commits. A subclass in `clickhouse_writer/writers.py` names the table, its columns, the record dataclass, the topic, and implements `to_row`. A record is converted by the writer of the topic it came from:
 
-| Sink | Topic variable | Default topic | Table |
-| --- | --- | --- | --- |
-| `METRICS` | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `metrics` |
-| `EVALUATIONS` | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` |
-| `MACHINES` | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
+| Writer | Topic variable | Default topic | Table | Group |
+| --- | --- | --- | --- | --- |
+| `MetricsWriter` | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `metrics` | `clickhouse-metrics-writer` |
+| `EvaluationsWriter` | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` | `clickhouse-evaluations-writer` |
+| `MachinesWriter` | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` | `clickhouse-machines-writer` |
 
-The topic variables are the ones the producers read, so a renamed topic is set once. `KAFKA_CONSUMER_GROUP_ID` overrides the group. Auto-commit is off. Offset reset is `earliest`. To write another topic, add a `Sink` to `SINKS`.
+The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To write another topic, subclass `TopicWriter` and add it to `WRITERS`. A writer that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
 
-Records are decoded as JSON into the sink's dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, an evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. Rows are batched per table. A flush happens when any table's batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush, and it writes every table with pending rows. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into the writer's record dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, an evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
 `ClickHouseRepository.insert_batch` writes each table over HTTP (`clickhouse-connect`), then `ClickHouseWriter` commits offsets. Offsets belong to the consumer, not a table, so the commit waits until every table in the flush is written; a failed insert leaves them uncommitted and the whole flush is replayed, including tables that were already written. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 

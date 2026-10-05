@@ -70,9 +70,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
-        reservations:
           memory: 2G
+        reservations:
+          memory: 512M
 
   migrate:
     image: migrate/migrate:v4.20.1
@@ -104,7 +104,7 @@ services:
     depends_on:
       - kafka
 
-  # One consumer for raw_metrics, evaluations and machines, each into its own table.
+  # One process, one consumer per topic (raw_metrics, evaluations, machines), each into its own table.
   clickhouse-writer:
     <<: *app
     container_name: clickhouse-writer
@@ -113,7 +113,6 @@ services:
       <<: *topics
       PYTHONUNBUFFERED: "1"
       KAFKA_CONNECTION_STRING: kafka:9092
-      KAFKA_CONSUMER_GROUP_ID: clickhouse-writer
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: "8123"
       CLICKHOUSE_DB: metrics

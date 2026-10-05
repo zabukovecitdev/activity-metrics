@@ -13,8 +13,7 @@ from pyflink.datastream.connectors.kafka import (
 )
 from pyflink.datastream.formats.json import JsonRowDeserializationSchema, JsonRowSerializationSchema
 
-from activityreporter.shared.models import Evaluation
-from activityreporter.shared.models import Metric
+from activityreporter.shared.models import Evaluation, Metric
 
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094")
 KAFKA_RAW_METRICS_TOPIC = os.environ.get("KAFKA_RAW_METRICS_TOPIC", "raw_metrics")

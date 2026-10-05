@@ -12,8 +12,7 @@ from urllib.parse import urljoin
 import httpx
 from kafka import KafkaProducer
 
-from activityreporter.shared.models import Machine
-from activityreporter.shared.models import Metric
+from activityreporter.shared.models import Machine, Metric
 
 CONNECT_TIMEOUT_SECONDS = 2
 READ_TIMEOUT_SECONDS = 2
