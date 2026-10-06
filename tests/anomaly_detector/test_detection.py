@@ -2,7 +2,7 @@ import pytest
 
 from activityreporter.anomaly_detector.detection import DEFAULT_DETECTORS, detectors_for, evaluate, is_scored
 from activityreporter.anomaly_detector.detectors import MadDetector
-from activityreporter.shared.evaluations import Evaluation
+from activityreporter.shared.models import Evaluation
 
 
 def build_metric(value: float, **overrides) -> dict:

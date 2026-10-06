@@ -1,28 +1,11 @@
-from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
 from activityreporter.agent import service
-from activityreporter.shared.machines import Machine
+from activityreporter.shared.models import Machine, MetricObservation, MetricsResponse
 
 router = APIRouter(prefix="/v1")
-
-
-@dataclass
-class MetricObservation:
-    name: str
-    type: str
-    unit: str
-    value: float
-    attributes: dict[str, str] | None = None
-
-
-@dataclass
-class MetricsResponse:
-    machine_id: str
-    timestamp: str
-    metrics: list[MetricObservation]
 
 
 @router.get("/health", tags=["health"])

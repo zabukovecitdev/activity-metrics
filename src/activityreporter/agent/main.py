@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -8,8 +9,7 @@ from starlette.responses import RedirectResponse
 from activityreporter.agent import api
 from activityreporter.agent.discovery import ServiceAdvertiser
 
-PORT = 8080
-
+PORT = int(os.environ.get("PORT", "8080"))
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):

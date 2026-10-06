@@ -12,8 +12,7 @@ from urllib.parse import urljoin
 import httpx
 from kafka import KafkaProducer
 
-from activityreporter.shared.machines import Machine
-from activityreporter.shared.metrics import Metric
+from activityreporter.shared.models import Machine, Metric
 
 CONNECT_TIMEOUT_SECONDS = 2
 READ_TIMEOUT_SECONDS = 2
@@ -40,7 +39,7 @@ class HttpAgentMetricsRepository:
         response.raise_for_status()
         return parse_machine(response.json())
 
-    async def __aenter__(self) -> HttpAgentMetricsRepository:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc) -> None:

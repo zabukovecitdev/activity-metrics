@@ -1,8 +1,7 @@
 import time
 
 from activityreporter.agent import repository
-from activityreporter.shared.machines import Machine
-from activityreporter.shared.metrics import Metric
+from activityreporter.shared.models import Machine, Metric
 
 
 async def collect_metrics() -> list[Metric]:
