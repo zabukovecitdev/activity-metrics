@@ -16,7 +16,6 @@ from activityreporter.collector.repository import (
 logger = logging.getLogger(__name__)
 
 SCRAPE_INTERVAL_SECONDS = 10
-# Machine info barely changes, so it's fetched on the first scrape of an endpoint and then this often.
 MACHINE_REFRESH_SECONDS = 300
 
 

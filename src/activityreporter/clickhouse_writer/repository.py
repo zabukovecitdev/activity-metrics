@@ -34,7 +34,7 @@ class ClickHouseRepository:
     def from_env(cls) -> ClickHouseRepository:
         return cls(
             host=os.environ.get("CLICKHOUSE_HOST", "localhost"),
-            port=int(os.environ.get("CLICKHOUSE_PORT", 8123)),
+            port=int(os.environ.get("CLICKHOUSE_PORT", "8123")),
             username=os.environ.get("CLICKHOUSE_USER", "user"),
             password=os.environ.get("CLICKHOUSE_PASSWORD", "password"),
             database=os.environ.get("CLICKHOUSE_DB", "metrics"),

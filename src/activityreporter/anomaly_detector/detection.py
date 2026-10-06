@@ -1,7 +1,11 @@
 from collections.abc import Mapping
 from typing import Any
 
-from activityreporter.anomaly_detector.detectors import Detector, EwmaDetector, MadDetector
+from activityreporter.anomaly_detector.detectors import (
+    Detector,
+    EwmaDetector,
+    MadDetector,
+)
 from activityreporter.shared.models import Evaluation
 
 # Detectors per metric. The floors are the smallest deviation worth flagging for that metric:
