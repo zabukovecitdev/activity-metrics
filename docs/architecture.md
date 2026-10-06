@@ -5,7 +5,7 @@ ActivityReporter collects CPU and memory metrics from my machines, scores every 
 ```
 agent (on each machine)       serves /v1/metrics and /v1/machine
    │  HTTP, every 10 s
-collector                     finds agents over mDNS, scrapes them
+collector                     scrapes the agents listed in collector.toml
    │  Kafka: raw_metrics, machines
 Flink job                     scores each sample with MAD and EWMA
    │  Kafka: evaluations
@@ -68,7 +68,3 @@ On purpose, until there's a reason:
 - **Anomaly episodes.** Each anomalous sample is its own row; consecutive ones aren't grouped into one event.
 - **Long-term storage and downsampling.** Everything older than 24 hours is gone.
 - **Authentication** on the agent, and secrets outside `docker-compose.yml`.
-
-## Known problems
-
-- **The collector doesn't always find agents.** mDNS needs the collector on the host network (`network_mode: host`). That only works with Docker Engine running directly on Linux, not with Docker Desktop, and a firewall can block it. Workaround: list agents in `COLLECTOR_ENDPOINTS`. Candidate fix: drop mDNS and always use that list.

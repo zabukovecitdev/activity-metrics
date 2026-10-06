@@ -91,16 +91,16 @@ services:
     <<: *app
     container_name: collector
     command: collector
-    # mDNS multicast doesn't cross the Docker bridge, so the collector joins the host's
-    # network to discover clients on the LAN. Service names like "kafka" don't resolve
-    # here, hence Kafka's host-published listener.
-    network_mode: host
+    # The agents it scrapes, read at startup: restart the collector after editing.
+    volumes:
+      - ./collector.toml:/app/collector.toml:ro
+    # Docker Desktop resolves host.docker.internal by itself, Docker Engine on Linux needs this.
+    extra_hosts:
+      - host.docker.internal:host-gateway
     environment:
       <<: *topics
       PYTHONUNBUFFERED: "1"
-      KAFKA_CONNECTION_STRING: localhost:9094
-      # Scraped in addition to clients discovered over mDNS, comma separated.
-      COLLECTOR_ENDPOINTS: ""
+      KAFKA_CONNECTION_STRING: kafka:9092
     depends_on:
       - kafka
 

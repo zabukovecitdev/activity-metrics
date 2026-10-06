@@ -2,7 +2,7 @@ import asyncio
 import logging
 import math
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 
 import httpx
 from kafka.errors import KafkaError
@@ -22,12 +22,12 @@ MACHINE_REFRESH_SECONDS = 300
 class Collector:
     def __init__(
         self,
-        list_endpoints: Callable[[], Iterable[str]],
+        endpoints: Iterable[str],
         agent_metrics: HttpAgentMetricsRepository,
         raw_metrics: KafkaRawMetricsRepository,
         machines: KafkaMachinesRepository,
     ):
-        self._list_endpoints = list_endpoints
+        self._endpoints = set(endpoints)
         self._agent_metrics = agent_metrics
         self._raw_metrics = raw_metrics
         self._machines = machines
@@ -39,7 +39,7 @@ class Collector:
             await asyncio.sleep(SCRAPE_INTERVAL_SECONDS)
 
     async def collect(self) -> None:
-        await asyncio.gather(*(self._scrape(endpoint) for endpoint in set(self._list_endpoints())))
+        await asyncio.gather(*(self._scrape(endpoint) for endpoint in self._endpoints))
 
     async def _scrape(self, endpoint: str) -> None:
         await self._refresh_machine(endpoint)

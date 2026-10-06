@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import tomllib
 import uuid
 from collections.abc import Iterable
 from dataclasses import asdict, fields
 from datetime import datetime
 from typing import Any, Self
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from kafka import KafkaProducer
@@ -18,6 +19,7 @@ CONNECT_TIMEOUT_SECONDS = 2
 READ_TIMEOUT_SECONDS = 2
 MAX_CONNECTIONS = 200
 SEND_TIMEOUT_SECONDS = 10
+METRICS_PATH = "/v1/metrics"
 MACHINE_PATH = "/v1/machine"
 
 
@@ -62,6 +64,32 @@ def parse_metrics(payload: dict[str, Any]) -> list[Metric]:
         )
         for m in payload["metrics"]
     ]
+
+
+def load_agents(path: str) -> list[str]:
+    """Base URLs of the agents to scrape, from `agents` in the TOML file at `path`.
+
+    Raises OSError if the file can't be read and ValueError, naming the problem, if it isn't a non-empty list of
+    http(s) URLs.
+    """
+    try:
+        with open(path, "rb") as f:
+            config = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"{path}: {e}") from e
+
+    agents = config.get("agents")
+    if not isinstance(agents, list) or not agents:
+        raise ValueError(f"{path}: agents must be a non-empty list of URLs")
+    for i, agent in enumerate(agents):
+        parsed = urlparse(agent) if isinstance(agent, str) else None
+        if parsed is None or parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError(f"{path}: agents[{i}] {agent!r} must start with http:// or https://")
+    return agents
+
+
+def metrics_url(agent_url: str) -> str:
+    return urljoin(agent_url, METRICS_PATH)
 
 
 def machine_url(metrics_url: str) -> str:

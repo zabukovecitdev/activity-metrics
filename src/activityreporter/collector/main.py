@@ -1,35 +1,40 @@
 import asyncio
 import logging
-import os
 import signal
+import sys
 
-from activityreporter.collector.discovery import ServiceDiscovery
 from activityreporter.collector.repository import (
     HttpAgentMetricsRepository,
     KafkaMachinesRepository,
     KafkaRawMetricsRepository,
+    load_agents,
+    metrics_url,
 )
 from activityreporter.collector.service import Collector
 
+# Relative to the working directory: the repo root locally, /app in the container.
+AGENTS_FILE = "collector.toml"
 
-def static_endpoints(raw: str) -> set[str]:
-    return {url.strip() for url in raw.split(",") if url.strip()}
 
-
-async def main() -> None:
+async def main(agents: list[str]) -> None:
     logging.basicConfig(level=logging.INFO)
-    endpoints = static_endpoints(os.environ.get("COLLECTOR_ENDPOINTS", ""))
-    logging.info("Static endpoints: %s", sorted(endpoints) or "none")
+    logging.info("Agents from %s: %s", AGENTS_FILE, agents)
+    endpoints = {metrics_url(agent) for agent in agents}
     with KafkaRawMetricsRepository.from_env() as raw_metrics, KafkaMachinesRepository.from_env() as machines:
-        async with ServiceDiscovery() as discovery, HttpAgentMetricsRepository() as agent_metrics:
-            collector = Collector(lambda: endpoints | discovery.urls(), agent_metrics, raw_metrics, machines)
+        async with HttpAgentMetricsRepository() as agent_metrics:
+            collector = Collector(endpoints, agent_metrics, raw_metrics, machines)
             await collector.run()
 
 
 def cli() -> None:
+    try:
+        agents = load_agents(AGENTS_FILE)
+    except (OSError, ValueError) as e:
+        sys.exit(f"Cannot load agents: {e}")
+
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
-        asyncio.run(main())
+        asyncio.run(main(agents))
     except KeyboardInterrupt:
         pass
 

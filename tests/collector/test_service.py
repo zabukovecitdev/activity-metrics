@@ -25,7 +25,7 @@ class RecordingRepository:
 
 
 def build_collector(agent_metrics, raw_metrics=None, machines=None) -> Collector:
-    return Collector(lambda: {ENDPOINT}, agent_metrics, raw_metrics or RecordingRepository(), machines or RecordingRepository())
+    return Collector({ENDPOINT}, agent_metrics, raw_metrics or RecordingRepository(), machines or RecordingRepository())
 
 
 async def collect_with_transport(transport: httpx.AsyncBaseTransport) -> list:

@@ -16,12 +16,11 @@ One package, `src/activityreporter/`, split by application. Every application ha
 | `api.py`        | entrypoint   | HTTP routes (agent only)                                      |
 | `service.py`    | service      | the application's logic                                       |
 | `repository.py` | data access  | every read/write of data, one `<Source><Data>Repository` each |
-| `discovery.py`  | infra        | mDNS advertising / browsing                                   |
 | `models.py`     | domain       | types used only by this application                           |
 
 ```
 src/activityreporter/
-  shared/            code used by more than one application: Metric, Machine, Evaluation, mDNS constants
+  shared/            code used by more than one application: Metric, Machine, Evaluation
   agent/             runs on every machine, serves /v1/metrics and /v1/machine
   collector/         scrapes agents, publishes to raw_metrics and machines
   anomaly_detector/  PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
@@ -96,25 +95,22 @@ Interactive docs: `GET /` redirects to `/docs`.
 
 `attributes` is reserved for extra series dimensions. Current samples leave it unset.
 
-## Discovery
+## Agents
 
-Agents advertise `_activityrep._tcp.local.` The service type is shorter than `_activityreporter` because RFC 6335 limits service names to 15 bytes.
+The collector scrapes the agents listed in `collector.toml` at the repo root, as base URLs:
 
-The instance name is `{hostname label}-{first 12 characters of the machine id with dashes removed}` on that type. The hostname label is the first DNS label, truncated to 40 characters. TXT properties:
+```toml
+agents = [
+    "http://host.docker.internal:8080",   # `make agent` on this machine
+    "http://192.168.1.20:8080",           # another machine on the LAN
+]
+```
 
-| Key | Value |
-| --- | --- |
-| `path` | `/v1/metrics` |
-| `machine_id` | `machineid.id()` |
-| `hostname` | `platform.node()` |
-
-The collector resolves IPv4 only. The scrape URL is `http://{address}:{port}{path}`, and `path` falls back to `/v1/metrics` when the TXT record omits it. Resolve timeout is 3 seconds. Address or port changes (for example after DHCP) update the URL. A removal cancels an in-flight resolve so a departing agent is not re-added.
-
-`COLLECTOR_ENDPOINTS` is a comma-separated list of full metrics URLs merged with the mDNS set on every scrape. Use it for agents that multicast cannot reach.
+It adds `/v1/metrics` and `/v1/machine` to each. The file is read once, at startup: after editing it, `docker compose restart collector`. The collector refuses to start, naming the problem, when the file is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs.
 
 ## Collector contract
 
-Every 10 seconds the collector GETs each current endpoint. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
+Every 10 seconds the collector GETs each agent's `/v1/metrics`. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
 
 A non-2xx response, a transport error, or a payload that fails parsing is logged and skipped. One bad agent does not cancel the other scrapes in that round.
 
