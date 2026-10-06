@@ -16,12 +16,21 @@ One package, `src/activityreporter/`, split by application. Every application ha
 | `api.py`        | entrypoint   | HTTP routes (agent only)                                      |
 | `service.py`    | service      | the application's logic                                       |
 | `repository.py` | data access  | every read/write of data, one `<Source><Data>Repository` each |
-| `discovery.py`  | infra        | mDNS advertising / browsing                                   |
-| `models.py`     | domain       | types used only by this application                           |
+| `discovery.py`  | infra        | mDNS advertising / browsing (agent and collector)             |
+
+Domain types live in `shared/models/`, one dataclass per file, re-exported from `shared/models/__init__.py`:
+
+| File | Type | Role |
+| --- | --- | --- |
+| `metric.py` | `Metric` | Kafka `raw_metrics` record. The collector assigns `metric_id`; the agent builds samples without one. |
+| `machine.py` | `Machine` | Body of `/v1/machine` and the `machines` topic. |
+| `evaluation.py` | `Evaluation` | Kafka `evaluations` record. |
+| `metric_observation.py` | `MetricObservation` | One gauge inside `/v1/metrics`. No `machine_id` or `metric_id`. |
+| `metrics_response.py` | `MetricsResponse` | Body of `/v1/metrics`: `machine_id`, ISO-8601 `timestamp`, and `metrics`. |
 
 ```
 src/activityreporter/
-  shared/            code used by more than one application: Metric, Machine, Evaluation, mDNS constants
+  shared/            models above, plus mDNS constants in `shared/discovery.py`
   agent/             runs on every machine, serves /v1/metrics and /v1/machine
   collector/         scrapes agents, publishes to raw_metrics and machines
   anomaly_detector/  PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
@@ -59,7 +68,7 @@ Interactive docs: `GET /` redirects to `/docs`.
 | --- | --- | --- |
 | `GET` | `/v1/health` | `{"status": "ok"}` |
 | `GET` | `/v1/machine` | `Machine` from `shared/models/machine.py` |
-| `GET` | `/v1/metrics` | One snapshot of current gauges |
+| `GET` | `/v1/metrics` | `MetricsResponse` from `shared/models/metrics_response.py` |
 
 `/v1/machine` fields: `machine_id`, `hostname`, `os` (lowercased `platform.system()`), `os_version`, `architecture`, `cores` (`0` when `psutil.cpu_count()` can't tell), `total_memory` and `total_disk` (bytes, disk of the root filesystem), `last_boot` (UTC ISO-8601), `observed_at` (epoch seconds when the agent answered). `machine_id` comes from `machineid.id()`. Only fields that rarely change are here; uptime is the `system.uptime` metric.
 
@@ -81,7 +90,7 @@ Interactive docs: `GET /` redirects to `/docs`.
 }
 ```
 
-`timestamp` is the sample time from `service.collect_metrics()` (`time.time()`), formatted as UTC ISO-8601.
+`timestamp` is the sample time from `service.collect_metrics()` (`time.time()`), formatted as UTC ISO-8601. Each element of `metrics` is a `MetricObservation`: the agent does not send `metric_id` or a per-series `machine_id`. The collector copies `machine_id` onto every `Metric` and assigns `metric_id`.
 
 | Name | Unit | When present |
 | --- | --- | --- |
@@ -98,7 +107,7 @@ Interactive docs: `GET /` redirects to `/docs`.
 
 ## Discovery
 
-Agents advertise `_activityrep._tcp.local.` The service type is shorter than `_activityreporter` because RFC 6335 limits service names to 15 bytes.
+Agents advertise `_activityrep._tcp.local.` The service type is shorter than `_activityreporter` because RFC 6335 limits service names to 15 bytes. The agent listens on `0.0.0.0` and advertises `PORT` (default `8080`); that advertised port is the one in the scrape URL.
 
 The instance name is `{hostname label}-{first 12 characters of the machine id with dashes removed}` on that type. The hostname label is the first DNS label, truncated to 40 characters. TXT properties:
 
@@ -228,11 +237,11 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 | `EvaluationsWriter` | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` | `clickhouse-evaluations-writer` |
 | `MachinesWriter` | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` | `clickhouse-machines-writer` |
 
-The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To write another topic, subclass `TopicWriter` and add it to `WRITERS`. A writer that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
+The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To write another topic, subclass `TopicWriter` and add it to `WRITERS`. A writer that raises stops the other two and the process exits, so Compose restarts all three. That includes a ClickHouse error after its five retries and any other error from its loop. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
 
-Records are decoded as JSON into the writer's record dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, an evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into the writer's record dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, an evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` sets a stop flag; the loop notices it after the current poll (timeout 1 second) and flushes a partial batch. An empty poll does not write or commit.
 
-`ClickHouseRepository.insert_batch` writes each table over HTTP (`clickhouse-connect`), then `ClickHouseWriter` commits offsets. Offsets belong to the consumer, not a table, so the commit waits until every table in the flush is written; a failed insert leaves them uncommitted and the whole flush is replayed, including tables that were already written. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
+`ClickHouseRepository.insert_batch` writes that writer's table over HTTP (`clickhouse-connect`). The writer then commits its own consumer's offsets. A Kafka consumer and a ClickHouse client are not thread-safe, so each writer has its own pair. A failed insert leaves only that topic uncommitted; the other writers keep the offsets they already committed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 
 ```sql
 SELECT machine_id, name, count() FROM metrics FINAL GROUP BY machine_id, name
@@ -240,7 +249,7 @@ SELECT machine_id, name, count() FROM metrics FINAL GROUP BY machine_id, name
 
 `None` maps are stored as empty maps and `None` bands as `NULL`. Epoch-second and ISO-8601 times are converted to UTC `datetime`s (`DateTime64(3, 'UTC')`).
 
-ClickHouse errors retry up to 5 times. Backoff is `backoff_base_seconds * 2^(attempt-1)` with a 1 second base (1s, 2s, 4s, 8s). The HTTP client holds no transaction, so the same client is reused.
+ClickHouse errors retry up to 5 times. Backoff is `backoff_base_seconds * 2^(attempt-1)` with a 1 second base (1s, 2s, 4s, 8s). Each writer's HTTP client holds no transaction, so that client is reused across its retries. `stop()` is not checked during those retries, so a `SIGTERM` that arrives mid-flush waits for them to finish or raise.
 
 ## Database
 

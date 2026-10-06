@@ -12,7 +12,7 @@ Setup, configuration, and failure modes for the agent, collector, Flink job, Cli
 | `8123`, `9000` | ClickHouse HTTP and native protocol. |
 | `8081` | Flink Web UI. |
 
-The `agent` Compose service is in the `dev` profile, so `make up` doesn't start it; `docker compose --profile dev up -d` does. It does not publish port `8080`. The collector uses `network_mode: host` because mDNS multicast does not cross the Docker bridge, and on the host network the DNS name `kafka` does not resolve. Its `KAFKA_CONNECTION_STRING` is therefore `localhost:9094`.
+The `agent` Compose service is in the `dev` profile, so `make up` doesn't start it; `docker compose --profile dev up -d` does. It listens on `PORT` (default `8080`) and does not publish that port. The collector uses `network_mode: host` because mDNS multicast does not cross the Docker bridge, and on the host network the DNS name `kafka` does not resolve. Its `KAFKA_CONNECTION_STRING` is therefore `localhost:9094`.
 
 An agent run on the host (`make agent`) advertises on the LAN, which that collector can discover. The Compose agent is on the bridge network with no published port, and `COLLECTOR_ENDPOINTS` defaults to empty, so this collector has no URL for it unless you set `COLLECTOR_ENDPOINTS` to an address the host network can reach.
 
@@ -31,6 +31,14 @@ Process commands from the `Makefile`:
 ## Environment
 
 Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are noted when they differ.
+
+### Agent
+
+| Variable | Default | Compose |
+| --- | --- | --- |
+| `PORT` | `8080` | unset |
+
+`PORT` is both the uvicorn listen port (`0.0.0.0`) and the port in the mDNS advertisement. A collector that discovers the agent scrapes that port. `make agent` uses the default. An invalid `PORT` (not an integer) raises `ValueError` at import, before the process serves anything.
 
 ### Collector
 
@@ -76,7 +84,9 @@ One process runs a writer per topic, each on its own thread; the variables below
 | `CLICKHOUSE_USER` | `user` | `user` |
 | `CLICKHOUSE_PASSWORD` | `password` | `password` |
 
-`CLICKHOUSE_PORT` is the HTTP port. From the host, ClickHouse is `localhost:8123` (HTTP) and `localhost:9000` (native) with the same database, user, and password. Inside Compose the writer waits until the `migrate` container exits successfully.
+`CLICKHOUSE_PORT` is the HTTP port, parsed with `int()`. From the host, ClickHouse is `localhost:8123` (HTTP) and `localhost:9000` (native) with the same database, user, and password. Inside Compose the writer waits until the `migrate` container exits successfully.
+
+Consumer groups are not settings. `TopicWriter.group_id()` returns `clickhouse-<table>-writer`: `clickhouse-metrics-writer`, `clickhouse-evaluations-writer`, and `clickhouse-machines-writer`. `KAFKA_CONSUMER_GROUP_ID` is not read; a leftover value does not change the groups.
 
 The topic names are set once, in the `x-topics` block of `docker-compose.yml`, and merged into every service that produces or consumes them. Services built from the root `Dockerfile` share the `x-app` block (`build`, `image`, `restart`).
 
@@ -148,7 +158,9 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 ## Troubleshooting
 
-**Collector logs no discovered clients.** The collector must share a multicast network with the agent. In Compose it uses the host network for that reason. Confirm the agent is on the host (or another host on the LAN) and that UDP 5353 is not blocked. Add a full URL to `COLLECTOR_ENDPOINTS` to bypass mDNS. The collector logs `Static endpoints: none` when that variable is empty.
+**Collector logs no discovered clients.** The collector must share a multicast network with the agent. In Compose it uses the host network for that reason. Confirm the agent is on the host (or another host on the LAN) and that UDP 5353 is not blocked. Add a full URL to `COLLECTOR_ENDPOINTS` to bypass mDNS. The collector logs `Static endpoints: none` when that variable is empty. The URL's port has to be the agent's `PORT`.
+
+**A discovered agent is scraped at 127.0.0.1.** The advertised address is `lan_ip()`: a UDP connect to `10.255.255.255:1`, then that socket's local address. If the connect raises `OSError`, or the socket has no local address, the agent advertises `127.0.0.1`. A collector on another machine then requests itself. Set `COLLECTOR_ENDPOINTS` to `http://<agent-lan-ip>:<port>/v1/metrics`.
 
 **Scrape errors every 10 seconds.** The collector logs `Failed to scrape metrics from ...` for transport and HTTP errors, and `Malformed response from ...` for a 200 body that is missing `machine_id`, `timestamp`, or a complete metric object. A trailing slash or a path other than `/v1/metrics` only works when the agent's TXT `path` matches the route you serve.
 
