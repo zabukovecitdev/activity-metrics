@@ -8,9 +8,18 @@ from abc import ABC, abstractmethod
 from dataclasses import fields
 from typing import Any, ClassVar
 
+from prometheus_client import Counter
+
 from activityreporter.clickhouse_writer.repository import ClickHouseRepository, KafkaRecordsRepository
 
 logger = logging.getLogger(__name__)
+
+ROWS_WRITTEN = Counter(
+    "activityreporter_writer_rows_written_total", "Rows written to ClickHouse", ["table"]
+)
+MALFORMED = Counter(
+    "activityreporter_writer_malformed_records_total", "Kafka records skipped as malformed", ["table"]
+)
 
 DEFAULT_BATCH_SIZE = 100
 DEFAULT_BATCH_TIMEOUT_SECONDS = 5.0
@@ -108,10 +117,12 @@ class TopicWriter(ABC):
             logger.error(
                 "Skipping malformed record %s[%s]@%s: %r", record.topic, record.partition, record.offset, e
             )
+            MALFORMED.labels(self.table).inc()
             return None
 
     def _flush(self, rows: list[list]) -> None:
         # A crash before the commit replays the batch, and ReplacingMergeTree collapses the duplicates.
         self._store.insert_batch(self.table, self.columns, rows)
         self._records.commit()
+        ROWS_WRITTEN.labels(self.table).inc(len(rows))
         logger.info("Wrote %d %s rows to ClickHouse and committed offsets", len(rows), self.table)

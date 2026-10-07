@@ -2,7 +2,12 @@ FLINK_PYTHON := flink/.venv/bin/python
 KAFKA_CONNECTOR_JAR := flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar
 KAFKA_CONNECTOR_URL := https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.2.0-1.19/flink-sql-connector-kafka-3.2.0-1.19.jar
 
-.PHONY: agent collector clickhouse-writer anomaly-detector smoke test up down migrate migrate-down migrate-new
+.PHONY: venv agent collector clickhouse-writer anomaly-detector smoke test up down migrate migrate-down migrate-new
+
+# Make can't activate the venv in your current shell; this opens a subshell with it active (exit to leave).
+venv:
+	uv sync
+	. .venv/bin/activate && exec $$SHELL
 
 agent:
 	uv run agent

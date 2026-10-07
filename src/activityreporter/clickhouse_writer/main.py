@@ -3,12 +3,17 @@ import signal
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from contextlib import ExitStack
 
+from prometheus_client import start_http_server
+
 from activityreporter.clickhouse_writer.repository import ClickHouseRepository, KafkaRecordsRepository
 from activityreporter.clickhouse_writer.writers import WRITERS
+
+METRICS_PORT = 8000
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    start_http_server(METRICS_PORT)
     with ExitStack() as stack:
         # A Kafka consumer and a ClickHouse client are not thread safe, so each writer gets its own pair.
         writers = [

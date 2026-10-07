@@ -3,6 +3,8 @@ import logging
 import signal
 import sys
 
+from prometheus_client import Counter, start_http_server
+
 from activityreporter.collector.repository import (
     HttpAgentMetricsRepository,
     KafkaMachinesRepository,
@@ -12,15 +14,25 @@ from activityreporter.collector.repository import (
 )
 from activityreporter.collector.service import Collector
 
+EXCEPTIONS = Counter(
+    "activityreporter_collector_exceptions_total",
+    "Total exceptions raised in the collector",
+)
 # Relative to the working directory: the repo root locally, /app in the container.
 AGENTS_FILE = "collector.toml"
+METRICS_PORT = 8000
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 async def main(agents: list[str]) -> None:
-    logging.basicConfig(level=logging.INFO)
-    logging.info("Agents from %s: %s", AGENTS_FILE, agents)
+    logger.info("Agents from %s: %s", AGENTS_FILE, agents)
     endpoints = {metrics_url(agent) for agent in agents}
-    with KafkaRawMetricsRepository.from_env() as raw_metrics, KafkaMachinesRepository.from_env() as machines:
+    with (
+        KafkaRawMetricsRepository.from_env() as raw_metrics,
+        KafkaMachinesRepository.from_env() as machines,
+    ):
         async with HttpAgentMetricsRepository() as agent_metrics:
             collector = Collector(endpoints, agent_metrics, raw_metrics, machines)
             await collector.run()
@@ -32,11 +44,12 @@ def cli() -> None:
     except (OSError, ValueError) as e:
         sys.exit(f"Cannot load agents: {e}")
 
+    start_http_server(METRICS_PORT)
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         asyncio.run(main(agents))
     except KeyboardInterrupt:
-        pass
+        EXCEPTIONS.inc()
 
 
 if __name__ == "__main__":

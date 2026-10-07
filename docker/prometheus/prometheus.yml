@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: collector
+    static_configs:
+      - targets: ["collector:8000"]
+  - job_name: clickhouse-writer
+    static_configs:
+      - targets: ["clickhouse-writer:8000"]

@@ -6,6 +6,7 @@ from collections.abc import Iterable
 
 import httpx
 from kafka.errors import KafkaError
+from prometheus_client import Counter
 
 from activityreporter.collector.repository import (
     HttpAgentMetricsRepository,
@@ -14,6 +15,12 @@ from activityreporter.collector.repository import (
 )
 
 logger = logging.getLogger(__name__)
+
+SCRAPES = Counter(
+    "activityreporter_collector_scrapes_total",
+    "Agent scrapes by outcome: ok, fetch_error or publish_error",
+    ["outcome"],
+)
 
 SCRAPE_INTERVAL_SECONDS = 10
 MACHINE_REFRESH_SECONDS = 300
@@ -47,15 +54,20 @@ class Collector:
             metrics = await self._agent_metrics.fetch(endpoint)
         except httpx.HTTPError as e:
             logger.error("Failed to scrape metrics from %s: %s", endpoint, e)
+            SCRAPES.labels("fetch_error").inc()
             return
         except (KeyError, TypeError, ValueError) as e:
             logger.error("Malformed response from %s: %r", endpoint, e)
+            SCRAPES.labels("fetch_error").inc()
             return
 
         try:
             await asyncio.to_thread(self._raw_metrics.publish, metrics)
         except KafkaError:
             logger.exception("Failed to publish metrics from %s to Kafka", endpoint)
+            SCRAPES.labels("publish_error").inc()
+        else:
+            SCRAPES.labels("ok").inc()
 
     async def _refresh_machine(self, endpoint: str) -> None:
         now = time.monotonic()
