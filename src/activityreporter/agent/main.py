@@ -1,13 +1,11 @@
 import asyncio
-import os
 
 import uvicorn
 from fastapi import FastAPI
 from starlette.responses import RedirectResponse
 
 from activityreporter.agent import api
-
-PORT = int(os.environ.get("PORT", "8080"))
+from activityreporter.shared.settings import AgentSettings
 
 app = FastAPI()
 app.include_router(api.router)
@@ -19,7 +17,7 @@ async def docs_redirect():
 
 
 async def main() -> None:
-    config = uvicorn.Config(app, host="0.0.0.0", port=PORT)
+    config = uvicorn.Config(app, host="0.0.0.0", port=AgentSettings().port)
     server = uvicorn.Server(config)
     await server.serve()
 

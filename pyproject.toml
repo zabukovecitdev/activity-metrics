@@ -23,6 +23,7 @@ dependencies = [
     "ipympl>=0.10.0",
     "streamlit>=1.64.0",
     "prometheus-client>=0.26.0",
+    "pydantic-settings>=2.15.0",
 ]
 
 [project.scripts]

@@ -9,6 +9,7 @@ import pytest
 from activityreporter.clickhouse_writer.service import TopicWriter
 from activityreporter.clickhouse_writer.writers import WRITERS, EvaluationsWriter, MachinesWriter, MetricsWriter
 from activityreporter.shared.models import Evaluation, Machine, Metric
+from activityreporter.shared.settings import KafkaSettings
 
 METRIC_ID = "01a0e974-dc94-74df-ae87-e0e6064b18ef"
 
@@ -94,9 +95,11 @@ def test_each_writer_has_its_own_group():
 def test_topics_follow_the_producers_environment(monkeypatch):
     monkeypatch.setenv("KAFKA_EVALUATIONS_TOPIC", "scores")
 
-    assert EvaluationsWriter.topic() == "scores"
-    assert MetricsWriter.topic() == "raw_metrics"
-    assert MachinesWriter.topic() == "machines"
+    kafka = KafkaSettings()
+
+    assert EvaluationsWriter.topic(kafka) == "scores"
+    assert MetricsWriter.topic(kafka) == "raw_metrics"
+    assert MachinesWriter.topic(kafka) == "machines"
 
 
 def test_metric_row_matches_columns():
