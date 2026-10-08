@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 async def main(agents: list[str]) -> None:
     logger.info("Agents from %s: %s", AGENTS_FILE, agents)
+
+    main_task = asyncio.current_task()
+    assert main_task is not None
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, main_task.cancel)
     endpoints = {metrics_url(agent) for agent in agents}
     with (
         KafkaRawMetricsRepository.from_env() as raw_metrics,
@@ -35,7 +39,10 @@ async def main(agents: list[str]) -> None:
     ):
         async with HttpAgentMetricsRepository() as agent_metrics:
             collector = Collector(endpoints, agent_metrics, raw_metrics, machines)
-            await collector.run()
+            try:
+                await collector.run()
+            except asyncio.CancelledError:
+                logger.info("SIGTERM received, shutting down")
 
 
 def cli() -> None:
@@ -45,7 +52,6 @@ def cli() -> None:
         sys.exit(f"Cannot load agents: {e}")
 
     start_http_server(METRICS_PORT)
-    signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         asyncio.run(main(agents))
     except KeyboardInterrupt:
