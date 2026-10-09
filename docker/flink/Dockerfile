@@ -19,4 +19,7 @@ RUN pip3 install --no-cache-dir apache-flink==1.19.1 pydantic-settings
 ADD https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.2.0-1.19/flink-sql-connector-kafka-3.2.0-1.19.jar /opt/flink/lib/
 RUN chmod 644 /opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar
 
+# Checkpoint volume mount point, writable by the unprivileged `flink` user.
+RUN mkdir /checkpoints && chown flink:flink /checkpoints
+
 WORKDIR /opt/flink

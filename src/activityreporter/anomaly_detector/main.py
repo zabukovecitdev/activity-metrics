@@ -3,7 +3,7 @@ from pathlib import Path
 
 from pyflink.common import Configuration
 from pyflink.common.typeinfo import Types
-from pyflink.datastream import StreamExecutionEnvironment
+from pyflink.datastream import CheckpointingMode, StreamExecutionEnvironment
 
 from activityreporter.anomaly_detector.repository import (
     EVALUATION_TYPE_INFO,
@@ -29,6 +29,12 @@ def main() -> None:
     # Python UDF workers otherwise start with whatever `python` is on PATH, which may lack pyflink.
     env.set_python_executable(sys.executable)
     env.set_parallelism(PARALLELISM)
+
+    # Without state.checkpoints.dir Flink keeps checkpoints on the JobManager heap; see docker-compose.yml.
+    env.enable_checkpointing(1000)
+    env.get_checkpoint_config().set_checkpointing_mode(CheckpointingMode.EXACTLY_ONCE)
+    env.get_checkpoint_config().set_min_pause_between_checkpoints(500)
+    env.get_checkpoint_config().set_checkpoint_timeout(60000)
 
     raw_metrics = env.from_source(kafka_raw_metrics_source(kafka), event_time_watermarks(), "Kafka Source")
     evaluations = raw_metrics \

@@ -152,8 +152,11 @@ services:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         restart-strategy.type: exponential-delay
+        state.checkpoints.dir: file:///checkpoints
+        execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
     volumes:
       - ./src:/opt/flink/src:ro
+      - flink_checkpoints:/checkpoints
     depends_on:
       kafka:
         condition: service_healthy
@@ -165,10 +168,13 @@ services:
     container_name: flink-taskmanager
     restart: unless-stopped
     command: taskmanager
+    volumes:
+      - flink_checkpoints:/checkpoints
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
         taskmanager.numberOfTaskSlots: 2
+        state.checkpoints.dir: file:///checkpoints
     depends_on:
       - jobmanager
 
@@ -207,5 +213,6 @@ services:
 
 volumes:
   clickhouse_data:
+  flink_checkpoints:
   grafana_data:
   prometheus_data:
