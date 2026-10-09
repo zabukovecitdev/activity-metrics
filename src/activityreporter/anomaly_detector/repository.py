@@ -5,6 +5,7 @@ from pyflink.common.time import Duration
 from pyflink.common.typeinfo import Types
 from pyflink.common.watermark_strategy import TimestampAssigner
 from pyflink.datastream.connectors.kafka import (
+    DeliveryGuarantee,
     KafkaOffsetsInitializer,
     KafkaRecordSerializationSchema,
     KafkaSink,
@@ -78,8 +79,13 @@ def kafka_raw_metrics_source(kafka: KafkaSettings) -> KafkaSource:
 
 
 def kafka_evaluations_sink(kafka: KafkaSettings) -> KafkaSink:
+    # Checkpoints store the source offset. DeliveryGuarantee.NONE, the default,
+    # completes a checkpoint without waiting for the producer, so a restore
+    # never recomputes evaluations Kafka did not ack. AT_LEAST_ONCE flushes on
+    # the checkpoint. A duplicate from a replay collapses in ReplacingMergeTree.
     return KafkaSink.builder() \
         .set_bootstrap_servers(kafka.connection_string) \
+        .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE) \
         .set_record_serializer(
             KafkaRecordSerializationSchema.builder()
             .set_topic(kafka.evaluations_topic)
