@@ -9,7 +9,7 @@ from activityreporter.clickhouse_writer.writers import WRITERS
 def test_main_runs_every_writer_and_stops_them_all_when_one_fails():
     running = [MagicMock(run=MagicMock(side_effect=RuntimeError("db is down")))]
     running += [MagicMock() for _ in WRITERS[1:]]
-    writer_types = [MagicMock(**{"from_env.return_value": writer}) for writer in running]
+    writer_types = [MagicMock(**{"from_settings.return_value": writer}) for writer in running]
 
     with patch.object(main, "WRITERS", writer_types), \
          patch.object(main, "KafkaRecordsRepository"), patch.object(main, "ClickHouseRepository"), \

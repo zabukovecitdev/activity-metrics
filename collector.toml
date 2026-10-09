@@ -1,0 +1,8 @@
+# Agents the collector scrapes, as base URLs; /v1/metrics and /v1/machine are added to each.
+# Read once at startup: after editing, `docker compose restart collector`.
+#
+# host.docker.internal is this machine as seen from the collector container, i.e. `make agent`.
+# Running the collector outside Docker (`make collector`)? Use http://localhost:8080 instead.
+agents = [
+    "http://host.docker.internal:8080",
+]

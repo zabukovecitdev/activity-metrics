@@ -6,6 +6,7 @@ from typing import Any
 
 from activityreporter.clickhouse_writer.service import TopicWriter
 from activityreporter.shared.models import Evaluation, Machine, Metric
+from activityreporter.shared.settings import KafkaSettings
 
 
 def utc(epoch_seconds: float) -> datetime:
@@ -15,13 +16,6 @@ def utc(epoch_seconds: float) -> datetime:
 def metric_uuid(metric_id: Any) -> uuid.UUID:
     # str() turns None or a number into an invalid hex string, so every bad id raises ValueError.
     return uuid.UUID(str(metric_id))
-
-
-def iso_utc(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        raise ValueError(f"{value!r} has no UTC offset")
-    return parsed.astimezone(timezone.utc)
 
 
 def non_empty(value: str) -> str:
@@ -34,8 +28,10 @@ class MetricsWriter(TopicWriter):
     table = "metrics"
     columns = ["metric_id", "machine_id", "name", "timestamp", "type", "unit", "value", "attributes"]
     record_type = Metric
-    topic_env = "KAFKA_RAW_METRICS_TOPIC"
-    default_topic = "raw_metrics"
+
+    @classmethod
+    def topic(cls, kafka: KafkaSettings) -> str:
+        return kafka.raw_metrics_topic
 
     def to_row(self, m: Metric) -> list:
         return [
@@ -49,8 +45,10 @@ class EvaluationsWriter(TopicWriter):
         "metric_id", "machine_id", "metric_name", "timestamp", "algorithm", "baseline", "lower", "upper", "is_anomaly",
     ]
     record_type = Evaluation
-    topic_env = "KAFKA_EVALUATIONS_TOPIC"
-    default_topic = "evaluations"
+
+    @classmethod
+    def topic(cls, kafka: KafkaSettings) -> str:
+        return kafka.evaluations_topic
 
     def to_row(self, e: Evaluation) -> list:
         return [
@@ -67,13 +65,15 @@ class MachinesWriter(TopicWriter):
         "last_boot", "observed_at",
     ]
     record_type = Machine
-    topic_env = "KAFKA_MACHINES_TOPIC"
-    default_topic = "machines"
+
+    @classmethod
+    def topic(cls, kafka: KafkaSettings) -> str:
+        return kafka.machines_topic
 
     def to_row(self, m: Machine) -> list:
         return [
-            non_empty(m.machine_id), m.hostname, m.os, m.os_version, m.architecture, int(m.cores), int(m.total_memory),
-            int(m.total_disk), iso_utc(m.last_boot), utc(m.observed_at),
+            m.machine_id, m.hostname, m.os, m.os_version, m.architecture, m.cores, m.total_memory, m.total_disk,
+            m.last_boot.astimezone(timezone.utc), utc(m.observed_at),
         ]
 
 

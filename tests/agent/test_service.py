@@ -42,5 +42,5 @@ async def test_describe_machine_reports_static_info_and_when_it_was_observed():
     assert machine.machine_id == "machine-123"
     assert machine.cores == 0
     assert machine.observed_at == 1790595000.0
-    assert datetime.fromisoformat(machine.last_boot) == datetime.fromtimestamp(1790590000.0, timezone.utc)
+    assert machine.last_boot == datetime.fromtimestamp(1790590000.0, timezone.utc)
     assert machine.total_memory > 0 and machine.total_disk > 0
