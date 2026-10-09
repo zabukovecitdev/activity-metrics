@@ -1,8 +1,10 @@
 import re
 
 import pytest
+from pydantic_core import to_jsonable_python
 
-from activityreporter.collector.repository import load_agents, metrics_url
+from activityreporter.collector.repository import load_agents, metrics_url, parse_machine
+from tests.clickhouse_writer.test_writers import build_machine
 
 
 def write(tmp_path, content: str) -> str:
@@ -48,3 +50,11 @@ def test_invalid_file_raises_a_value_error_naming_the_problem(tmp_path, content,
 def test_metrics_url_is_under_the_agent_url():
     assert metrics_url("http://192.168.1.20:8080") == "http://192.168.1.20:8080/v1/metrics"
     assert metrics_url("http://192.168.1.20:8080/") == "http://192.168.1.20:8080/v1/metrics"
+
+
+@pytest.mark.parametrize(
+    "overrides", [{"machine_id": ""}, {"cores": -1}, {"last_boot": "2026-10-01T06:30:00"}, {"hostname": None}],
+)
+def test_malformed_machine_raises_a_value_error(overrides):
+    with pytest.raises(ValueError):
+        parse_machine({**to_jsonable_python(build_machine()), **overrides})

@@ -1,7 +1,7 @@
-from dataclasses import asdict
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic_core import to_jsonable_python
 
 from activityreporter.clickhouse_writer.writers import MachinesWriter
 from tests.clickhouse_writer.test_writers import build_machine, kafka_record
@@ -12,7 +12,7 @@ class LoopBreak(Exception):
 
 
 def machine_record(machine_id: str) -> MagicMock:
-    return kafka_record({**asdict(build_machine()), "machine_id": machine_id})
+    return kafka_record({**to_jsonable_python(build_machine()), "machine_id": machine_id})
 
 
 def machine_row(machine_id: str) -> list:
