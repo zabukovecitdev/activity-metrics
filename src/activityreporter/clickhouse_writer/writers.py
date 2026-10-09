@@ -18,13 +18,6 @@ def metric_uuid(metric_id: Any) -> uuid.UUID:
     return uuid.UUID(str(metric_id))
 
 
-def iso_utc(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        raise ValueError(f"{value!r} has no UTC offset")
-    return parsed.astimezone(timezone.utc)
-
-
 def non_empty(value: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"expected a non-empty string, got {value!r}")
@@ -79,8 +72,8 @@ class MachinesWriter(TopicWriter):
 
     def to_row(self, m: Machine) -> list:
         return [
-            non_empty(m.machine_id), m.hostname, m.os, m.os_version, m.architecture, int(m.cores), int(m.total_memory),
-            int(m.total_disk), iso_utc(m.last_boot), utc(m.observed_at),
+            m.machine_id, m.hostname, m.os, m.os_version, m.architecture, m.cores, m.total_memory, m.total_disk,
+            m.last_boot.astimezone(timezone.utc), utc(m.observed_at),
         ]
 
 

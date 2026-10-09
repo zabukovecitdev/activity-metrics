@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import json
 import tomllib
 import uuid
 from collections.abc import Iterable
-from dataclasses import asdict, fields
 from datetime import datetime
 from typing import Any, Self
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from kafka import KafkaProducer
+from pydantic_core import to_json
 
 from activityreporter.shared.models import Machine, Metric
 from activityreporter.shared.settings import KafkaSettings
@@ -97,11 +96,8 @@ def machine_url(metrics_url: str) -> str:
 
 
 def parse_machine(payload: dict[str, Any]) -> Machine:
-    # Every field is required; an agent that doesn't send one is reported as malformed.
-    machine = Machine(**{f.name: payload[f.name] for f in fields(Machine)})
-    if not machine.machine_id:
-        raise ValueError("machine_id is empty")
-    return machine
+    # Every field is required; an agent that doesn't send one is reported as malformed (ValidationError is a ValueError).
+    return Machine.model_validate(payload)
 
 
 class KafkaJsonProducer:
@@ -111,14 +107,14 @@ class KafkaJsonProducer:
         self._topic = topic
         self._producer = KafkaProducer(
             bootstrap_servers=[bootstrap_servers],
-            value_serializer=lambda m: json.dumps(m).encode("utf-8"),
+            value_serializer=to_json,
             key_serializer=lambda k: k.encode("utf-8"),
             acks="all",
             retries=3,
         )
 
     def _publish(self, records: Iterable[Metric | Machine]) -> None:
-        queued = [self._producer.send(self._topic, value=asdict(r), key=r.machine_id) for r in records]
+        queued = [self._producer.send(self._topic, value=r, key=r.machine_id) for r in records]
         for future in queued:
             future.get(timeout=SEND_TIMEOUT_SECONDS)
 

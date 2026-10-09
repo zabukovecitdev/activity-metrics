@@ -8,6 +8,7 @@ from dataclasses import fields
 from typing import Any, ClassVar
 
 from prometheus_client import Counter
+from pydantic import BaseModel
 
 from activityreporter.clickhouse_writer.repository import ClickHouseRepository, KafkaRecordsRepository
 from activityreporter.shared.settings import (
@@ -34,6 +35,8 @@ def from_json(record_type: type, data: dict[str, Any]):
     """
     if not isinstance(data, dict):
         raise TypeError(f"expected a JSON object, got {type(data).__name__}")
+    if issubclass(record_type, BaseModel):
+        return record_type.model_validate(data)
     known = {f.name for f in fields(record_type)}
     return record_type(**{k: v for k, v in data.items() if k in known})
 

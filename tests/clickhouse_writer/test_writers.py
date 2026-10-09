@@ -1,10 +1,10 @@
 import json
 import uuid
-from dataclasses import asdict, fields
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic_core import to_jsonable_python
 
 from activityreporter.clickhouse_writer.service import TopicWriter
 from activityreporter.clickhouse_writer.writers import WRITERS, EvaluationsWriter, MachinesWriter, MetricsWriter
@@ -73,7 +73,7 @@ def parse(writer_type, payload):
 
 
 def row_of(writer_type, record) -> dict:
-    return dict(zip(writer_type.columns, parse(writer_type, asdict(record)), strict=True))
+    return dict(zip(writer_type.columns, parse(writer_type, to_jsonable_python(record)), strict=True))
 
 
 def test_topic_writer_is_abstract():
@@ -83,7 +83,7 @@ def test_topic_writer_is_abstract():
 
 @WRITER_CASES
 def test_columns_are_the_record_fields(writer_type, build):
-    assert set(writer_type.columns) == {f.name for f in fields(writer_type.record_type)}
+    assert set(writer_type.columns) == set(to_jsonable_python(build()))
 
 
 def test_each_writer_has_its_own_group():
@@ -138,7 +138,7 @@ def test_evaluation_values_are_stored_exactly_as_sent():
 
 @pytest.mark.parametrize("overrides", [{"machine_id": ""}, {"algorithm": ""}, {"baseline": "n/a"}])
 def test_parse_skips_invalid_evaluations(overrides):
-    assert parse(EvaluationsWriter, {**asdict(build_evaluation()), **overrides}) is None
+    assert parse(EvaluationsWriter, {**to_jsonable_python(build_evaluation()), **overrides}) is None
 
 
 def test_missing_attributes_are_stored_as_an_empty_map():
@@ -162,12 +162,12 @@ def test_machine_row_converts_both_times_to_utc():
     ids=["empty-id", "not-iso", "no-offset"],
 )
 def test_parse_skips_invalid_machines(overrides):
-    assert parse(MachinesWriter, {**asdict(build_machine()), **overrides}) is None
+    assert parse(MachinesWriter, {**to_jsonable_python(build_machine()), **overrides}) is None
 
 
 @WRITER_CASES
 def test_parse_ignores_unknown_fields(writer_type, build):
-    assert parse(writer_type, {**asdict(build()), "added_later": "x"}) == parse(writer_type, asdict(build()))
+    assert parse(writer_type, {**to_jsonable_python(build()), "added_later": "x"}) == parse(writer_type, to_jsonable_python(build()))
 
 
 @pytest.mark.parametrize(
@@ -176,7 +176,7 @@ def test_parse_ignores_unknown_fields(writer_type, build):
 )
 @pytest.mark.parametrize("metric_id", [None, "not-a-uuid", 5])
 def test_parse_skips_records_without_a_valid_metric_id(writer_type, build, metric_id):
-    assert parse(writer_type, {**asdict(build()), "metric_id": metric_id}) is None
+    assert parse(writer_type, {**to_jsonable_python(build()), "metric_id": metric_id}) is None
 
 
 @WRITER_CASES
