@@ -24,6 +24,7 @@ Grafana                       pick a host, see its series and anomalies
 | **Flink job** | Keeps the last hour of each series (`machine_id`, `name`) and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. *Learning goal*: a plain Kafka consumer would do at this scale. |
 | **clickhouse-writer** | One process, one writer per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `TopicWriter` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its writer's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. |
 | **ClickHouse** | Tables `metrics`, `evaluations`, `machines`. Schema in `db/migrations`. | Fast time-range queries for Grafana, and a good fit for append-only data. |
+| **Prometheus** | Scrapes `/metrics` on the collector and the ClickHouse writer every 15 s. Grafana has the datasource; no dashboard queries it yet. | Scrape outcomes, skipped records, and rows written, without reading each container's logs. |
 | **Grafana** | Dashboard `machine-usage-metrics.json`, provisioned on start. | Charts without writing a frontend. |
 
 ## Data model
@@ -55,15 +56,24 @@ To add an algorithm: write a class in `anomaly_detector/detectors.py` that retur
 
 - `make up` starts the stack; `make agent` runs an agent on this machine.
 - `WAIT=300 make smoke` checks every step end to end.
-- After a change to the Flink job: `docker compose restart jobmanager`.
+- After a change to the Flink job: `docker compose restart jobmanager`. That starts a new job; see [Checkpoints](#checkpoints).
 
 Details are in [README](../README.md) and [operations](operations.md).
+
+## Checkpoints
+
+The Flink job checkpoints every second, exactly-once, onto the `flink_checkpoints` volume (`file:///checkpoints`), mounted on both the jobmanager and the taskmanager. The files are kept when the job is cancelled.
+
+While that jobmanager process stays up, a task failure is restarted from the latest checkpoint, so each series' hour-long window survives.
+
+Replacing the jobmanager does not restore them. `docker compose restart jobmanager` starts a new job with empty windows, and that job reads `raw_metrics` from the beginning again. The checkpoint files stay on the volume; nothing in Compose passes one in as the restore path, and there is no JobManager high availability. `make up` also recreates Kafka, so those files' offsets belong to a log that is gone. A local `make anomaly-detector` sets no checkpoint directory, so its checkpoints stay inside the JobManager process and die with it.
+
+The intervals and the volume are in [operations](operations.md#checkpoints).
 
 ## Not doing yet
 
 On purpose, until there's a reason:
 
-- **Flink checkpointing.** A restarted job starts with empty windows and rescores from the start of the topic; the duplicates collapse.
 - **Alerting.** Anomalies are only visible on the dashboard.
 - **Anomaly episodes.** Each anomalous sample is its own row; consecutive ones aren't grouped into one event.
 - **Long-term storage and downsampling.** Everything older than 24 hours is gone.

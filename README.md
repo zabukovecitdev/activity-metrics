@@ -20,7 +20,7 @@ One package, `src/activityreporter/`, split by application. Every application ha
 
 ```
 src/activityreporter/
-  shared/            code used by more than one application: Metric, Machine, Evaluation
+  shared/            code used by more than one application: Metric, Machine, Evaluation, environment settings
   agent/             runs on every machine, serves /v1/metrics and /v1/machine
   collector/         scrapes agents, publishes to raw_metrics and machines
   anomaly_detector/  PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
@@ -42,13 +42,16 @@ tests/               mirrors src/activityreporter/
 | `make collector`        | runs the collector locally                                           |
 | `make clickhouse-writer` | runs the ClickHouse writers locally                                 |
 | `make anomaly-detector` | runs the Flink job locally (creates `flink/.venv` with Python 3.11)  |
+| `make venv`             | syncs `.venv` and opens a subshell with it active (`exit` to leave)  |
 | `make test`             | runs the tests                                                       |
 | `make smoke`            | checks a running stack end to end (`WAIT=300 make smoke` retries)    |
 
 In Docker, the Flink jobmanager runs in Application Mode: it starts the anomaly detection job itself, from
-`./src`. To run a code change, `docker compose restart jobmanager`. The Flink UI is at http://localhost:8081.
+`./src`. To run a code change, `docker compose restart jobmanager`. That starts a new job with empty detector
+windows; checkpoints restore state only when a task fails and the jobmanager process stays up. The Flink UI is
+at http://localhost:8081.
 
-Environment variables, Compose details, and troubleshooting are in [docs/operations.md](docs/operations.md).
+Environment variables, Prometheus counters, checkpoint limits, Compose details, and troubleshooting are in [docs/operations.md](docs/operations.md).
 
 ## HTTP API
 
@@ -106,7 +109,7 @@ agents = [
 ]
 ```
 
-It adds `/v1/metrics` and `/v1/machine` to each. The file is read once, at startup: after editing it, `docker compose restart collector`. The collector refuses to start, naming the problem, when the file is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs.
+It adds `/v1/metrics` and `/v1/machine` to each. Duplicate base URLs are scraped once. The file is read once, at startup: after editing it, `docker compose restart collector`. The collector refuses to start, naming the problem, when the file is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs.
 
 ## Collector contract
 
@@ -116,7 +119,7 @@ A non-2xx response, a transport error, or a payload that fails parsing is logged
 
 Required JSON fields: `machine_id` (string), `timestamp` (ISO-8601), `metrics` (array of objects with `name`, `type`, `unit`, `value`). `attributes` is optional. The shared timestamp is converted with `datetime.fromisoformat(...).timestamp()` and copied onto every `Metric`. `value` is cast with `float()`. Each `Metric` gets its own `metric_id`, a UUIDv7 string from `uuid.uuid7()`: the sample's identity from here on, in Kafka, in `metrics`, and in its `evaluations`. The agent does not send one.
 
-Each `Metric` is published to Kafka as JSON (`dataclasses.asdict`), keyed by `machine_id`. Producer settings: `acks=all`, `retries=3`, send timeout 10 seconds. The producer is flushed and closed on the way out of `main`, including `SIGTERM` (installed as the default interrupt handler).
+Each `Metric` and each `Machine` is published to Kafka as JSON (`pydantic_core.to_json`), keyed by `machine_id`. Producer settings: `acks=all`, `retries=3`, send timeout 10 seconds. On `SIGTERM` the collector cancels its main task and logs `SIGTERM received, shutting down`. The `with` blocks then flush and close the Kafka producers and close the HTTP client. Ctrl-C raises `KeyboardInterrupt` in `cli`, which increments `activityreporter_collector_exceptions_total` and skips that log line.
 
 Kafka record shape:
 
@@ -137,7 +140,7 @@ Kafka record shape:
 
 ### Machine info
 
-On the first scrape of an endpoint, and then every 300 seconds (`MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. A response missing a field, or with an empty `machine_id`, is logged as `Malformed machine info from ...`.
+On the first scrape of an endpoint, and then every 300 seconds (`MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. `last_boot` is ISO-8601 with a timezone (`2026-10-01T06:30:00Z` for UTC). A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. `Machine.model_validate` rejects a missing field, an empty `machine_id`, a negative `cores`, `total_memory`, or `total_disk`, or a `last_boot` with no timezone. That is logged as `Malformed machine info from ...`. Unknown JSON fields are ignored. Zero is allowed for the counts (`cores` is `0` when the agent cannot tell).
 
 ## Anomaly detection
 
@@ -226,7 +229,7 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To write another topic, subclass `TopicWriter` and add it to `WRITERS`. A writer that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
 
-Records are decoded as JSON into the writer's record dataclass and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, an evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into the writer's record type (`Machine.model_validate`, or the dataclass fields for `Metric` and `Evaluation`) and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, an evaluation with an empty `machine_id`, `metric_name`, or `algorithm`, or a machine that fails the same `Machine` checks as the collector, is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` sets a stop flag that the loop reads after the current poll, then flushes a partial batch. The flag is not read during the ClickHouse retries. An empty poll does not write or commit.
 
 `ClickHouseRepository.insert_batch` writes each table over HTTP (`clickhouse-connect`), then `ClickHouseWriter` commits offsets. Offsets belong to the consumer, not a table, so the commit waits until every table in the flush is written; a failed insert leaves them uncommitted and the whole flush is replayed, including tables that were already written. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 
@@ -296,6 +299,10 @@ Panels:
 - **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then a table of the last 200 anomalies with their values.
 
 Battery series are still collected when a machine has a battery, but the dashboard doesn't show them.
+
+## Monitoring
+
+The collector and the ClickHouse writer each serve Prometheus metrics on port 8000 (`/metrics`). Compose publishes the collector on host port 8000 and the writer on host port 8001. The counters, the Grafana datasource, and what a jobmanager restart does to detector state are in [docs/operations.md](docs/operations.md).
 
 ## Tests
 
