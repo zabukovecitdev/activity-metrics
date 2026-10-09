@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import fields
@@ -11,6 +10,12 @@ from typing import Any, ClassVar
 from prometheus_client import Counter
 
 from activityreporter.clickhouse_writer.repository import ClickHouseRepository, KafkaRecordsRepository
+from activityreporter.shared.settings import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_BATCH_TIMEOUT_SECONDS,
+    KafkaSettings,
+    WriterSettings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +25,6 @@ ROWS_WRITTEN = Counter(
 MALFORMED = Counter(
     "activityreporter_writer_malformed_records_total", "Kafka records skipped as malformed", ["table"]
 )
-
-DEFAULT_BATCH_SIZE = 100
-DEFAULT_BATCH_TIMEOUT_SECONDS = 5.0
 
 
 def from_json(record_type: type, data: dict[str, Any]):
@@ -40,16 +42,13 @@ class TopicWriter(ABC):
     """Writes one Kafka topic into one ClickHouse table: batches rows, then writes them before committing offsets.
 
     A subclass names the table, its columns, the record dataclass, the topic and how a record becomes a row.
-    The topic is read from the environment variable `topic_env`, the same one the producer of that topic uses,
-    and falls back to `default_topic`. Run several instances for one topic and Kafka splits its partitions
+    The topic comes from `KafkaSettings`, the same setting the producer of that topic uses. Run several instances for one topic and Kafka splits its partitions
     between them, because they share a consumer group.
     """
 
     table: ClassVar[str]
     columns: ClassVar[list[str]]
     record_type: ClassVar[type]
-    topic_env: ClassVar[str]
-    default_topic: ClassVar[str]
 
     def __init__(
         self,
@@ -65,22 +64,23 @@ class TopicWriter(ABC):
         self._running = True
 
     @classmethod
-    def topic(cls) -> str:
-        return os.environ.get(cls.topic_env, cls.default_topic)
+    @abstractmethod
+    def topic(cls, kafka: KafkaSettings) -> str:
+        """The Kafka topic this writer consumes."""
 
     @classmethod
     def group_id(cls) -> str:
         return f"clickhouse-{cls.table}-writer"
 
     @classmethod
-    def from_env(cls, records: KafkaRecordsRepository, store: ClickHouseRepository) -> TopicWriter:
+    def from_settings(
+        cls, records: KafkaRecordsRepository, store: ClickHouseRepository, settings: WriterSettings
+    ) -> TopicWriter:
         return cls(
             records,
             store,
-            batch_size=int(os.environ.get("WRITER_BATCH_SIZE", DEFAULT_BATCH_SIZE)),
-            batch_timeout_seconds=float(
-                os.environ.get("WRITER_BATCH_TIMEOUT_SECONDS", DEFAULT_BATCH_TIMEOUT_SECONDS)
-            ),
+            batch_size=settings.batch_size,
+            batch_timeout_seconds=settings.batch_timeout_seconds,
         )
 
     @abstractmethod

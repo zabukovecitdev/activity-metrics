@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import tomllib
 import uuid
 from collections.abc import Iterable
@@ -14,6 +13,7 @@ import httpx
 from kafka import KafkaProducer
 
 from activityreporter.shared.models import Machine, Metric
+from activityreporter.shared.settings import KafkaSettings
 
 CONNECT_TIMEOUT_SECONDS = 2
 READ_TIMEOUT_SECONDS = 2
@@ -135,11 +135,8 @@ class KafkaJsonProducer:
 
 class KafkaRawMetricsRepository(KafkaJsonProducer):
     @classmethod
-    def from_env(cls) -> KafkaRawMetricsRepository:
-        return cls(
-            bootstrap_servers=os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094"),
-            topic=os.environ.get("KAFKA_RAW_METRICS_TOPIC", "raw_metrics"),
-        )
+    def from_settings(cls, kafka: KafkaSettings) -> KafkaRawMetricsRepository:
+        return cls(bootstrap_servers=kafka.connection_string, topic=kafka.raw_metrics_topic)
 
     def publish(self, metrics: Iterable[Metric]) -> None:
         self._publish(metrics)
@@ -147,11 +144,8 @@ class KafkaRawMetricsRepository(KafkaJsonProducer):
 
 class KafkaMachinesRepository(KafkaJsonProducer):
     @classmethod
-    def from_env(cls) -> KafkaMachinesRepository:
-        return cls(
-            bootstrap_servers=os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094"),
-            topic=os.environ.get("KAFKA_MACHINES_TOPIC", "machines"),
-        )
+    def from_settings(cls, kafka: KafkaSettings) -> KafkaMachinesRepository:
+        return cls(bootstrap_servers=kafka.connection_string, topic=kafka.machines_topic)
 
     def publish(self, machine: Machine) -> None:
         self._publish([machine])

@@ -1,4 +1,3 @@
-import os
 from dataclasses import fields
 
 from pyflink.common import WatermarkStrategy
@@ -14,10 +13,8 @@ from pyflink.datastream.connectors.kafka import (
 from pyflink.datastream.formats.json import JsonRowDeserializationSchema, JsonRowSerializationSchema
 
 from activityreporter.shared.models import Evaluation, Metric
+from activityreporter.shared.settings import KafkaSettings
 
-KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_CONNECTION_STRING", "localhost:9094")
-KAFKA_RAW_METRICS_TOPIC = os.environ.get("KAFKA_RAW_METRICS_TOPIC", "raw_metrics")
-KAFKA_EVALUATIONS_TOPIC = os.environ.get("KAFKA_EVALUATIONS_TOPIC", "evaluations")
 KAFKA_CONSUMER_GROUP_ID = "anomaly-detector"
 MAX_OUT_OF_ORDERNESS = Duration.of_seconds(5)
 
@@ -68,10 +65,10 @@ def event_time_watermarks() -> WatermarkStrategy:
         .with_timestamp_assigner(EpochSecondsTimestampAssigner())
 
 
-def kafka_raw_metrics_source() -> KafkaSource:
+def kafka_raw_metrics_source(kafka: KafkaSettings) -> KafkaSource:
     return KafkaSource.builder() \
-        .set_bootstrap_servers(KAFKA_BOOTSTRAP_SERVERS) \
-        .set_topics(KAFKA_RAW_METRICS_TOPIC) \
+        .set_bootstrap_servers(kafka.connection_string) \
+        .set_topics(kafka.raw_metrics_topic) \
         .set_group_id(KAFKA_CONSUMER_GROUP_ID) \
         .set_starting_offsets(KafkaOffsetsInitializer.earliest()) \
         .set_value_only_deserializer(
@@ -80,12 +77,12 @@ def kafka_raw_metrics_source() -> KafkaSource:
         .build()
 
 
-def kafka_evaluations_sink() -> KafkaSink:
+def kafka_evaluations_sink(kafka: KafkaSettings) -> KafkaSink:
     return KafkaSink.builder() \
-        .set_bootstrap_servers(KAFKA_BOOTSTRAP_SERVERS) \
+        .set_bootstrap_servers(kafka.connection_string) \
         .set_record_serializer(
             KafkaRecordSerializationSchema.builder()
-            .set_topic(KAFKA_EVALUATIONS_TOPIC)
+            .set_topic(kafka.evaluations_topic)
             .set_value_serialization_schema(
                 JsonRowSerializationSchema.builder().with_type_info(EVALUATION_TYPE_INFO).build()
             ).build()

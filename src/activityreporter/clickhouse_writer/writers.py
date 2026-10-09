@@ -6,6 +6,7 @@ from typing import Any
 
 from activityreporter.clickhouse_writer.service import TopicWriter
 from activityreporter.shared.models import Evaluation, Machine, Metric
+from activityreporter.shared.settings import KafkaSettings
 
 
 def utc(epoch_seconds: float) -> datetime:
@@ -34,8 +35,10 @@ class MetricsWriter(TopicWriter):
     table = "metrics"
     columns = ["metric_id", "machine_id", "name", "timestamp", "type", "unit", "value", "attributes"]
     record_type = Metric
-    topic_env = "KAFKA_RAW_METRICS_TOPIC"
-    default_topic = "raw_metrics"
+
+    @classmethod
+    def topic(cls, kafka: KafkaSettings) -> str:
+        return kafka.raw_metrics_topic
 
     def to_row(self, m: Metric) -> list:
         return [
@@ -49,8 +52,10 @@ class EvaluationsWriter(TopicWriter):
         "metric_id", "machine_id", "metric_name", "timestamp", "algorithm", "baseline", "lower", "upper", "is_anomaly",
     ]
     record_type = Evaluation
-    topic_env = "KAFKA_EVALUATIONS_TOPIC"
-    default_topic = "evaluations"
+
+    @classmethod
+    def topic(cls, kafka: KafkaSettings) -> str:
+        return kafka.evaluations_topic
 
     def to_row(self, e: Evaluation) -> list:
         return [
@@ -67,8 +72,10 @@ class MachinesWriter(TopicWriter):
         "last_boot", "observed_at",
     ]
     record_type = Machine
-    topic_env = "KAFKA_MACHINES_TOPIC"
-    default_topic = "machines"
+
+    @classmethod
+    def topic(cls, kafka: KafkaSettings) -> str:
+        return kafka.machines_topic
 
     def to_row(self, m: Machine) -> list:
         return [

@@ -13,6 +13,7 @@ from activityreporter.collector.repository import (
     metrics_url,
 )
 from activityreporter.collector.service import Collector
+from activityreporter.shared.settings import KafkaSettings
 
 EXCEPTIONS = Counter(
     "activityreporter_collector_exceptions_total",
@@ -33,9 +34,10 @@ async def main(agents: list[str]) -> None:
     assert main_task is not None
     asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, main_task.cancel)
     endpoints = {metrics_url(agent) for agent in agents}
+    kafka = KafkaSettings()
     with (
-        KafkaRawMetricsRepository.from_env() as raw_metrics,
-        KafkaMachinesRepository.from_env() as machines,
+        KafkaRawMetricsRepository.from_settings(kafka) as raw_metrics,
+        KafkaMachinesRepository.from_settings(kafka) as machines,
     ):
         async with HttpAgentMetricsRepository() as agent_metrics:
             collector = Collector(endpoints, agent_metrics, raw_metrics, machines)
