@@ -3,7 +3,7 @@ from __future__ import annotations
 import tomllib
 import uuid
 from collections.abc import Iterable
-from typing import Any, Self
+from typing import Self
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -28,16 +28,11 @@ class HttpAgentMetricsRepository:
             limits=httpx.Limits(max_connections=MAX_CONNECTIONS, max_keepalive_connections=MAX_CONNECTIONS),
         )
 
-    async def fetch(self, endpoint: str) -> list[Metric]:
-        response = await self._client.get(endpoint)
+    async def fetch(self, url: str) -> str:
+        """The raw body at `url`, unparsed, so an invalid one can be dead-lettered as it was received."""
+        response = await self._client.get(url)
         response.raise_for_status()
-        return parse_metrics(response.json())
-
-    async def fetch_machine(self, endpoint: str) -> Machine:
-        """The machine behind the metrics URL `endpoint`, from the same agent's /v1/machine."""
-        response = await self._client.get(machine_url(endpoint))
-        response.raise_for_status()
-        return parse_machine(response.json())
+        return response.text
 
     async def __aenter__(self) -> Self:
         return self
@@ -46,9 +41,9 @@ class HttpAgentMetricsRepository:
         await self._client.aclose()
 
 
-def parse_metrics(payload: dict[str, Any]) -> list[Metric]:
-    # A response that doesn't match MetricsResponse is reported as malformed (ValidationError is a ValueError).
-    response = MetricsResponse.model_validate(payload)
+def parse_metrics(body: str) -> list[Metric]:
+    """One Metric per observation in an agent's /v1/metrics body. Raises ValidationError if it isn't a MetricsResponse."""
+    response = MetricsResponse.model_validate_json(body)
     timestamp = response.timestamp.timestamp()
     return [
         Metric(
@@ -91,16 +86,17 @@ def machine_url(metrics_url: str) -> str:
     return urljoin(metrics_url, MACHINE_PATH)
 
 
-def parse_machine(payload: dict[str, Any]) -> Machine:
-    # Every field is required; an agent that doesn't send one is reported as malformed (ValidationError is a ValueError).
-    return Machine.model_validate(payload)
+def parse_machine(body: str) -> Machine:
+    """The Machine in an agent's /v1/machine body. Every field is required; raises ValidationError if one is missing."""
+    return Machine.model_validate_json(body)
 
 
 class KafkaJsonProducer:
-    """JSON records to one Kafka topic, keyed by machine id."""
+    """JSON records to one Kafka topic, keyed by machine id, and invalid input to `<topic>_dlq`."""
 
     def __init__(self, bootstrap_servers: str, topic: str):
         self._topic = topic
+        self._dlq_topic = f"{topic}_dlq"
         self._producer = KafkaProducer(
             bootstrap_servers=[bootstrap_servers],
             value_serializer=to_json,
@@ -113,6 +109,11 @@ class KafkaJsonProducer:
         queued = [self._producer.send(self._topic, value=r, key=r.machine_id) for r in records]
         for future in queued:
             future.get(timeout=SEND_TIMEOUT_SECONDS)
+
+    def dead_letter(self, url: str, body: str, error: str) -> None:
+        # Keyed by the agent URL: an invalid body may have no machine id to key it by.
+        record = {"url": url, "error": error, "body": body}
+        self._producer.send(self._dlq_topic, value=record, key=url).get(timeout=SEND_TIMEOUT_SECONDS)
 
     def close(self) -> None:
         self._producer.flush(timeout=SEND_TIMEOUT_SECONDS)

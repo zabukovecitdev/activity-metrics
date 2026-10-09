@@ -112,7 +112,15 @@ It adds `/v1/metrics` and `/v1/machine` to each. The file is read once, at start
 
 Every 10 seconds the collector GETs each agent's `/v1/metrics`. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
 
-A non-2xx response, a transport error, or a payload that fails parsing is logged and skipped. One bad agent does not cancel the other scrapes in that round.
+A non-2xx response or a transport error is logged and skipped. One bad agent does not cancel the other scrapes in that round.
+
+Both responses, `/v1/metrics` and `/v1/machine`, are validated in one place, `Collector._receive`: the body is parsed with `model_validate_json`, so invalid JSON and a wrong shape fail the same way. An invalid response is logged, counted in `activityreporter_collector_invalid_responses_total{kind="metrics"|"machine"}`, and published as received to the dead letter topic of the topic it was meant for, `raw_metrics_dlq` or `machines_dlq`, keyed by the agent URL:
+
+```json
+{"url": "http://192.168.1.20:8080/v1/metrics", "error": "1 validation error for MetricsResponse ...", "body": "<the response body>"}
+```
+
+One invalid metric sends the whole response there. A failure to publish to the dead letter topic is logged and the scrape carries on.
 
 Required JSON fields: `machine_id` (string), `timestamp` (ISO-8601), `metrics` (array of objects with `name`, `type`, `unit`, `value`). `attributes` is optional. The response is validated against `MetricsResponse` (`shared/models/metrics_response.py`): `machine_id` must be non-empty and `timestamp` must carry a UTC offset. The shared timestamp is converted to epoch seconds and copied onto every `Metric`. Each `Metric` gets its own `metric_id`, a UUIDv7 string from `uuid.uuid7()`: the sample's identity from here on, in Kafka, in `metrics`, and in its `evaluations`. The agent does not send one.
 

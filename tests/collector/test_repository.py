@@ -1,3 +1,4 @@
+import json
 import re
 
 import pytest
@@ -57,7 +58,7 @@ def test_metrics_url_is_under_the_agent_url():
 )
 def test_malformed_machine_raises_a_value_error(overrides):
     with pytest.raises(ValueError):
-        parse_machine({**to_jsonable_python(build_machine()), **overrides})
+        parse_machine(json.dumps({**to_jsonable_python(build_machine()), **overrides}))
 
 
 METRICS_PAYLOAD = {
@@ -68,7 +69,7 @@ METRICS_PAYLOAD = {
 
 
 def test_metrics_are_parsed_from_the_agent_response():
-    [metric] = parse_metrics(METRICS_PAYLOAD)
+    [metric] = parse_metrics(json.dumps(METRICS_PAYLOAD))
     assert (metric.machine_id, metric.timestamp, metric.value) == ("m1", 1790836200.0, 15.5)
 
 
@@ -79,4 +80,10 @@ def test_metrics_are_parsed_from_the_agent_response():
 )
 def test_malformed_metrics_raise_a_value_error(overrides):
     with pytest.raises(ValueError):
-        parse_metrics({**METRICS_PAYLOAD, **overrides})
+        parse_metrics(json.dumps({**METRICS_PAYLOAD, **overrides}))
+
+
+@pytest.mark.parametrize("parse", [parse_metrics, parse_machine])
+def test_a_body_that_is_not_json_raises_a_value_error(parse):
+    with pytest.raises(ValueError):
+        parse("<html>502 Bad Gateway</html>")
