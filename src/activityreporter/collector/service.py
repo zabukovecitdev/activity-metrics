@@ -2,24 +2,34 @@ import asyncio
 import logging
 import math
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 import httpx
 from kafka.errors import KafkaError
 from prometheus_client import Counter
+from pydantic import ValidationError
 
 from activityreporter.collector.repository import (
     HttpAgentMetricsRepository,
+    KafkaJsonProducer,
     KafkaMachinesRepository,
     KafkaRawMetricsRepository,
+    machine_url,
+    parse_machine,
+    parse_metrics,
 )
 
 logger = logging.getLogger(__name__)
 
 SCRAPES = Counter(
     "activityreporter_collector_scrapes_total",
-    "Agent scrapes by outcome: ok, fetch_error or publish_error",
+    "Agent scrapes by outcome: ok, fetch_error (no valid response) or publish_error",
     ["outcome"],
+)
+INVALID_RESPONSES = Counter(
+    "activityreporter_collector_invalid_responses_total",
+    "Agent responses that failed validation and went to the dead letter topic, by kind: metrics or machine",
+    ["kind"],
 )
 
 SCRAPE_INTERVAL_SECONDS = 10
@@ -50,14 +60,8 @@ class Collector:
 
     async def _scrape(self, endpoint: str) -> None:
         await self._refresh_machine(endpoint)
-        try:
-            metrics = await self._agent_metrics.fetch(endpoint)
-        except httpx.HTTPError as e:
-            logger.error("Failed to scrape metrics from %s: %s", endpoint, e)
-            SCRAPES.labels("fetch_error").inc()
-            return
-        except (KeyError, TypeError, ValueError) as e:
-            logger.error("Malformed response from %s: %r", endpoint, e)
+        metrics = await self._receive("metrics", endpoint, parse_metrics, self._raw_metrics)
+        if metrics is None:
             SCRAPES.labels("fetch_error").inc()
             return
 
@@ -74,13 +78,8 @@ class Collector:
         if now - self._machine_refreshed_at.get(endpoint, -math.inf) < MACHINE_REFRESH_SECONDS:
             return
 
-        try:
-            machine = await self._agent_metrics.fetch_machine(endpoint)
-        except httpx.HTTPError as e:
-            logger.error("Failed to fetch machine info from %s: %s", endpoint, e)
-            return
-        except (KeyError, TypeError, ValueError) as e:
-            logger.error("Malformed machine info from %s: %r", endpoint, e)
+        machine = await self._receive("machine", machine_url(endpoint), parse_machine, self._machines)
+        if machine is None:
             return
 
         try:
@@ -90,3 +89,26 @@ class Collector:
             return
         # Only after a successful publish, so a failure is retried on the next scrape.
         self._machine_refreshed_at[endpoint] = now
+
+    async def _receive[T](self, kind: str, url: str, parse: Callable[[str], T], producer: KafkaJsonProducer) -> T | None:
+        """`parse` applied to the body at `url`, or None once the failure is logged.
+
+        The one place agent responses are validated: an invalid one is counted and sent to `producer`'s dead letter
+        topic as it was received.
+        """
+        try:
+            body = await self._agent_metrics.fetch(url)
+        except httpx.HTTPError as e:
+            logger.error("Failed to fetch %s from %s: %s", kind, url, e)
+            return None
+
+        try:
+            return parse(body)
+        except ValidationError as e:
+            logger.error("Invalid %s from %s: %s", kind, url, e)
+            INVALID_RESPONSES.labels(kind).inc()
+            try:
+                await asyncio.to_thread(producer.dead_letter, url, body, str(e))
+            except KafkaError:
+                logger.exception("Failed to dead-letter invalid %s from %s", kind, url)
+            return None

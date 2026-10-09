@@ -1,9 +1,10 @@
+import json
 import re
 
 import pytest
 from pydantic_core import to_jsonable_python
 
-from activityreporter.collector.repository import load_agents, metrics_url, parse_machine
+from activityreporter.collector.repository import load_agents, metrics_url, parse_machine, parse_metrics
 from tests.clickhouse_writer.test_writers import build_machine
 
 
@@ -57,4 +58,32 @@ def test_metrics_url_is_under_the_agent_url():
 )
 def test_malformed_machine_raises_a_value_error(overrides):
     with pytest.raises(ValueError):
-        parse_machine({**to_jsonable_python(build_machine()), **overrides})
+        parse_machine(json.dumps({**to_jsonable_python(build_machine()), **overrides}))
+
+
+METRICS_PAYLOAD = {
+    "machine_id": "m1",
+    "timestamp": "2026-10-01T06:30:00+00:00",
+    "metrics": [{"name": "system.cpu.utilization", "type": "gauge", "unit": "%", "value": "15.5"}],
+}
+
+
+def test_metrics_are_parsed_from_the_agent_response():
+    [metric] = parse_metrics(json.dumps(METRICS_PAYLOAD))
+    assert (metric.machine_id, metric.timestamp, metric.value) == ("m1", 1790836200.0, 15.5)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"machine_id": ""}, {"timestamp": "2026-10-01T06:30:00"}, {"timestamp": "yesterday"}, {"metrics": [{"name": "x"}]}],
+    ids=["empty-id", "no-offset", "not-iso", "incomplete-metric"],
+)
+def test_malformed_metrics_raise_a_value_error(overrides):
+    with pytest.raises(ValueError):
+        parse_metrics(json.dumps({**METRICS_PAYLOAD, **overrides}))
+
+
+@pytest.mark.parametrize("parse", [parse_metrics, parse_machine])
+def test_a_body_that_is_not_json_raises_a_value_error(parse):
+    with pytest.raises(ValueError):
+        parse("<html>502 Bad Gateway</html>")

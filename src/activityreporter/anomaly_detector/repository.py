@@ -11,6 +11,7 @@ from pyflink.datastream.connectors.kafka import (
     KafkaSource,
 )
 from pyflink.datastream.formats.json import JsonRowDeserializationSchema, JsonRowSerializationSchema
+from pydantic import BaseModel
 
 from activityreporter.shared.models import Evaluation, Metric
 from activityreporter.shared.settings import KafkaSettings
@@ -43,7 +44,10 @@ EVALUATION_FIELD_TYPES = {
 
 def row_type_info(record_type: type, field_types: dict):
     """Named row type in `record_type`'s field order, failing at import if the two drift apart."""
-    names = [field.name for field in fields(record_type)]
+    if issubclass(record_type, BaseModel):
+        names = list(record_type.model_fields)
+    else:
+        names = [field.name for field in fields(record_type)]
     if set(names) != set(field_types):
         raise RuntimeError(
             f"Field types {sorted(field_types)} are out of sync with {record_type.__name__} {sorted(names)}"

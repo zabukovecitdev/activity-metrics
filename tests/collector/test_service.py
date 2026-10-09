@@ -4,6 +4,7 @@ from unittest.mock import patch
 import httpx
 import machineid
 from kafka.errors import KafkaError
+from prometheus_client import REGISTRY
 
 from activityreporter.agent.main import app
 from activityreporter.collector import service
@@ -16,12 +17,18 @@ ENDPOINT = "http://agent:8080/v1/metrics"
 class RecordingRepository:
     def __init__(self, fail: bool = False):
         self.published = []
+        self.dead_letters = []
         self._fail = fail
 
     def publish(self, records):
         if self._fail:
             raise KafkaError("broker down")
         self.published.extend(records if isinstance(records, list) else [records])
+
+    def dead_letter(self, url, body, error):
+        if self._fail:
+            raise KafkaError("broker down")
+        self.dead_letters.append((url, body, error))
 
 
 def build_collector(agent_metrics, raw_metrics=None, machines=None) -> Collector:
@@ -121,3 +128,42 @@ async def test_agent_without_machine_endpoint_still_has_its_metrics_collected():
 
     assert raw_metrics.published
     assert machines.published == []
+
+
+def invalid_count(kind: str) -> float:
+    return REGISTRY.get_sample_value("activityreporter_collector_invalid_responses_total", {"kind": kind}) or 0.0
+
+
+async def collect_from(handler) -> tuple[RecordingRepository, RecordingRepository]:
+    raw_metrics, machines = RecordingRepository(), RecordingRepository()
+    async with HttpAgentMetricsRepository(httpx.AsyncClient(transport=httpx.MockTransport(handler))) as agent:
+        await build_collector(agent, raw_metrics=raw_metrics, machines=machines).collect()
+    return raw_metrics, machines
+
+
+async def test_invalid_metrics_and_machine_are_counted_and_dead_lettered_as_received():
+    before = invalid_count("metrics"), invalid_count("machine")
+    bodies = {"/v1/metrics": '{"machine_id": "m1", "metrics": [{"name": "x"}]}', "/v1/machine": "not json"}
+
+    raw_metrics, machines = await collect_from(lambda request: httpx.Response(200, text=bodies[request.url.path]))
+
+    assert (raw_metrics.published, machines.published) == ([], [])
+    [(metrics_dlq_url, metrics_body, metrics_error)] = raw_metrics.dead_letters
+    [(machine_dlq_url, machine_body, _)] = machines.dead_letters
+    assert (metrics_dlq_url, metrics_body) == (ENDPOINT, bodies["/v1/metrics"])
+    assert (machine_dlq_url, machine_body) == (machine_url(ENDPOINT), "not json")
+    assert "validation error" in metrics_error
+    assert (invalid_count("metrics"), invalid_count("machine")) == (before[0] + 1, before[1] + 1)
+
+
+async def test_an_unreachable_agent_is_not_dead_lettered():
+    raw_metrics, machines = await collect_from(lambda request: httpx.Response(503))
+
+    assert (raw_metrics.dead_letters, machines.dead_letters) == ([], [])
+
+
+async def test_a_failed_dead_letter_does_not_stop_the_scrape():
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text="not json"))
+    async with HttpAgentMetricsRepository(httpx.AsyncClient(transport=transport)) as agent:
+        failing = RecordingRepository(fail=True)
+        await build_collector(agent, raw_metrics=failing, machines=failing).collect()
