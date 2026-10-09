@@ -3,7 +3,6 @@ from __future__ import annotations
 import tomllib
 import uuid
 from collections.abc import Iterable
-from datetime import datetime
 from typing import Any, Self
 from urllib.parse import urljoin, urlparse
 
@@ -11,7 +10,7 @@ import httpx
 from kafka import KafkaProducer
 from pydantic_core import to_json
 
-from activityreporter.shared.models import Machine, Metric
+from activityreporter.shared.models import Machine, Metric, MetricsResponse
 from activityreporter.shared.settings import KafkaSettings
 
 CONNECT_TIMEOUT_SECONDS = 2
@@ -48,20 +47,17 @@ class HttpAgentMetricsRepository:
 
 
 def parse_metrics(payload: dict[str, Any]) -> list[Metric]:
-    machine_id = payload["machine_id"]
-    timestamp = datetime.fromisoformat(payload["timestamp"]).timestamp()
+    # A response that doesn't match MetricsResponse is reported as malformed (ValidationError is a ValueError).
+    response = MetricsResponse.model_validate(payload)
+    timestamp = response.timestamp.timestamp()
     return [
         Metric(
+            **m.model_dump(),
             timestamp=timestamp,
-            name=m["name"],
-            type=m["type"],
-            unit=m["unit"],
-            value=float(m["value"]),
-            machine_id=machine_id,
+            machine_id=response.machine_id,
             metric_id=str(uuid.uuid7()),
-            attributes=m.get("attributes"),
         )
-        for m in payload["metrics"]
+        for m in response.metrics
     ]
 
 

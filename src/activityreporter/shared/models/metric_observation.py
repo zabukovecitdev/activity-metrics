@@ -1,8 +1,7 @@
-from dataclasses import dataclass
+from pydantic import BaseModel
 
 
-@dataclass
-class MetricObservation:
+class MetricObservation(BaseModel):
     name: str
     type: str
     unit: str

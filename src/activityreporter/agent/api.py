@@ -23,7 +23,7 @@ async def get_metrics() -> MetricsResponse:
     metrics = await service.collect_metrics()
     return MetricsResponse(
         machine_id=metrics[0].machine_id,
-        timestamp=datetime.fromtimestamp(metrics[0].timestamp, timezone.utc).isoformat(),
+        timestamp=datetime.fromtimestamp(metrics[0].timestamp, timezone.utc),
         metrics=[
             MetricObservation(name=m.name, type=m.type, unit=m.unit, value=m.value, attributes=m.attributes)
             for m in metrics
