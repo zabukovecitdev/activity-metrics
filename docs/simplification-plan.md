@@ -57,7 +57,7 @@
 
 ### 1.4 Dead code  ⏱ 10 min
 - `MAD.is_anomaly()` and `EWMA.is_anomaly()` — only `.score()` is used by the detectors.
-- `collector/main.py` → `EXCEPTIONS` counter only increments on Ctrl-C. A metric that measures "the dev pressed Ctrl-C" is noise. Delete it.
+- `Metrics.EXCEPTIONS` (`activityreporter_collector_exceptions_total`) in `shared/observability/metrics.py` increments only from `collector/main.py` on Ctrl-C. The writer's `cli` swallows `KeyboardInterrupt` and does not touch it. A metric that measures "the dev pressed Ctrl-C" is noise. Delete the class attribute and that call; deleting only the call leaves a counter that stays at 0 on both `/metrics` endpoints.
 - **Done when:** removed, tests green. ☐
 
 ---
@@ -180,7 +180,7 @@ Pick at most **one**:
 
 ## ✅ Master checklist
 
-**Phase 1** ☐ 1.1 doc lie · ☐ 1.2 DLQ · ☐ 1.3 EWMA rename · ☐ 1.4 dead code
+**Phase 1** ☐ 1.1 doc lie · ☐ 1.2 DLQ · ☑ 1.3 EWMA rename · ☐ 1.4 dead code
 **Phase 2** ☐ 2.1 collapse detectors · ☐ 2.2 allowlist · ☐ 2.3 drop battery · ☐ 2.4 metric_id type · ☐ 2.5 async/blocking · ☐ 2.6 small stuff
 **Phase 3** ☐ 3.1 · ☐ 3.2 · ☐ 3.3 · ☐ 3.4
 **Phase 4** ☐ 4.1 README · ☐ 4.2 screenshot · ☐ 4.3 not-doing · ☐ 4.4 CI

@@ -170,3 +170,17 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 **Flink jobmanager keeps restarting.** In Application Mode the jobmanager exits when the job can't start, for example on a Python error in `main` or an import error in `./src`. `docker compose logs jobmanager` shows the traceback. A job that starts and then fails is restarted by Flink first, and shows up under *Exceptions* in the Web UI.
 
 **`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL.
+
+**A Prometheus series is 0 on the wrong process.** See [Process metrics](#process-metrics). The writer target lists collector counters at 0, and the collector lists writer counters at 0.
+
+## Process metrics
+
+Every counter is a class attribute of `Metrics` in `shared/observability/metrics.py`. `prometheus_client` registers them when that module is imported. Both `collector/main.py` and `clickhouse_writer/main.py` import it, then call `start_http_server(8000)`, so each process exposes the whole set. A counter stays at 0 on the process that never increments it. Summing one name across the two targets is still a single process's count.
+
+| Metric | Increments in | Stays at 0 when |
+| --- | --- | --- |
+| `activityreporter_collector_scrapes_total` | `collector/service.py`, once per `/v1/metrics` scrape. Label `outcome`: `ok`, `fetch_error` (transport error, non-2xx, or invalid body), or `publish_error`. | The scrape was `/v1/machine`, or you are looking at the writer. |
+| `activityreporter_collector_invalid_responses_total` | `Collector._receive`. Label `kind`: `metrics` or `machine`. HTTP 200 and `model_validate_json` raised `ValidationError`. A failed dead-letter publish does not undo the increment. | The failure was a transport error or a non-2xx response, or you are looking at the writer. |
+| `activityreporter_collector_exceptions_total` | `collector/main.py` `cli`, and only on `KeyboardInterrupt`. | `SIGTERM`, which logs `SIGTERM received, shutting down`. The writer's `cli` swallows Ctrl-C and does not increment it. |
+| `activityreporter_writer_rows_written_total` | `TopicWriter._flush`, after the ClickHouse insert and the Kafka offset commit. Label `table`. | The insert or the commit raised, or you are looking at the collector. |
+| `activityreporter_writer_malformed_records_total` | `TopicWriter._parse`, when a record is skipped. Label `table`. | The record joined a batch, or you are looking at the collector. |

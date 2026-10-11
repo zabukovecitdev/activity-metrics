@@ -20,7 +20,7 @@ One package, `src/activityreporter/`, split by application. Every application ha
 
 ```
 src/activityreporter/
-  shared/            code used by more than one application: Metric, Machine, Evaluation
+  shared/            Metric, Machine, Evaluation, and Prometheus counters (observability/metrics.py)
   agent/             runs on every machine, serves /v1/metrics and /v1/machine
   collector/         scrapes agents, publishes to raw_metrics and machines
   anomaly_detector/  PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
@@ -28,6 +28,8 @@ src/activityreporter/
                      evaluations → evaluations, machines → machines
 tests/               mirrors src/activityreporter/
 ```
+
+Prometheus counters are the `Metrics` class in `shared/observability/metrics.py`. The collector and the ClickHouse writer each import that class and call `start_http_server(8000)`, so each `/metrics` page lists every counter. A counter stays at 0 on the process that does not increment it. Which series move is in [docs/operations.md](docs/operations.md#process-metrics).
 
 ## Running
 
