@@ -110,7 +110,7 @@ It adds `/v1/metrics` and `/v1/machine` to each. The file is read once, at start
 
 ## Collector contract
 
-Every 10 seconds (`COLLECTOR_SCRAPE_INTERVAL_SECONDS`) the collector GETs each agent's `/v1/metrics`. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
+The collector GETs each agent's `/v1/metrics`, then sleeps `COLLECTOR_SCRAPE_INTERVAL_SECONDS` (default 10) before the next round. The first round starts immediately. A round finishes before that sleep, so a slow agent delays the next round. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
 
 A non-2xx response or a transport error is logged and skipped. One bad agent does not cancel the other scrapes in that round.
 
@@ -145,7 +145,9 @@ Kafka record shape:
 
 ### Machine info
 
-On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. A response missing a field, or with an empty `machine_id`, is logged as `Malformed machine info from ...`.
+On the first scrape of an endpoint, and again once `COLLECTOR_MACHINE_REFRESH_SECONDS` (default 300) have passed on a monotonic clock since the last successful publish, the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch is logged as `Failed to fetch machine from ...` and a failed publish as `Failed to publish machine info from ... to Kafka`. An invalid body is logged as `Invalid machine from ...`. Any of those is retried on the next scrape, and none of them stops that endpoint's metrics.
+
+Both intervals come from `CollectorSettings` in `shared/settings.py` and are read once, when `main` builds the collector. Each has to be a number greater than 0. Changing one means restarting the collector. The old module constants `SCRAPE_INTERVAL_SECONDS` and `MACHINE_REFRESH_SECONDS` are gone; those strings in the environment leave the defaults in place. Details and the failure mode are in [docs/operations.md](docs/operations.md).
 
 ## Anomaly detection
 
@@ -192,7 +194,7 @@ To add an algorithm, write a class with that shape and add it to `DEFAULT_DETECT
 - When the median absolute deviation is 0 (over half the values equal the median), the scale is `1.253314 × mean absolute deviation` instead (Iglewicz & Hoaglin). When that is 0 too, every value is equal and the score is 0. The score is always finite, so it can be encoded as JSON.
 - The scale has a floor, `max(min_deviation, min_relative × |median|) / THRESHOLD`, so a deviation smaller than `min_deviation` and than `min_relative` of the median never reaches the threshold. Without it, a series that barely moves has a tiny MAD and every step is flagged: memory in use changing by 32 KB on a 470 MB median scored 8, against a threshold of 3.5. Both default to 0, the textbook modified z-score.
 
-To tune the floors, count what they let through, for example `SELECT metric_name, algorithm, toDate(timestamp) AS day, countIf(is_anomaly) FROM evaluations FINAL GROUP BY ALL`. At one sample every 10 seconds a series has 8,640 a day.
+To tune the floors, count what they let through, for example `SELECT metric_name, algorithm, toDate(timestamp) AS day, countIf(is_anomaly) FROM evaluations FINAL GROUP BY ALL`. At the default 10-second scrape interval a series has 8,640 samples a day.
 - Returned numbers are Python `float`s; numpy scalars cannot be encoded by PyFlink's coders.
 
 `EMWA` (`anomaly_detector/emwa.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.

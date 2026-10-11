@@ -4,7 +4,7 @@ ActivityReporter collects CPU and memory metrics from my machines, scores every 
 
 ```
 agent (on each machine)       serves /v1/metrics and /v1/machine
-   │  HTTP, every 10 s
+   │  HTTP, default every 10 s
 collector                     scrapes the agents listed in collector.toml
    │  Kafka: raw_metrics, machines
 Flink job                     scores each sample with MAD and EWMA
@@ -19,7 +19,7 @@ Grafana                       pick a host, see its series and anomalies
 | Component | What it does | Why it exists |
 | --- | --- | --- |
 | **agent** | FastAPI app on every machine. `/v1/metrics` returns CPU, memory, uptime, and battery when there is one; `/v1/machine` returns hostname, OS, cores, memory, and disk. | Each machine only has to answer HTTP. It knows nothing about Kafka or the database. |
-| **collector** | Scrapes every agent every 10 s, fetches machine info every 5 min, and publishes both to Kafka. Gives each sample a `metric_id` (UUIDv7). | One place decides when and what to collect. `metric_id` follows the sample everywhere after this. |
+| **collector** | Scrapes every agent every `COLLECTOR_SCRAPE_INTERVAL_SECONDS` (default 10 s), fetches machine info every `COLLECTOR_MACHINE_REFRESH_SECONDS` (default 5 min), and publishes both to Kafka. Gives each sample a `metric_id` (UUIDv7). | One place decides when and what to collect. `metric_id` follows the sample everywhere after this. |
 | **Kafka** | Topics `raw_metrics`, `machines`, `evaluations`. | Decouples collecting from scoring from storing: each can be down or replayed without losing data. *Learning goal.* |
 | **Flink job** | Keeps the last hour of each series (`machine_id`, `name`) and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. *Learning goal*: a plain Kafka consumer would do at this scale. |
 | **clickhouse-writer** | One process, one writer per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `TopicWriter` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its writer's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. |

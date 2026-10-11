@@ -39,8 +39,16 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
 | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `raw_metrics` |
 | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
+| `COLLECTOR_SCRAPE_INTERVAL_SECONDS` | `10` | unset |
+| `COLLECTOR_MACHINE_REFRESH_SECONDS` | `300` | unset |
 
 The agents to scrape are not an environment variable but `collector.toml`; see [Local stack](#local-stack) and the README.
+
+`COLLECTOR_SCRAPE_INTERVAL_SECONDS` and `COLLECTOR_MACHINE_REFRESH_SECONDS` are the fields of `CollectorSettings` in `shared/settings.py` (`env_prefix="COLLECTOR_"`). `collector/main.py` builds that object once, after the Kafka producers, and the process keeps it until exit. Compose leaves both unset, so a container uses the defaults. Restart after a change: `docker compose restart collector`, or stop the local process and run `make collector` again.
+
+Each value has to be a number greater than 0 (`Field(..., gt=0)`). `0`, a negative number, and a non-number such as `10s` or an empty string raise `ValidationError` before the scrape loop starts. The error names the field, `scrape_interval_seconds` or `machine_refresh_seconds`. `inf` passes that check: `asyncio.sleep` then never returns, and machine info is published once. `SCRAPE_INTERVAL_SECONDS` and `MACHINE_REFRESH_SECONDS` are the old module constants; setting those names in the environment leaves the defaults in place.
+
+The scrape value is the pause after a round. `Collector.run` awaits `collect()` (every endpoint at once) and then `asyncio.sleep`. The first round starts immediately. A slow agent stretches the time until the next round. Machine info uses `time.monotonic()`, keyed by the metrics URL. The first scrape of an endpoint always fetches `/v1/machine`. A later round fetches again when the elapsed time is greater than or equal to `machine_refresh_seconds` since the last successful publish (the code skips the fetch while the elapsed time is `<` the setting). The check runs only at the start of a round, so the gap can be as long as one full round (the scrape plus the sleep) past the setting. A failed fetch or a failed publish does not move that timestamp, so every later round tries again until one publish succeeds.
 
 ### Anomaly detector
 
@@ -149,7 +157,9 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Collector exits with `Cannot load agents: ...`.** `collector.toml` is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs; the message names which. Compose restarts the collector, so the line repeats in `docker compose logs collector` until the file is fixed. If the message says `collector.toml` is a directory, Docker created it for the mount because the file was missing: delete it and restore the file from git. On start the collector logs `Agents from collector.toml: [...]`.
 
-**Scrape errors every 10 seconds.** The collector logs `Failed to scrape metrics from ...` for transport and HTTP errors, and `Malformed response from ...` for a 200 body that is missing `machine_id`, `timestamp`, or a complete metric object. An entry in `collector.toml` with a path, like `http://host:8080/v1/metrics`, still scrapes `/v1/metrics` at the root: list the base URL only.
+**Collector exits with `ValidationError` on `scrape_interval_seconds` or `machine_refresh_seconds`.** `COLLECTOR_SCRAPE_INTERVAL_SECONDS` or `COLLECTOR_MACHINE_REFRESH_SECONDS` is not a number greater than 0. The traceback names the field. Fix the value and restart the collector. Compose repeats the failure in `docker compose logs collector` until then (`restart: unless-stopped`). The producers are constructed before `CollectorSettings()`. A broker that cannot be reached raises `KafkaTimeoutError: Unable to bootstrap` after the client's `bootstrap_timeout_ms` (30 seconds by default), and the interval value is never checked.
+
+**Scrape errors every round (every 10 seconds at the default interval).** A transport error or a non-2xx response is logged as `Failed to fetch metrics from <url>`. A 200 body that fails `MetricsResponse` validation is `Invalid metrics from <url>`. An entry in `collector.toml` with a path, like `http://host:8080/v1/metrics`, still scrapes `/v1/metrics` at the root: list the base URL only.
 
 **Kafka send failures.** When `KafkaRawMetricsRepository.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host, `kafka:9092` from Compose services.
 
@@ -159,11 +169,11 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **`Skipping malformed record` in a writer log.** The record is not valid JSON or lacks a required field. A metric or evaluation also needs a valid `metric_id`, an evaluation a non-empty `machine_id`, `metric_name`, and `algorithm`, and a machine a non-empty `machine_id` and a `last_boot` with a UTC offset. Records published before `metric_id` existed have none; they are skipped, not retried.
 
-**`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing for a series until the last hour holds `min_points` samples of that `(machine_id, name)`: 11 for `ewma` and 20 for `mad`, about 2 and 3.5 minutes at the 10-second scrape interval. The series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, `system.memory.limit`, or `system.uptime`. Battery series are omitted entirely when the agent has no power supply. A job started before this change still publishes to `anomalies`; `make up` recreates the cluster with the new job.
+**`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing for a series until the last hour holds `min_points` samples of that `(machine_id, name)`: 11 for `ewma` and 20 for `mad`, about 2 and 3.5 minutes at the default 10-second scrape interval. A longer `COLLECTOR_SCRAPE_INTERVAL_SECONDS` stretches that wait. The series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, `system.memory.limit`, or `system.uptime`. Battery series are omitted entirely when the agent has no power supply. A job started before this change still publishes to `anomalies`; `make up` recreates the cluster with the new job.
 
 **Bands drop to 0 in a custom Grafana query.** A `LEFT JOIN` from `metrics` to `evaluations` fills unmatched rows with `0` unless the query ends with `SETTINGS join_use_nulls = 1`.
 
-**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after; check its log for `Failed to fetch machine info` or `Malformed machine info` (an agent older than this change has no `observed_at`), and that `clickhouse-writer` is running.
+**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and, after a successful publish, again once `COLLECTOR_MACHINE_REFRESH_SECONDS` (default 5 minutes) have passed. `Failed to fetch machine from <url>` is a transport error or a non-2xx response. `Invalid machine from <url>` is a 200 body that is not a `Machine`. Either one is retried on the next round. Check that `clickhouse-writer` is running.
 
 **Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The jobmanager leaves `KAFKA_CONNECTOR_JAR` unset so the image copy is the only one on the classpath.
 
