@@ -18,11 +18,9 @@ from activityreporter.collector.repository import (
     parse_machine,
     parse_metrics,
 )
+from activityreporter.shared.settings import CollectorSettings
 
 logger = logging.getLogger(__name__)
-
-SCRAPE_INTERVAL_SECONDS = 10
-MACHINE_REFRESH_SECONDS = 300
 
 
 class Collector:
@@ -32,17 +30,19 @@ class Collector:
         agent_metrics: HttpAgentMetricsRepository,
         raw_metrics: KafkaRawMetricsRepository,
         machines: KafkaMachinesRepository,
+        settings: CollectorSettings,
     ):
         self._endpoints = set(endpoints)
         self._agent_metrics = agent_metrics
         self._raw_metrics = raw_metrics
         self._machines = machines
+        self._settings = settings
         self._machine_refreshed_at: dict[str, float] = {}
 
     async def run(self) -> None:
         while True:
             await self.collect()
-            await asyncio.sleep(SCRAPE_INTERVAL_SECONDS)
+            await asyncio.sleep(self._settings.scrape_interval_seconds)
 
     async def collect(self) -> None:
         await asyncio.gather(*(self._scrape(endpoint) for endpoint in self._endpoints))
@@ -64,7 +64,7 @@ class Collector:
 
     async def _refresh_machine(self, endpoint: str) -> None:
         now = time.monotonic()
-        if now - self._machine_refreshed_at.get(endpoint, -math.inf) < MACHINE_REFRESH_SECONDS:
+        if now - self._machine_refreshed_at.get(endpoint, -math.inf) < self._settings.machine_refresh_seconds:
             return
 
         machine = await self._receive("machine", machine_url(endpoint), parse_machine, self._machines)

@@ -13,7 +13,7 @@ from activityreporter.collector.repository import (
     metrics_url,
 )
 from activityreporter.collector.service import Collector
-from activityreporter.shared.settings import KafkaSettings
+from activityreporter.shared.settings import CollectorSettings, KafkaSettings
 
 EXCEPTIONS = Counter(
     "activityreporter_collector_exceptions_total",
@@ -40,7 +40,7 @@ async def main(agents: list[str]) -> None:
         KafkaMachinesRepository.from_settings(kafka) as machines,
     ):
         async with HttpAgentMetricsRepository() as agent_metrics:
-            collector = Collector(endpoints, agent_metrics, raw_metrics, machines)
+            collector = Collector(endpoints, agent_metrics, raw_metrics, machines, CollectorSettings())
             try:
                 await collector.run()
             except asyncio.CancelledError:

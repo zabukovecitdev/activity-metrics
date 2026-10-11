@@ -110,7 +110,7 @@ It adds `/v1/metrics` and `/v1/machine` to each. The file is read once, at start
 
 ## Collector contract
 
-Every 10 seconds the collector GETs each agent's `/v1/metrics`. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
+Every 10 seconds (`COLLECTOR_SCRAPE_INTERVAL_SECONDS`) the collector GETs each agent's `/v1/metrics`. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
 
 A non-2xx response or a transport error is logged and skipped. One bad agent does not cancel the other scrapes in that round.
 
@@ -145,7 +145,7 @@ Kafka record shape:
 
 ### Machine info
 
-On the first scrape of an endpoint, and then every 300 seconds (`MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. A response missing a field, or with an empty `machine_id`, is logged as `Malformed machine info from ...`.
+On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. A response missing a field, or with an empty `machine_id`, is logged as `Malformed machine info from ...`.
 
 ## Anomaly detection
 

@@ -7,9 +7,9 @@ from kafka.errors import KafkaError
 from prometheus_client import REGISTRY
 
 from activityreporter.agent.main import app
-from activityreporter.collector import service
 from activityreporter.collector.repository import HttpAgentMetricsRepository, machine_url
 from activityreporter.collector.service import Collector
+from activityreporter.shared.settings import CollectorSettings
 
 ENDPOINT = "http://agent:8080/v1/metrics"
 
@@ -32,7 +32,7 @@ class RecordingRepository:
 
 
 def build_collector(agent_metrics, raw_metrics=None, machines=None) -> Collector:
-    return Collector({ENDPOINT}, agent_metrics, raw_metrics or RecordingRepository(), machines or RecordingRepository())
+    return Collector({ENDPOINT}, agent_metrics, raw_metrics or RecordingRepository(), machines or RecordingRepository(), CollectorSettings())
 
 
 async def collect_with_transport(transport: httpx.AsyncBaseTransport) -> list:
@@ -95,7 +95,7 @@ async def test_machine_info_is_refreshed_only_after_the_interval():
         collector = build_collector(agent, machines=machines)
         with patch("activityreporter.collector.service.time.monotonic", side_effect=lambda: clock[0]):
             await collector.collect()
-            clock[0] += service.MACHINE_REFRESH_SECONDS - 1
+            clock[0] += CollectorSettings().machine_refresh_seconds - 1
             await collector.collect()
             clock[0] += 1
             await collector.collect()

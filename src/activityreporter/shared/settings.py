@@ -1,6 +1,6 @@
 """Every environment variable the applications read, parsed and defaulted in one place."""
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_BATCH_SIZE = 100
@@ -32,6 +32,13 @@ class WriterSettings(BaseSettings):
 
     batch_size: int = DEFAULT_BATCH_SIZE
     batch_timeout_seconds: float = DEFAULT_BATCH_TIMEOUT_SECONDS
+
+
+class CollectorSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="COLLECTOR_")
+
+    scrape_interval_seconds: float = Field(10, gt=0)
+    machine_refresh_seconds: float = Field(300, gt=0)
 
 
 class AgentSettings(BaseSettings):
