@@ -11,6 +11,10 @@ Setup, configuration, and failure modes for the agent, collector, Flink job, Cli
 | `9094` | Kafka listener advertised as `localhost:9094` (`PLAINTEXT_HOST`). Containers on the Compose network use `kafka:9092`. |
 | `8123`, `9000` | ClickHouse HTTP and native protocol. |
 | `8081` | Flink Web UI. |
+| `8000` | Collector Prometheus endpoint (`/metrics`). |
+| `8001` | ClickHouse writer Prometheus endpoint. The process binds `8000` inside the container. |
+| `9090` | Prometheus UI. Targets are `collector:8000` and `clickhouse-writer:8000`. |
+| `3000` | Grafana. |
 
 The `agent` Compose service is in the `dev` profile, so `make up` doesn't start it; `docker compose --profile dev up -d` does. It does not publish port `8080`. The collector scrapes the agents in `collector.toml`, mounted read-only at `/app/collector.toml` and read once at startup; after editing it, `docker compose restart collector`. The default entry, `http://host.docker.internal:8080`, is an agent run on the host with `make agent`. Docker Desktop resolves `host.docker.internal` by itself; on Docker Engine the collector's `extra_hosts: host.docker.internal:host-gateway` does it. The Compose agent is on the same network as the collector, so add `http://agent:8080` to scrape it instead.
 
@@ -30,7 +34,15 @@ Process commands from the `Makefile`:
 
 ## Environment
 
-Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are noted when they differ.
+Every variable is parsed once in `shared/settings.py` (pydantic-settings). The name is the field with the class prefix: `KAFKA_`, `CLICKHOUSE_`, `WRITER_`. `AgentSettings.port` is `PORT`, with no prefix. Compose overrides are noted when they differ. A value of the wrong type exits at startup, and the validation error names the field (`port`, `batch_size`), not the environment variable.
+
+### Agent
+
+| Variable | Default | Compose |
+| --- | --- | --- |
+| `PORT` | `8080` | unset |
+
+The dev-profile agent does not publish `8080`. `make agent` binds `0.0.0.0` on `PORT`.
 
 ### Collector
 
@@ -104,13 +116,17 @@ The `jobmanager` service runs Flink in [Application Mode](https://nightlies.apac
 
 The cluster exists for this one job. There is nothing to submit or cancel:
 
-- **Code change:** `docker compose restart jobmanager`. The job starts again from the new code.
-- **Job fails:** the `exponential-delay` restart strategy restarts it inside the cluster. If it fails for good, the jobmanager exits and Compose starts it again (`restart: unless-stopped`).
-- **State:** checkpointing is off, so a restarted job starts with empty windows and reads `raw_metrics` from `earliest` again. The evaluations it writes again have the same key and collapse in `ReplacingMergeTree`.
+- **Code change:** `docker compose restart jobmanager`. The job starts again from the new code, with empty windows. See **State** below.
+- **Job fails:** the `exponential-delay` restart strategy restarts it inside the cluster and restores the last checkpoint, windows included. If it fails for good, the jobmanager exits and Compose starts it again (`restart: unless-stopped`), which is a new submission and does not restore that checkpoint.
+- **State:** `anomaly_detector/main.py` calls `enable_checkpointing(1000)` in `EXACTLY_ONCE` mode, with at least 500 ms between checkpoints and a 60 s timeout. Compose sets `state.checkpoints.dir=file:///checkpoints` on the jobmanager and the taskmanager (volume `flink_checkpoints`) and `execution.checkpointing.externalized-checkpoint-retention=RETAIN_ON_CANCELLATION` on the jobmanager, so cancelled checkpoints stay on the volume. `make anomaly-detector` sets no checkpoint directory, so a local job keeps checkpoints on the JobManager heap.
+
+The evaluations sink sets `DeliveryGuarantee.AT_LEAST_ONCE`. Flink requires checkpointing for that guarantee. On each checkpoint the sink waits until Kafka has acknowledged the outstanding records, and the Kafka source commits its offsets to the `anomaly-detector` group (the connector default; the job does not turn it off). A task restart while the jobmanager stays up restores window state and those source offsets. Evaluations written after the last completed checkpoint can be written again. The sink is not transactional. `ReplacingMergeTree` collapses the repeats on merge; until then, read with `FINAL`.
+
+`docker compose restart jobmanager` does not load the files on `flink_checkpoints`. The command is `standalone-job` with no restore path, so the new job has empty windows. Its source is `KafkaOffsetsInitializer.earliest()`, which a fresh submission uses even when the `anomaly-detector` group already has committed offsets, so it rereads `raw_metrics` from the start of the log. `make up` also recreates Kafka, which has no volume, so that log is empty.
 
 The taskmanager still runs as its own service and registers with the jobmanager at `jobmanager:6123`.
 
-Every reader has its own consumer group. They all start at `earliest`, and each must see every record on its topic; two readers sharing a group would split the partitions between them.
+Every reader has its own consumer group, and each must see every record on its topic; two readers sharing a group would split the partitions between them. The writers use offset reset `earliest`, so a group that already has committed offsets resumes and a new group reads from the start of the log. The anomaly detector's `earliest()` initializer does not resume from the group offset; see **State** above.
 
 | Process | Group id | Topic it reads |
 | --- | --- | --- |
@@ -139,6 +155,22 @@ The wheel contains `src/activityreporter`. Console scripts:
 
 The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent` (`dev` profile only), `collector`, and `clickhouse-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
 
+## Monitoring
+
+The collector and `clickhouse-writer` each call `start_http_server(8000)`. Compose publishes the collector on host `8000` and the writer on host `8001`. Prometheus `v3.5.0` listens on `9090` and scrapes `collector:8000` and `clickhouse-writer:8000` every 15 s (`docker/prometheus/prometheus.yml`). Grafana provisions a Prometheus datasource (uid `prometheus`, `http://prometheus:9090`). The dashboard queries ClickHouse only. `make smoke` does not check Prometheus.
+
+`make collector` and `make clickhouse-writer` on the host at the same time both try to bind `8000`. Stop one, or run them in Compose.
+
+| Metric | Labels | When it moves |
+| --- | --- | --- |
+| `activityreporter_collector_scrapes_total` | `outcome` = `ok`, `fetch_error`, or `publish_error` | One scrape of `/v1/metrics`. `fetch_error` is a transport error, a non-2xx response, or a body that fails validation. A `/v1/machine` fetch does not increment this counter. |
+| `activityreporter_collector_invalid_responses_total` | `kind` = `metrics` or `machine` | `Collector._receive` got HTTP 200 and `model_validate_json` raised `ValidationError`. Still incremented when the dead-letter publish fails. |
+| `activityreporter_collector_exceptions_total` | none | Ctrl-C in `collector/main.py`. `SIGTERM` logs `SIGTERM received, shutting down` and does not increment it. |
+| `activityreporter_writer_rows_written_total` | `table` | After that writer's ClickHouse insert and Kafka offset commit. |
+| `activityreporter_writer_malformed_records_total` | `table` | A record skipped in `_parse` before it joins a batch. |
+
+Dead-letter topics are not in this table. An invalid body is counted above and published to `<topic>_dlq` (`raw_metrics_dlq`, `machines_dlq`), keyed by the agent URL, as `{"url", "error", "body"}`. Compose does not create those topics. The Kafka service leaves `auto.create.topics.enable` at the broker default (`true`), so the topic appears on the first successful dead-letter send. No consumer in this stack reads them. A transport error or a non-2xx response is not dead-lettered.
+
 ## Smoke test
 
 `make smoke` runs `scripts/smoke-test.sh` against the running stack. It checks that the containers are up and `migrate` exited 0, that `raw_metrics`, `machines`, and `evaluations` have messages, that the Flink job `Anomaly Detection` is `RUNNING` (`/jobs/overview` on port 8081), that `metrics`, `machines`, and `evaluations` have rows from the last 10 minutes and every evaluation's `metric_id` is in `metrics`, and that Grafana, its ClickHouse datasource, and the dashboard respond. Each failure prints a hint.
@@ -149,7 +181,9 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Collector exits with `Cannot load agents: ...`.** `collector.toml` is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs; the message names which. Compose restarts the collector, so the line repeats in `docker compose logs collector` until the file is fixed. If the message says `collector.toml` is a directory, Docker created it for the mount because the file was missing: delete it and restore the file from git. On start the collector logs `Agents from collector.toml: [...]`.
 
-**Scrape errors every 10 seconds.** The collector logs `Failed to scrape metrics from ...` for transport and HTTP errors, and `Malformed response from ...` for a 200 body that is missing `machine_id`, `timestamp`, or a complete metric object. An entry in `collector.toml` with a path, like `http://host:8080/v1/metrics`, still scrapes `/v1/metrics` at the root: list the base URL only.
+**Scrape errors every 10 seconds.** A transport error or a non-2xx response is `Failed to fetch metrics from <url>`. A 200 body that is not a `MetricsResponse` is `Invalid metrics from <url>`: invalid JSON, an empty `machine_id`, a `timestamp` with no timezone offset, or a metric missing `name`, `type`, `unit`, or `value`. One bad metric dead-letters the whole body to `raw_metrics_dlq` and publishes no samples from that response. Both cases increment `activityreporter_collector_scrapes_total{outcome="fetch_error"}`; only the invalid body increments `activityreporter_collector_invalid_responses_total{kind="metrics"}`. An entry in `collector.toml` with a path, like `http://host:8080/v1/metrics`, still scrapes `/v1/metrics` at the root: list the base URL only.
+
+**`Failed to dead-letter invalid metrics from <url>`** (or `machine`). The body was counted and then dropped; the scrape loop continues. Check `KAFKA_CONNECTION_STRING` (`localhost:9094` from the host, `kafka:9092` from Compose). To read a topic that does exist: `docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic raw_metrics_dlq --from-beginning`.
 
 **Kafka send failures.** When `KafkaRawMetricsRepository.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host, `kafka:9092` from Compose services.
 
@@ -157,13 +191,17 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Writer reprocesses the same batch.** Offsets commit only after `insert_batch` returns. A ClickHouse error is logged as `Failed to write <table> batch to ClickHouse (attempt n/5)` and retried. After five failures the exception propagates and the process exits; Compose restarts it (`restart: unless-stopped`) and the uncommitted batch is read again. The replayed rows are inserted again and collapsed by `ReplacingMergeTree` on merge; query with `FINAL` to hide them before that.
 
-**`Skipping malformed record` in a writer log.** The record is not valid JSON or lacks a required field. A metric or evaluation also needs a valid `metric_id`, an evaluation a non-empty `machine_id`, `metric_name`, and `algorithm`, and a machine a non-empty `machine_id` and a `last_boot` with a UTC offset. Records published before `metric_id` existed have none; they are skipped, not retried.
+**`Skipping malformed record` in a writer log.** The record is not a JSON object, or `from_json` / `to_row` raised `TypeError` or `ValueError`. Pydantic's `ValidationError` is a `ValueError`, so a `Metric` or `Machine` with an empty `machine_id`, a bad type, or a `last_boot` with no timezone offset is skipped here too. A metric or evaluation also needs a `metric_id` that `uuid.UUID` accepts, and an evaluation needs a non-empty `machine_id`, `metric_name`, and `algorithm`. Unknown JSON keys are ignored. The record is not retried. The same line increments `activityreporter_writer_malformed_records_total`.
 
 **`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing for a series until the last hour holds `min_points` samples of that `(machine_id, name)`: 11 for `ewma` and 20 for `mad`, about 2 and 3.5 minutes at the 10-second scrape interval. The series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, `system.memory.limit`, or `system.uptime`. Battery series are omitted entirely when the agent has no power supply. A job started before this change still publishes to `anomalies`; `make up` recreates the cluster with the new job.
 
 **Bands drop to 0 in a custom Grafana query.** A `LEFT JOIN` from `metrics` to `evaluations` fills unmatched rows with `0` unless the query ends with `SETTINGS join_use_nulls = 1`.
 
-**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after; check its log for `Failed to fetch machine info` or `Malformed machine info` (an agent older than this change has no `observed_at`), and that `clickhouse-writer` is running.
+**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after a successful publish. `Failed to fetch machine from ...` is a transport error or a non-2xx response. `Invalid machine from ...` is a 200 body that is not a `Machine`: a missing field (including `observed_at`), an empty `machine_id`, a negative count, or a `last_boot` with no timezone offset. That body is on `machines_dlq`. Either failure leaves the hostname missing and does not stop metrics. Check that `clickhouse-writer` is running.
+
+**Prometheus target is down.** `http://localhost:9090/targets` should list `collector` and `clickhouse-writer` as UP. A down collector usually means it exited before `start_http_server`, most often `Cannot load agents` from a bad `collector.toml`, and Compose is restarting it. The writer target stays down while `migrate` has not exited 0, because the writer waits on that.
+
+**`ValidationError` as the process starts.** The value does not match the field in `shared/settings.py`. The error names the field, so `PORT=abc` on the agent and `CLICKHOUSE_PORT=abc` on the writer both say `port`; the process that logged it tells them apart. `WRITER_BATCH_SIZE=abc` names `batch_size`. A numeric string is accepted: `CLICKHOUSE_PORT=8123` is the integer `8123`.
 
 **Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The jobmanager leaves `KAFKA_CONNECTOR_JAR` unset so the image copy is the only one on the classpath.
 

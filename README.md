@@ -16,11 +16,12 @@ One package, `src/activityreporter/`, split by application. Every application ha
 | `api.py`        | entrypoint   | HTTP routes (agent only)                                      |
 | `service.py`    | service      | the application's logic                                       |
 | `repository.py` | data access  | every read/write of data, one `<Source><Data>Repository` each |
-| `models.py`     | domain       | types used only by this application                           |
+
+There is no per-application `models.py`. Shared types live in `shared/models/`, one type per file.
 
 ```
 src/activityreporter/
-  shared/            code used by more than one application: Metric, Machine, Evaluation
+  shared/models/     pydantic Metric, MetricObservation, MetricsResponse, Machine; Evaluation is a dataclass
   agent/             runs on every machine, serves /v1/metrics and /v1/machine
   collector/         scrapes agents, publishes to raw_metrics and machines
   anomaly_detector/  PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
@@ -122,9 +123,9 @@ Both responses, `/v1/metrics` and `/v1/machine`, are validated in one place, `Co
 
 One invalid metric sends the whole response there. A failure to publish to the dead letter topic is logged and the scrape carries on.
 
-Required JSON fields: `machine_id` (string), `timestamp` (ISO-8601), `metrics` (array of objects with `name`, `type`, `unit`, `value`). `attributes` is optional. The response is validated against `MetricsResponse` (`shared/models/metrics_response.py`): `machine_id` must be non-empty and `timestamp` must carry a UTC offset. The shared timestamp is converted to epoch seconds and copied onto every `Metric`. Each `Metric` gets its own `metric_id`, a UUIDv7 string from `uuid.uuid7()`: the sample's identity from here on, in Kafka, in `metrics`, and in its `evaluations`. The agent does not send one.
+Required JSON fields: `machine_id` (string), `timestamp` (ISO-8601), `metrics` (array of objects with `name`, `type`, `unit`, `value`). `attributes` is optional. The response is validated against `MetricsResponse` (`shared/models/metrics_response.py`): `machine_id` must be non-empty and `timestamp` must include a timezone offset (`AwareDatetime`). The agent sends UTC. The shared timestamp is converted to epoch seconds and copied onto every `Metric`. Each `Metric` gets its own `metric_id`, a UUIDv7 string from `uuid.uuid7()`: the sample's identity from here on, in Kafka, in `metrics`, and in its `evaluations`. The agent does not send one.
 
-Each `Metric` is published to Kafka as JSON (`pydantic_core.to_json`), keyed by `machine_id`. Producer settings: `acks=all`, `retries=3`, send timeout 10 seconds. The producer is flushed and closed on the way out of `main`, including `SIGTERM` (installed as the default interrupt handler).
+Each `Metric` is published to Kafka as JSON (`pydantic_core.to_json`), keyed by `machine_id`. Producer settings: `acks=all`, `retries=3`, send timeout 10 seconds. The producers are flushed and closed when `main` returns. `SIGTERM` cancels that task (`SIGTERM received, shutting down`). Ctrl-C raises `KeyboardInterrupt` in `cli` and increments `activityreporter_collector_exceptions_total`; it does not cancel the task.
 
 Kafka record shape:
 
@@ -145,7 +146,7 @@ Kafka record shape:
 
 ### Machine info
 
-On the first scrape of an endpoint, and then every 300 seconds (`MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. A response missing a field, or with an empty `machine_id`, is logged as `Malformed machine info from ...`.
+On the first scrape of an endpoint, and then every 300 seconds (`MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch is logged as `Failed to fetch machine from ...` and a failed publish as `Failed to publish machine info from ... to Kafka`. Either is retried on the next scrape, and neither stops that endpoint's metrics. An invalid body is logged as `Invalid machine from ...`, counted with `kind="machine"`, and published to `machines_dlq`. That path does not increment the scrape counter.
 
 ## Anomaly detection
 
@@ -197,7 +198,7 @@ To tune the floors, count what they let through, for example `SELECT metric_name
 
 `EMWA` (`anomaly_detector/emwa.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
 
-Input rows follow `Metric` (`shared/models/metric.py`) and output rows follow `Evaluation` (`shared/models/evaluation.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/repository.py` must name the same fields as those models or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
+Input rows follow `Metric` (`shared/models/metric.py`, a pydantic model) and output rows follow `Evaluation` (`shared/models/evaluation.py`, a dataclass). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/repository.py` must name the same fields as those types or the job raises `RuntimeError` at import. `row_type_info` reads `model_fields` for a pydantic model and dataclass fields otherwise. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
 
 ### Evaluation record
 

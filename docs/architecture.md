@@ -19,8 +19,9 @@ Grafana                       pick a host, see its series and anomalies
 | Component | What it does | Why it exists |
 | --- | --- | --- |
 | **agent** | FastAPI app on every machine. `/v1/metrics` returns CPU, memory, uptime, and battery when there is one; `/v1/machine` returns hostname, OS, cores, memory, and disk. | Each machine only has to answer HTTP. It knows nothing about Kafka or the database. |
-| **collector** | Scrapes every agent every 10 s, fetches machine info every 5 min, and publishes both to Kafka. Gives each sample a `metric_id` (UUIDv7). | One place decides when and what to collect. `metric_id` follows the sample everywhere after this. |
-| **Kafka** | Topics `raw_metrics`, `machines`, `evaluations`. | Decouples collecting from scoring from storing: each can be down or replayed without losing data. *Learning goal.* |
+| **collector** | Scrapes every agent every 10 s, fetches machine info every 5 min, and publishes both to Kafka. Gives each sample a `metric_id` (UUIDv7). An invalid agent body is dead-lettered instead of published. | One place decides when and what to collect. `metric_id` follows the sample everywhere after this. |
+| **Kafka** | Topics `raw_metrics`, `machines`, `evaluations`. Invalid agent bodies go to `raw_metrics_dlq` and `machines_dlq`; nothing reads those. | Decouples collecting from scoring from storing: each can be down or replayed without losing data. *Learning goal.* |
+| **Prometheus** | Scrapes the collector and the clickhouse-writer on port 8000 every 15 s. Grafana has a datasource; the dashboard does not query it. | Counters for scrapes, invalid agent bodies, and writer rows, without a panel yet. |
 | **Flink job** | Keeps the last hour of each series (`machine_id`, `name`) and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. *Learning goal*: a plain Kafka consumer would do at this scale. |
 | **clickhouse-writer** | One process, one writer per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `TopicWriter` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its writer's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. |
 | **ClickHouse** | Tables `metrics`, `evaluations`, `machines`. Schema in `db/migrations`. | Fast time-range queries for Grafana, and a good fit for append-only data. |
@@ -63,7 +64,7 @@ Details are in [README](../README.md) and [operations](operations.md).
 
 On purpose, until there's a reason:
 
-- **End-to-end exactly-once.** Flink checkpoints its window state and source offsets every second to a local volume, in `EXACTLY_ONCE` mode, which covers Flink's own state only. The Kafka sink is `AT_LEAST_ONCE`: it flushes to Kafka on every checkpoint, so a failure can repeat evaluations but not lose them. Repeats collapse in ClickHouse (`ReplacingMergeTree`). Exactly-once would need a transactional sink and `read_committed` consumers; not worth it while ClickHouse deduplicates anyway.
+- **End-to-end exactly-once.** Flink checkpoints its window state and source offsets every second to a local volume, in `EXACTLY_ONCE` mode, which covers Flink's own state only. The Kafka sink is `AT_LEAST_ONCE`: it flushes to Kafka on every checkpoint, so a failure can repeat evaluations but not lose them. Repeats collapse in ClickHouse (`ReplacingMergeTree`). Exactly-once would need a transactional sink and `read_committed` consumers; not worth it while ClickHouse deduplicates anyway. A task restart while the jobmanager stays up restores the windows. `docker compose restart jobmanager` starts a new job and does not load the retained checkpoint files, so the windows start empty and `raw_metrics` is read from the earliest offset.
 - **Alerting.** Anomalies are only visible on the dashboard.
 - **Anomaly episodes.** Each anomalous sample is its own row; consecutive ones aren't grouped into one event.
 - **Long-term storage and downsampling.** Everything older than 24 hours is gone.
