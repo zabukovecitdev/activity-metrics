@@ -12,3 +12,17 @@ class Metrics:
         "Agent responses that failed validation and went to the dead letter topic, by kind: metrics or machine",
         ["kind"],
     )
+    EXCEPTIONS = Counter(
+        "activityreporter_collector_exceptions_total",
+        "Total exceptions raised in the collector",
+    )
+    ROWS_WRITTEN = Counter(
+        "activityreporter_writer_rows_written_total",
+        "Rows written to ClickHouse",
+        ["table"],
+    )
+    MALFORMED = Counter(
+        "activityreporter_writer_malformed_records_total",
+        "Kafka records skipped as malformed",
+        ["table"],
+    )

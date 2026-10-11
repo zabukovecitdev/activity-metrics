@@ -51,6 +51,7 @@ class ClickHouseRepository:
 
         for attempt in range(1, self._max_retries + 1):
             try:
+                assert self._client is not None
                 self._client.insert(table, rows, column_names=columns)
                 return
             except ClickHouseError:

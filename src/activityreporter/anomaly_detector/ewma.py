@@ -11,7 +11,7 @@ class Score:
     scale: float
 
 
-class EMWA:
+class EWMA:
     ALPHA = 0.1
     # Don't flag anything until the variance has had time to build up.
     WARMUP_READINGS = 10

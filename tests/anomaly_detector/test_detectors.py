@@ -1,7 +1,7 @@
 import pytest
 
 from activityreporter.anomaly_detector.detectors import EwmaDetector, MadDetector
-from activityreporter.anomaly_detector.emwa import EMWA
+from activityreporter.anomaly_detector.ewma import EWMA
 from activityreporter.anomaly_detector.mad import MAD
 
 STEADY = [50.0, 52.0, 48.0, 51.0, 49.0] * 6
@@ -26,11 +26,11 @@ def test_mad_band_collapses_to_the_median_when_every_value_is_equal():
 
 def test_ewma_has_an_upper_band_only():
     result = EwmaDetector().evaluate(STEADY + [50.0])
-    score = EMWA().score(STEADY + [50.0])
+    score = EWMA().score(STEADY + [50.0])
 
     assert result.lower is None
     assert result.baseline == score.average
-    assert result.upper == pytest.approx(score.average + EMWA.THRESHOLD * score.scale)
+    assert result.upper == pytest.approx(score.average + EWMA.THRESHOLD * score.scale)
     assert not result.is_anomaly
 
 
@@ -57,7 +57,7 @@ STEADY_MEMORY = [1_000_000_000.0, 1_000_004_096.0, 999_995_904.0] * 10
 
 
 def test_ewma_default_floor_flags_a_tiny_rise_in_bytes():
-    assert EMWA().score(STEADY_MEMORY + [1_000_040_960.0]).score > EMWA.THRESHOLD
+    assert EWMA().score(STEADY_MEMORY + [1_000_040_960.0]).score > EWMA.THRESHOLD
 
 
 def test_ewma_relative_floor_ignores_rises_below_it():

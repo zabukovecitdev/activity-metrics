@@ -8,7 +8,6 @@ import httpx
 from kafka.errors import KafkaError
 from pydantic import ValidationError
 
-from activityreporter.collector.metrics import Metrics
 from activityreporter.collector.repository import (
     HttpAgentMetricsRepository,
     KafkaJsonProducer,
@@ -18,6 +17,7 @@ from activityreporter.collector.repository import (
     parse_machine,
     parse_metrics,
 )
+from activityreporter.shared.observability.metrics import Metrics
 from activityreporter.shared.settings import CollectorSettings
 
 logger = logging.getLogger(__name__)

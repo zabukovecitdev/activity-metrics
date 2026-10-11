@@ -33,9 +33,10 @@ class MetricsWriter(TopicWriter):
     def topic(cls, kafka: KafkaSettings) -> str:
         return kafka.raw_metrics_topic
 
-    def to_row(self, m: Metric) -> list:
+    def to_row(self, record: Metric) -> list:
         return [
-            metric_uuid(m.metric_id), m.machine_id, m.name, utc(m.timestamp), m.type, m.unit, m.value, m.attributes or {},
+            metric_uuid(record.metric_id), record.machine_id, record.name, utc(record.timestamp), record.type,
+            record.unit, record.value, record.attributes or {},
         ]
 
 

@@ -3,7 +3,7 @@ import logging
 import signal
 import sys
 
-from prometheus_client import Counter, start_http_server
+from prometheus_client import start_http_server
 
 from activityreporter.collector.repository import (
     HttpAgentMetricsRepository,
@@ -13,12 +13,9 @@ from activityreporter.collector.repository import (
     metrics_url,
 )
 from activityreporter.collector.service import Collector
+from activityreporter.shared.observability.metrics import Metrics
 from activityreporter.shared.settings import CollectorSettings, KafkaSettings
 
-EXCEPTIONS = Counter(
-    "activityreporter_collector_exceptions_total",
-    "Total exceptions raised in the collector",
-)
 # Relative to the working directory: the repo root locally, /app in the container.
 AGENTS_FILE = "collector.toml"
 METRICS_PORT = 8000
@@ -57,7 +54,7 @@ def cli() -> None:
     try:
         asyncio.run(main(agents))
     except KeyboardInterrupt:
-        EXCEPTIONS.inc()
+        Metrics.EXCEPTIONS.inc()
 
 
 if __name__ == "__main__":

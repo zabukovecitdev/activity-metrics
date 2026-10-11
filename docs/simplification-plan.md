@@ -50,14 +50,13 @@
   - OR implement: on publish failure → send to the DLQ. Only if you can explain what consumes the DLQ. You can't yet, so delete.
 - **Done when:** `git diff` is clean of dead fields. ☐
 
-### 1.3 Typo that will be spotted: `EMWA` vs `EWMA`  ⏱ 15 min
-- Class `EMWA`, file `emwa.py`, notebook `emwa.ipynb`, but the detector is `EwmaDetector` and the algorithm name stored in ClickHouse is `"ewma"`.
-- Exponentially Weighted Moving Average = **EWMA**. The typo says "didn't proofread".
-- **Do:** rename file → `ewma.py`, class → `EWMA`, update imports, tests, notebook filename, `experiments/emwa_app.py`, docs (`grep -ri emwa`).
-- **Done when:** `grep -ri emwa .` returns nothing (ignore git history) and `make test` is green. ☐
+### 1.3 Typo that will be spotted: letter-swap vs `EWMA`  ⏱ 15 min
+- Class/file/notebook had M and W swapped; detector and ClickHouse already used `"ewma"`.
+- Exponentially Weighted Moving Average = **EWMA**.
+- **Done.** Renamed to `EWMA` / `ewma.py` / `ewma.ipynb` / `ewma_app.py`; imports, tests, docs updated. ☑
 
 ### 1.4 Dead code  ⏱ 10 min
-- `MAD.is_anomaly()` and `EMWA.is_anomaly()` — only `.score()` is used by the detectors.
+- `MAD.is_anomaly()` and `EWMA.is_anomaly()` — only `.score()` is used by the detectors.
 - `collector/main.py` → `EXCEPTIONS` counter only increments on Ctrl-C. A metric that measures "the dev pressed Ctrl-C" is noise. Delete it.
 - **Done when:** removed, tests green. ☐
 
@@ -122,7 +121,7 @@ Create `docs/decisions.md`. Format per entry: **Question → Short answer → Ho
 | 4 | **"Why three writer threads instead of one consumer on three topics?"** | `clickhouse_writer/main.py` | Independent offsets/batches/failures. Trade-off: 3 consumers + 3 clients, and one failure restarts all three. |
 | 5 | **"Why not ClickHouse's Kafka engine and skip the writer?"** | You wrote a whole service for it. | Honest: control over validation, malformed-skip and metrics, plus learning. Admit the Kafka engine exists. |
 | 6 | **"Why does `machines` go through Kafka? It changes every 5 minutes."** | Collector → Kafka → writer for a tiny table. | One path for all data; collector never touches the DB. Trade-off: more moving parts than needed. |
-| 7 | **"How do you know the anomaly detection is correct?"** | Hand-tuned floors (10 pp CPU, 2 % memory); no labelled data. | Point at `experiments/emwa.ipynb`. Admit floors are tuned by eye, no precision/recall. Say what you'd do (inject synthetic spikes, measure). |
+| 7 | **"How do you know the anomaly detection is correct?"** | Hand-tuned floors (10 pp CPU, 2 % memory); no labelled data. | Point at `experiments/ewma.ipynb`. Admit floors are tuned by eye, no precision/recall. Say what you'd do (inject synthetic spikes, measure). |
 | 8 | **"Why MAD *and* EWMA?"** | Two algorithms per series, doubling rows. | Different failure modes: MAD = robust, symmetric; EWMA = tracks drift, rises only. Seeing both on the dashboard is the feature. |
 | 9 | **"What if the collector dies / you run two?"** | `metric_id` minted per collector → duplicates with different ids (README admits it). | Single collector = SPOF, accepted. Fix = deterministic id `(machine_id, name, timestamp)`. |
 | 10 | **"Why only 24 h retention?"** | TTL in migration 000001. | Home-lab scale; downsampling is listed as not done. |
