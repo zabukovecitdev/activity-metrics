@@ -6,9 +6,9 @@ from collections.abc import Callable, Iterable
 
 import httpx
 from kafka.errors import KafkaError
-from prometheus_client import Counter
 from pydantic import ValidationError
 
+from activityreporter.collector.metrics import Metrics
 from activityreporter.collector.repository import (
     HttpAgentMetricsRepository,
     KafkaJsonProducer,
@@ -20,17 +20,6 @@ from activityreporter.collector.repository import (
 )
 
 logger = logging.getLogger(__name__)
-
-SCRAPES = Counter(
-    "activityreporter_collector_scrapes_total",
-    "Agent scrapes by outcome: ok, fetch_error (no valid response) or publish_error",
-    ["outcome"],
-)
-INVALID_RESPONSES = Counter(
-    "activityreporter_collector_invalid_responses_total",
-    "Agent responses that failed validation and went to the dead letter topic, by kind: metrics or machine",
-    ["kind"],
-)
 
 SCRAPE_INTERVAL_SECONDS = 10
 MACHINE_REFRESH_SECONDS = 300
@@ -62,16 +51,16 @@ class Collector:
         await self._refresh_machine(endpoint)
         metrics = await self._receive("metrics", endpoint, parse_metrics, self._raw_metrics)
         if metrics is None:
-            SCRAPES.labels("fetch_error").inc()
+            Metrics.SCRAPES.labels("fetch_error").inc()
             return
 
         try:
             await asyncio.to_thread(self._raw_metrics.publish, metrics)
         except KafkaError:
             logger.exception("Failed to publish metrics from %s to Kafka", endpoint)
-            SCRAPES.labels("publish_error").inc()
+            Metrics.SCRAPES.labels("publish_error").inc()
         else:
-            SCRAPES.labels("ok").inc()
+            Metrics.SCRAPES.labels("ok").inc()
 
     async def _refresh_machine(self, endpoint: str) -> None:
         now = time.monotonic()
@@ -106,7 +95,7 @@ class Collector:
             return parse(body)
         except ValidationError as e:
             logger.error("Invalid %s from %s: %s", kind, url, e)
-            INVALID_RESPONSES.labels(kind).inc()
+            Metrics.INVALID_RESPONSES.labels(kind).inc()
             try:
                 await asyncio.to_thread(producer.dead_letter, url, body, str(e))
             except KafkaError:
