@@ -4,6 +4,7 @@ from pyflink.common import WatermarkStrategy
 from pyflink.common.time import Duration
 from pyflink.common.typeinfo import Types
 from pyflink.common.watermark_strategy import TimestampAssigner
+from pyflink.datastream.connectors.base import DeliveryGuarantee
 from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
     KafkaRecordSerializationSchema,
@@ -84,6 +85,7 @@ def kafka_raw_metrics_source(kafka: KafkaSettings) -> KafkaSource:
 def kafka_evaluations_sink(kafka: KafkaSettings) -> KafkaSink:
     return KafkaSink.builder() \
         .set_bootstrap_servers(kafka.connection_string) \
+        .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE) \
         .set_record_serializer(
             KafkaRecordSerializationSchema.builder()
             .set_topic(kafka.evaluations_topic)

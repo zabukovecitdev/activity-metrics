@@ -63,7 +63,7 @@ Details are in [README](../README.md) and [operations](operations.md).
 
 On purpose, until there's a reason:
 
-- **Flink checkpointing.** A restarted job starts with empty windows and rescores from the start of the topic; the duplicates collapse.
+- **End-to-end exactly-once.** Flink checkpoints its window state and source offsets every second to a local volume, in `EXACTLY_ONCE` mode, which covers Flink's own state only. The Kafka sink is `AT_LEAST_ONCE`: it flushes to Kafka on every checkpoint, so a failure can repeat evaluations but not lose them. Repeats collapse in ClickHouse (`ReplacingMergeTree`). Exactly-once would need a transactional sink and `read_committed` consumers; not worth it while ClickHouse deduplicates anyway.
 - **Alerting.** Anomalies are only visible on the dashboard.
 - **Anomaly episodes.** Each anomalous sample is its own row; consecutive ones aren't grouped into one event.
 - **Long-term storage and downsampling.** Everything older than 24 hours is gone.

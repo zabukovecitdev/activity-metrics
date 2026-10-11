@@ -3,7 +3,6 @@
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 DEFAULT_BATCH_SIZE = 100
 DEFAULT_BATCH_TIMEOUT_SECONDS = 5.0
 
