@@ -1,6 +1,6 @@
 # Operations
 
-Setup, configuration, and failure modes for the agent, collector, Flink job, ClickHouse writers, and migrations. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
+Setup, configuration, and failure modes for the agent, collector, Flink job, ClickHouse writers, migrations, and Grafana. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
 
 ## Local stack
 
@@ -11,6 +11,7 @@ Setup, configuration, and failure modes for the agent, collector, Flink job, Cli
 | `9094` | Kafka listener advertised as `localhost:9094` (`PLAINTEXT_HOST`). Containers on the Compose network use `kafka:9092`. |
 | `8123`, `9000` | ClickHouse HTTP and native protocol. |
 | `8081` | Flink Web UI. |
+| `3000` | Grafana. Login and the dashboard file are in [Grafana](#grafana). |
 
 The `agent` Compose service is in the `dev` profile, so `make up` doesn't start it; `docker compose --profile dev up -d` does. It does not publish port `8080`. The collector scrapes the agents in `collector.toml`, mounted read-only at `/app/collector.toml` and read once at startup; after editing it, `docker compose restart collector`. The default entry, `http://host.docker.internal:8080`, is an agent run on the host with `make agent`. Docker Desktop resolves `host.docker.internal` by itself; on Docker Engine the collector's `extra_hosts: host.docker.internal:host-gateway` does it. The Compose agent is on the same network as the collector, so add `http://agent:8080` to scrape it instead.
 
@@ -139,6 +140,31 @@ The wheel contains `src/activityreporter`. Console scripts:
 
 The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent` (`dev` profile only), `collector`, and `clickhouse-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
 
+## Grafana
+
+The `grafana` service runs `grafana/grafana:13.2.3` and publishes `3000`. `make up` starts it. It waits until ClickHouse is healthy and until Prometheus has started. It does not wait for `migrate`, so the dashboard can open while the tables are still missing.
+
+Compose sets `GF_PLUGINS_PREINSTALL_SYNC=grafana-clickhouse-datasource` and no `GF_SECURITY_*` variables. The plugin is installed before Grafana starts, with no version pin; the first start downloads it and needs outbound network. On a fresh `grafana_data` volume the login is `admin` / `admin`. `make down` does not remove volumes, so a password you change stays there, and so does the installed plugin (`/var/lib/grafana` is that volume). `make smoke` calls Grafana as `GRAFANA_AUTH` (default `admin:admin`). Reset a forgotten password with:
+
+```bash
+docker compose exec grafana grafana cli admin reset-admin-password <password>
+```
+
+`docker/grafana/provisioning/datasources/clickhouse.yml` defines datasource `ClickHouse` (uid `clickhouse`, the default): native protocol, host `clickhouse`, port `9000`, database `metrics`, user `user`, password `password`. Port `9000` is ClickHouse's native protocol. The writer's `CLICKHOUSE_PORT` `8123` is HTTP and is not what this datasource uses. `prometheus.yml` next to it adds a Prometheus datasource (uid `prometheus`, `http://prometheus:9090`). *Machine usage metrics* queries ClickHouse only.
+
+The dashboard file is `docker/grafana/dashboards/machine-usage-metrics.json` (uid `ad8rn6h`). `docker/grafana/provisioning/dashboards/dashboards.yml` is a file provider named `activityreporter` with `allowUiUpdates: true` and no `updateIntervalSeconds`. Grafana 13.2.3 treats that omission as 10 seconds, and an interval of 10 or less watches the directory instead of polling. Provisioning and the JSON are mounted read-only. A save in the UI is stored in Grafana's database on `grafana_data`, not written back to the JSON. The next time Grafana loads the file, the file replaces that UI copy. A bind mount often does not deliver the watch events Grafana uses at this interval, so an edit to the JSON can stay invisible until `docker compose restart grafana`. Setting `updateIntervalSeconds` above 10 makes that provider poll.
+
+The JSON sets the time range to the last 30 minutes, refreshes panels every 5 seconds, and uses the browser timezone. The host list is queried when the dashboard loads (`refresh: 1`), not on that 5-second refresh and not when the time range changes. `machine_id` and `metric_name` re-query when the variable they depend on changes. A host that starts reporting after the page is open, or a metric that finishes warming up for the machine already selected, stays out of the dropdown until a reload. Custom values are off, so the dropdown is only what those queries return.
+
+| Panel | Time range |
+| --- | --- |
+| **CPU**, **Uptime** | Ignored. Newest row of that series: `ORDER BY timestamp DESC LIMIT 1` on `metrics`, no `FINAL`. |
+| **Memory**, **Memory used** | Ignored. Newest sample in the last hour (`timestamp >= now() - INTERVAL 1 HOUR`), no `FINAL`. Memory is `system.memory.usage / system.memory.limit` as a percent; Memory used is the usage in bytes. |
+| **Machine** | Ignored. Latest `machines` row (`FINAL`). |
+| **Anomalies**, **CPU usage**, **Memory usage**, **Detector explorer**, **Recent anomalies** | `$__timeFilter(timestamp)`, and these queries use `FINAL`. |
+
+**Anomalies** counts every metric and algorithm in the picker range. The charts can be empty for a range that has no samples while CPU and Uptime still show the newest row in the table. Panel contents and the variable queries are in the README.
+
 ## Smoke test
 
 `make smoke` runs `scripts/smoke-test.sh` against the running stack. It checks that the containers are up and `migrate` exited 0, that `raw_metrics`, `machines`, and `evaluations` have messages, that the Flink job `Anomaly Detection` is `RUNNING` (`/jobs/overview` on port 8081), that `metrics`, `machines`, and `evaluations` have rows from the last 10 minutes and every evaluation's `metric_id` is in `metrics`, and that Grafana, its ClickHouse datasource, and the dashboard respond. Each failure prints a hint.
@@ -162,6 +188,8 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 **`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing for a series until the last hour holds `min_points` samples of that `(machine_id, name)`: 11 for `ewma` and 20 for `mad`, about 2 and 3.5 minutes at the 10-second scrape interval. The series must be a gauge, and the name must not be one of `system.battery.charging`, `system.battery.utilization`, `system.memory.limit`, or `system.uptime`. Battery series are omitted entirely when the agent has no power supply. A job started before this change still publishes to `anomalies`; `make up` recreates the cluster with the new job.
 
 **Bands drop to 0 in a custom Grafana query.** A `LEFT JOIN` from `metrics` to `evaluations` fills unmatched rows with `0` unless the query ends with `SETTINGS join_use_nulls = 1`.
+
+**CPU or Uptime does not move with the time picker.** Those two, plus **Memory** and **Memory used**, do not use it. See [Grafana](#grafana).
 
 **The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after; check its log for `Failed to fetch machine info` or `Malformed machine info` (an agent older than this change has no `observed_at`), and that `clickhouse-writer` is running.
 

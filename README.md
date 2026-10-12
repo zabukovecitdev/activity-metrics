@@ -290,7 +290,7 @@ The TimescaleDB schema (Flyway `V1`–`V5`) was removed along with TimescaleDB; 
 
 ## Grafana
 
-`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Machine usage metrics*. It uses only the metrics the agent already reports. Variables:
+`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Machine usage metrics* at http://localhost:3000. It uses only the metrics the agent already reports. The dashboard opens on the last 30 minutes. **CPU**, **Uptime**, **Memory**, and **Memory used** do not follow that picker; the charts, **Anomalies**, and the recent-anomalies table do. Provisioning, the login, and the queries behind that split are in [docs/operations.md](docs/operations.md#grafana). Variables:
 
 - `host` (shown as *Machine*): the hostname from `machines`, or the machine id for a machine the collector hasn't described yet.
 - `machine_id`: hidden, the id of the selected host; every panel filters on it. Two machines with the same hostname would both map to the first id, so give them different hostnames.
@@ -298,8 +298,9 @@ The TimescaleDB schema (Flyway `V1`–`V5`) was removed along with TimescaleDB; 
 
 Panels:
 
-- **Machine**: hostname, OS, architecture, cores, memory, disk, last boot, and last seen, from `machines`. **Uptime** from `system.uptime`.
-- **CPU** and **Memory** gauges (memory is `system.memory.usage / system.memory.limit`), **Memory used**, and **Anomalies**: anomalous evaluations of every metric and algorithm in the time range.
+- **Machine**: hostname, OS, architecture, cores, memory, disk, last boot, and last seen, from `machines`. **Uptime** is the newest `system.uptime` sample. Neither follows the time picker.
+- **CPU** is the newest `system.cpu.utilization`. **Memory** is `system.memory.usage / system.memory.limit` over the last hour, and **Memory used** is that usage in bytes, also over the last hour. These three ignore the time picker.
+- **Anomalies**: anomalous evaluations of every metric and algorithm in the time range.
 - **CPU usage** and **Memory usage** (with the limit dashed): the series with every algorithm's anomalies as points, one colour per algorithm (query `B`, split by the `algorithm` column). Where two algorithms flag the same sample, their points overlap; the tooltip lists both.
 - **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then a table of the last 200 anomalies with their values.
 
