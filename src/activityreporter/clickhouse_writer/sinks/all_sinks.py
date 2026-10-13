@@ -1,6 +1,14 @@
-from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import ClickHouseEvaluationsSink
-from activityreporter.clickhouse_writer.sinks.clickhouse_machines_sink import ClickHouseMachinesSink
-from activityreporter.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
-from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
+from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import (
+    ClickHouseEvaluationsSink,
+)
+from activityreporter.clickhouse_writer.sinks.clickhouse_machines_sink import (
+    ClickHouseMachinesSink,
+)
+from activityreporter.clickhouse_writer.sinks.clickhouse_metrics_sink import (
+    ClickHouseMetricsSink,
+)
+from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import (
+    ClickHouseSinkBase,
+)
 
 SINKS: list[type[ClickHouseSinkBase]] = [ClickHouseMetricsSink, ClickHouseEvaluationsSink, ClickHouseMachinesSink]
