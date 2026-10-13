@@ -4,35 +4,35 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic_core import to_jsonable_python
 
-from activityreporter.clickhouse_writer.ingesters.all_ingesters import INGESTERS
-from activityreporter.clickhouse_writer.ingesters.evaluations_ingester import EvaluationsIngester
-from activityreporter.clickhouse_writer.ingesters.machines_ingester import MachinesIngester
-from activityreporter.clickhouse_writer.ingesters.metrics_ingester import MetricsIngester
-from activityreporter.clickhouse_writer.ingesters.topic_ingester import TopicIngester
+from activityreporter.clickhouse_writer.sinks.all_sinks import SINKS
+from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import ClickHouseEvaluationsSink
+from activityreporter.clickhouse_writer.sinks.clickhouse_machines_sink import ClickHouseMachinesSink
+from activityreporter.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
+from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
 from tests.support.builders import build_evaluation, build_machine, build_metric, kafka_record, parse_record
 
 
 
-INGESTER_CASES = pytest.mark.parametrize(
-    "ingester_type, build",
-    [(MetricsIngester, build_metric), (EvaluationsIngester, build_evaluation), (MachinesIngester, build_machine)],
+SINK_CASES = pytest.mark.parametrize(
+    "sink_type, build",
+    [(ClickHouseMetricsSink, build_metric), (ClickHouseEvaluationsSink, build_evaluation), (ClickHouseMachinesSink, build_machine)],
     ids=["metrics", "evaluations", "machines"],
 )
 
 
-def test_topic_ingester_is_abstract():
+def test_clickhouse_sink_base_is_abstract():
     with pytest.raises(TypeError):
-        TopicIngester(MagicMock(), MagicMock())
+        ClickHouseSinkBase(MagicMock(), MagicMock())
 
 
-@INGESTER_CASES
-def test_columns_are_the_record_fields(ingester_type, build):
-    assert set(ingester_type.columns) == set(to_jsonable_python(build()))
+@SINK_CASES
+def test_columns_are_the_record_fields(sink_type, build):
+    assert set(sink_type.columns) == set(to_jsonable_python(build()))
 
 
-def test_each_ingester_has_its_own_group():
-    assert sorted(w.group_id() for w in INGESTERS) == [
+def test_each_sink_has_its_own_group():
+    assert sorted(w.group_id() for w in SINKS) == [
         "clickhouse-evaluations-writer", "clickhouse-machines-writer", "clickhouse-metrics-writer",
     ]
 
@@ -42,29 +42,29 @@ def test_topics_follow_the_producers_environment(monkeypatch):
 
     kafka = KafkaSettings()
 
-    assert EvaluationsIngester.topic(kafka) == "scores"
-    assert MetricsIngester.topic(kafka) == "raw_metrics"
-    assert MachinesIngester.topic(kafka) == "machines"
+    assert ClickHouseEvaluationsSink.topic(kafka) == "scores"
+    assert ClickHouseMetricsSink.topic(kafka) == "raw_metrics"
+    assert ClickHouseMachinesSink.topic(kafka) == "machines"
 
 
-@INGESTER_CASES
-def test_parse_ignores_unknown_fields(ingester_type, build):
-    assert parse_record(ingester_type, {**to_jsonable_python(build()), "added_later": "x"}) == parse_record(ingester_type, to_jsonable_python(build()))
+@SINK_CASES
+def test_parse_ignores_unknown_fields(sink_type, build):
+    assert parse_record(sink_type, {**to_jsonable_python(build()), "added_later": "x"}) == parse_record(sink_type, to_jsonable_python(build()))
 
 
 @pytest.mark.parametrize(
-    "ingester_type, build", [(MetricsIngester, build_metric), (EvaluationsIngester, build_evaluation)],
+    "sink_type, build", [(ClickHouseMetricsSink, build_metric), (ClickHouseEvaluationsSink, build_evaluation)],
     ids=["metrics", "evaluations"],
 )
 @pytest.mark.parametrize("metric_id", [None, "not-a-uuid", 5])
-def test_parse_skips_records_without_a_valid_metric_id(ingester_type, build, metric_id):
-    assert parse_record(ingester_type, {**to_jsonable_python(build()), "metric_id": metric_id}) is None
+def test_parse_skips_records_without_a_valid_metric_id(sink_type, build, metric_id):
+    assert parse_record(sink_type, {**to_jsonable_python(build()), "metric_id": metric_id}) is None
 
 
-@INGESTER_CASES
+@SINK_CASES
 @pytest.mark.parametrize("value", [b"not json", b"[]", json.dumps({"name": "x"}).encode()])
-def test_parse_skips_malformed_records(ingester_type, build, value):
-    assert parse_record(ingester_type, value) is None
+def test_parse_skips_malformed_records(sink_type, build, value):
+    assert parse_record(sink_type, value) is None
 
 
 class LoopBreak(Exception):
@@ -76,12 +76,12 @@ def machine_record(machine_id: str) -> MagicMock:
 
 
 def machine_row(machine_id: str) -> list:
-    return MachinesIngester(MagicMock(), MagicMock())._parse(machine_record(machine_id))
+    return ClickHouseMachinesSink(MagicMock(), MagicMock())._parse(machine_record(machine_id))
 
 
-def build_ingester(batch_size=100, batch_timeout_seconds=5.0):
+def build_sink(batch_size=100, batch_timeout_seconds=5.0):
     records, store = MagicMock(), MagicMock()
-    return MachinesIngester(records, store, batch_size, batch_timeout_seconds), records, store
+    return ClickHouseMachinesSink(records, store, batch_size, batch_timeout_seconds), records, store
 
 
 def inserted(store) -> list:
@@ -90,82 +90,82 @@ def inserted(store) -> list:
 
 
 def test_run_flushes_when_the_batch_is_full():
-    ingester, records, store = build_ingester(batch_size=2)
+    sink, records, store = build_sink(batch_size=2)
     records.poll.side_effect = [[machine_record("h1")], [machine_record("h2")], LoopBreak]
 
     with pytest.raises(LoopBreak):
-        ingester.run()
+        sink.run()
 
     assert inserted(store) == [machine_row("h1"), machine_row("h2")]
-    assert store.insert_batch.call_args.args[:2] == ("machines", MachinesIngester.columns)
+    assert store.insert_batch.call_args.args[:2] == ("machines", ClickHouseMachinesSink.columns)
     assert records.commit.call_count == 1
 
 
 def test_run_flushes_on_timeout_before_batch_is_full():
-    ingester, records, store = build_ingester(batch_size=100, batch_timeout_seconds=5.0)
+    sink, records, store = build_sink(batch_size=100, batch_timeout_seconds=5.0)
     records.poll.side_effect = [[machine_record("h1")], LoopBreak]
 
-    with patch("activityreporter.clickhouse_writer.ingesters.topic_ingester.time.monotonic", side_effect=[0.0, 10.0, 10.0]), \
+    with patch("activityreporter.clickhouse_writer.sinks.clickhouse_sink_base.time.monotonic", side_effect=[0.0, 10.0, 10.0]), \
          pytest.raises(LoopBreak):
-        ingester.run()
+        sink.run()
 
     assert inserted(store) == [machine_row("h1")]
     assert records.commit.call_count == 1
 
 
 def test_run_does_not_flush_empty_batch():
-    ingester, records, store = build_ingester(batch_size=1)
+    sink, records, store = build_sink(batch_size=1)
     records.poll.side_effect = [[], LoopBreak]
 
     with pytest.raises(LoopBreak):
-        ingester.run()
+        sink.run()
 
     store.insert_batch.assert_not_called()
     records.commit.assert_not_called()
 
 
 def test_run_does_not_flush_when_every_record_is_malformed():
-    ingester, records, store = build_ingester(batch_size=1)
+    sink, records, store = build_sink(batch_size=1)
     records.poll.side_effect = [[kafka_record(b"not json")], LoopBreak]
 
     with pytest.raises(LoopBreak):
-        ingester.run()
+        sink.run()
 
     store.insert_batch.assert_not_called()
     records.commit.assert_not_called()
 
 
 def test_stop_flushes_pending_batch():
-    ingester, records, store = build_ingester(batch_size=100, batch_timeout_seconds=1000.0)
+    sink, records, store = build_sink(batch_size=100, batch_timeout_seconds=1000.0)
 
     def poll_then_stop(**_):
-        ingester.stop()
+        sink.stop()
         return [machine_record("h1")]
 
     records.poll.side_effect = poll_then_stop
 
-    ingester.run()
+    sink.run()
 
     assert inserted(store) == [machine_row("h1")]
     assert records.commit.call_count == 1
 
 
 def test_flush_does_not_commit_offsets_when_the_write_fails():
-    ingester, records, store = build_ingester()
+    sink, records, store = build_sink()
     store.insert_batch.side_effect = RuntimeError("db is down")
 
     with pytest.raises(RuntimeError):
-        ingester._flush([machine_row("h1")])
+        sink._flush([machine_row("h1")])
 
     records.commit.assert_not_called()
 
 
 def test_flush_commits_offsets_only_after_the_write():
-    ingester, records, store = build_ingester()
+    sink, records, store = build_sink()
     call_order = []
     store.insert_batch.side_effect = lambda *_: call_order.append("insert")
     records.commit.side_effect = lambda: call_order.append("commit")
 
-    ingester._flush([machine_row("h1")])
+    sink._flush([machine_row("h1")])
 
     assert call_order == ["insert", "commit"]

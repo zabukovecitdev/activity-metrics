@@ -14,7 +14,7 @@ One package, `src/activityreporter/`, split by application. Each application kee
 src/activityreporter/
   shared/              code used by more than one application
     models/              Metric, Machine, Evaluation, MetricObservation, MetricsResponse
-    settings/            KafkaSettings, ClickHouseSettings, IngesterSettings, CollectorSettings, AgentSettings
+    settings/            KafkaSettings, ClickHouseSettings, ClickHouseSinkSettings, CollectorSettings, AgentSettings
     observability/       Prometheus counters
   agent/               runs on every machine, serves /v1/metrics and /v1/machine
     api/                 FastAPI routes
@@ -24,7 +24,7 @@ src/activityreporter/
     agents/              AgentsFileLoader, AgentUrls
     clients/             HttpAgentClient
     parsers/             MetricsParser, MachineParser
-    producers/           KafkaJsonProducer, KafkaMetricsProducer, KafkaMachinesProducer
+    producers/           KafkaProducerBase, KafkaMetricsProducer, KafkaMachinesProducer
     services/            Collector
   anomaly_detector/    PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
     algorithms/          MAD, EWMA
@@ -38,10 +38,10 @@ src/activityreporter/
       sinks/               KafkaEvaluationsSink
       type_info/           RowTypeInfo, METRIC_TYPE_INFO, EVALUATION_TYPE_INFO
       watermarks/          EventTimeWatermarks, EpochSecondsTimestampAssigner
-  clickhouse_writer/   one ingester per topic, Kafka topic → ClickHouse table
+  clickhouse_writer/   one sink per topic, Kafka topic → ClickHouse table
     consumers/           KafkaRecordsConsumer
     repositories/        ClickHouseRepository
-    ingesters/           TopicIngester, MetricsIngester, EvaluationsIngester, MachinesIngester
+    sinks/           ClickHouseSinkBase, ClickHouseMetricsSink, ClickHouseEvaluationsSink, ClickHouseMachinesSink
 tests/                 mirrors src/activityreporter/; shared builders in tests/support/
 ```
 
@@ -199,7 +199,7 @@ A detector (`anomaly_detector/detectors/`) has a `name`, `min_points`, and `eval
 
 The score and threshold behind `is_anomaly` stay inside the detector; only the flag is published. A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
 
-To add an algorithm, write a class with that shape and add it to `DetectorRegistry.DEFAULT_DETECTORS` and the lists in `DetectorRegistry.METRIC_DETECTORS`. No schema, ingester, or dashboard change is needed: its anomalies show up on every chart, labelled with its name.
+To add an algorithm, write a class with that shape and add it to `DetectorRegistry.DEFAULT_DETECTORS` and the lists in `DetectorRegistry.METRIC_DETECTORS`. No schema, sink, or dashboard change is needed: its anomalies show up on every chart, labelled with its name.
 
 `MAD` (`anomaly_detector/algorithms/mad.py`):
 
@@ -238,19 +238,19 @@ Published on `evaluations` as JSON, without a Kafka key:
 
 Job submission, the Kafka connector jar, and consumer-group rules are in [docs/operations.md](docs/operations.md).
 
-## ClickHouse ingesters
+## ClickHouse sinks
 
-`clickhouse-writer` is one process that runs one ingester per topic on its own thread, each with its own Kafka consumer and ClickHouse client, so each topic has its own offsets and its own batches. `TopicIngester` in `clickhouse_writer/ingesters/topic_ingester.py` is the abstract base: it polls, converts, batches, writes and commits. A subclass in `clickhouse_writer/ingesters/` names the table, its columns, the record model, the topic, and implements `to_row`. A record is converted by the ingester of the topic it came from:
+`clickhouse-writer` is one process that runs one sink per topic on its own thread, each with its own Kafka consumer and ClickHouse client, so each topic has its own offsets and its own batches. `ClickHouseSinkBase` in `clickhouse_writer/sinks/clickhouse_sink_base.py` is the abstract base: it polls, converts, batches, writes and commits. A subclass in `clickhouse_writer/sinks/` names the table, its columns, the record model, the topic, and implements `to_row`. A record is converted by the sink of the topic it came from:
 
-| Ingester | Topic variable | Default topic | Table | Group |
+| Sink | Topic variable | Default topic | Table | Group |
 | --- | --- | --- | --- | --- |
-| `MetricsIngester` | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `metrics` | `clickhouse-metrics-writer` |
-| `EvaluationsIngester` | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` | `clickhouse-evaluations-writer` |
-| `MachinesIngester` | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` | `clickhouse-machines-writer` |
+| `ClickHouseMetricsSink` | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `metrics` | `clickhouse-metrics-writer` |
+| `ClickHouseEvaluationsSink` | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` | `clickhouse-evaluations-writer` |
+| `ClickHouseMachinesSink` | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` | `clickhouse-machines-writer` |
 
-The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To load another topic, subclass `TopicIngester` and add it to `INGESTERS` (`ingesters/all_ingesters.py`). An ingester that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
+The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To load another topic, subclass `ClickHouseSinkBase` and add it to `SINKS` (`sinks/all_sinks.py`). A sink that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
 
-Records are decoded as JSON into the ingester's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into the sink's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
 `ClickHouseRepository.insert_batch` writes each table over HTTP (`clickhouse-connect`), then `ClickHouseWriter` commits offsets. Offsets belong to the consumer, not a table, so the commit waits until every table in the flush is written; a failed insert leaves them uncommitted and the whole flush is replayed, including tables that were already written. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 

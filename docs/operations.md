@@ -59,7 +59,7 @@ The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The 
 
 ### ClickHouse writer
 
-One process runs an ingester per topic, each on its own thread; the variables below apply to all three.
+One process runs a sink per topic, each on its own thread; the variables below apply to all three.
 
 | Variable | Default | Compose |
 | --- | --- | --- |

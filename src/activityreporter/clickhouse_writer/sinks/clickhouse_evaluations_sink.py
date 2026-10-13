@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from activityreporter.clickhouse_writer.ingesters.row_values import RowValues
-from activityreporter.clickhouse_writer.ingesters.topic_ingester import TopicIngester
+from activityreporter.clickhouse_writer.sinks.row_values import RowValues
+from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
 from activityreporter.shared.models.evaluation import Evaluation
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
 
-class EvaluationsIngester(TopicIngester):
+class ClickHouseEvaluationsSink(ClickHouseSinkBase):
     table = "evaluations"
     columns = [
         "metric_id", "machine_id", "metric_name", "timestamp", "algorithm", "baseline", "lower", "upper", "is_anomaly",

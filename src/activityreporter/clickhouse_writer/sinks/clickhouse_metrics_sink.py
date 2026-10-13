@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from activityreporter.clickhouse_writer.ingesters.row_values import RowValues
-from activityreporter.clickhouse_writer.ingesters.topic_ingester import TopicIngester
+from activityreporter.clickhouse_writer.sinks.row_values import RowValues
+from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
 from activityreporter.shared.models.metric import Metric
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
 
-class MetricsIngester(TopicIngester):
+class ClickHouseMetricsSink(ClickHouseSinkBase):
     table = "metrics"
     columns = ["metric_id", "machine_id", "name", "timestamp", "type", "unit", "value", "attributes"]
     record_type = Metric

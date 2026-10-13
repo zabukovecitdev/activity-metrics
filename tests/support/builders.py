@@ -57,9 +57,9 @@ def kafka_record(payload) -> MagicMock:
     return MagicMock(value=value)
 
 
-def parse_record(ingester_type, payload):
-    return ingester_type(MagicMock(), MagicMock())._parse(kafka_record(payload))
+def parse_record(sink_type, payload):
+    return sink_type(MagicMock(), MagicMock())._parse(kafka_record(payload))
 
 
-def row_of(ingester_type, record) -> dict:
-    return dict(zip(ingester_type.columns, parse_record(ingester_type, to_jsonable_python(record)), strict=True))
+def row_of(sink_type, record) -> dict:
+    return dict(zip(sink_type.columns, parse_record(sink_type, to_jsonable_python(record)), strict=True))

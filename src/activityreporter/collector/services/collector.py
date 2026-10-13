@@ -12,7 +12,7 @@ from activityreporter.collector.agents.agent_urls import AgentUrls
 from activityreporter.collector.clients.http_agent_client import HttpAgentClient
 from activityreporter.collector.parsers.machine_parser import MachineParser
 from activityreporter.collector.parsers.metrics_parser import MetricsParser
-from activityreporter.collector.producers.kafka_json_producer import KafkaJsonProducer
+from activityreporter.collector.producers.kafka_producer_base import KafkaProducerBase
 from activityreporter.collector.producers.kafka_machines_producer import KafkaMachinesProducer
 from activityreporter.collector.producers.kafka_metrics_producer import KafkaMetricsProducer
 from activityreporter.shared.observability.metrics import Metrics
@@ -77,7 +77,7 @@ class Collector:
         # Only after a successful publish, so a failure is retried on the next scrape.
         self._machine_refreshed_at[endpoint] = now
 
-    async def _receive[T](self, kind: str, url: str, parse: Callable[[str], T], producer: KafkaJsonProducer) -> T | None:
+    async def _receive[T](self, kind: str, url: str, parse: Callable[[str], T], producer: KafkaProducerBase) -> T | None:
         """`parse` applied to the body at `url`, or None once the failure is logged.
 
         The one place agent responses are validated: an invalid one is counted and sent to `producer`'s dead letter

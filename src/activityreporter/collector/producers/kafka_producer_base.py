@@ -10,7 +10,7 @@ from activityreporter.shared.models.metric import Metric
 SEND_TIMEOUT_SECONDS = 10
 
 
-class KafkaJsonProducer:
+class KafkaProducerBase:
     """JSON records to one Kafka topic, keyed by machine id, and invalid input to `<topic>_dlq`."""
 
     def __init__(self, bootstrap_servers: str, topic: str):

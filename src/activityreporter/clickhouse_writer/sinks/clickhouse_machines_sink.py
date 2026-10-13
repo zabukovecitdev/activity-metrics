@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from datetime import timezone
 
-from activityreporter.clickhouse_writer.ingesters.row_values import RowValues
-from activityreporter.clickhouse_writer.ingesters.topic_ingester import TopicIngester
+from activityreporter.clickhouse_writer.sinks.row_values import RowValues
+from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
 from activityreporter.shared.models.machine import Machine
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
 
-class MachinesIngester(TopicIngester):
+class ClickHouseMachinesSink(ClickHouseSinkBase):
     table = "machines"
     columns = [
         "machine_id", "hostname", "os", "os_version", "architecture", "cores", "total_memory", "total_disk",

@@ -1,12 +1,12 @@
 import uuid
 from datetime import datetime, timezone
 
-from activityreporter.clickhouse_writer.ingesters.metrics_ingester import MetricsIngester
+from activityreporter.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
 from tests.support.builders import METRIC_ID, build_metric, row_of
 
 
 def test_metric_row_matches_columns():
-    assert row_of(MetricsIngester, build_metric(1.5)) == {
+    assert row_of(ClickHouseMetricsSink, build_metric(1.5)) == {
         "metric_id": uuid.UUID(METRIC_ID),
         "machine_id": "machine-123",
         "name": "system.cpu.utilization",
@@ -22,4 +22,4 @@ def test_missing_attributes_are_stored_as_an_empty_map():
     metric = build_metric()
     metric.attributes = None
 
-    assert row_of(MetricsIngester, metric)["attributes"] == {}
+    assert row_of(ClickHouseMetricsSink, metric)["attributes"] == {}

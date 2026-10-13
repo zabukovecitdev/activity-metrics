@@ -4,7 +4,7 @@ DEFAULT_BATCH_SIZE = 100
 DEFAULT_BATCH_TIMEOUT_SECONDS = 5.0
 
 
-class IngesterSettings(BaseSettings):
+class ClickHouseSinkSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WRITER_")
 
     batch_size: int = DEFAULT_BATCH_SIZE

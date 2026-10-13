@@ -7,20 +7,20 @@ from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
 from activityreporter.clickhouse_writer.consumers.kafka_records_consumer import KafkaRecordsConsumer
-from activityreporter.clickhouse_writer.ingesters.record_parser import RecordParser
+from activityreporter.clickhouse_writer.sinks.record_parser import RecordParser
 from activityreporter.clickhouse_writer.repositories.clickhouse_repository import ClickHouseRepository
 from activityreporter.shared.observability.metrics import Metrics
-from activityreporter.shared.settings.ingester_settings import (
+from activityreporter.shared.settings.clickhouse_sink_settings import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_BATCH_TIMEOUT_SECONDS,
-    IngesterSettings,
+    ClickHouseSinkSettings,
 )
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
 logger = logging.getLogger(__name__)
 
 
-class TopicIngester(ABC):
+class ClickHouseSinkBase(ABC):
     """Loads one Kafka topic into one ClickHouse table: batches rows, then writes them before committing offsets.
 
     A subclass names the table, its columns, the record model, the topic and how a record becomes a row.
@@ -48,7 +48,7 @@ class TopicIngester(ABC):
     @classmethod
     @abstractmethod
     def topic(cls, kafka: KafkaSettings) -> str:
-        """The Kafka topic this ingester consumes."""
+        """The Kafka topic this sink consumes."""
 
     @classmethod
     def group_id(cls) -> str:
@@ -56,8 +56,8 @@ class TopicIngester(ABC):
 
     @classmethod
     def from_settings(
-        cls, consumer: KafkaRecordsConsumer, repository: ClickHouseRepository, settings: IngesterSettings
-    ) -> TopicIngester:
+        cls, consumer: KafkaRecordsConsumer, repository: ClickHouseRepository, settings: ClickHouseSinkSettings
+    ) -> ClickHouseSinkBase:
         return cls(
             consumer,
             repository,
