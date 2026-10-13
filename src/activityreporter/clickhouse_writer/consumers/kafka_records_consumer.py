@@ -4,15 +4,15 @@ from typing import Self
 
 from kafka import KafkaConsumer
 
+from activityreporter.shared.settings.clickhouse_sink_settings import ClickHouseSinkSettings
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
-
-POLL_TIMEOUT_MS = 1000
 
 
 class KafkaRecordsConsumer:
     """One consumer on one topic."""
 
-    def __init__(self, topic: str, bootstrap_servers: str, group_id: str):
+    def __init__(self, topic: str, bootstrap_servers: str, group_id: str, poll_timeout_ms: int):
+        self._poll_timeout_ms = poll_timeout_ms
         self._consumer = KafkaConsumer(
             topic,
             bootstrap_servers=[bootstrap_servers],
@@ -23,11 +23,13 @@ class KafkaRecordsConsumer:
         )
 
     @classmethod
-    def from_settings(cls, kafka: KafkaSettings, topic: str, group_id: str) -> KafkaRecordsConsumer:
-        return cls(topic, kafka.connection_string, group_id)
+    def from_settings(
+        cls, kafka: KafkaSettings, sink: ClickHouseSinkSettings, topic: str, group_id: str
+    ) -> KafkaRecordsConsumer:
+        return cls(topic, kafka.connection_string, group_id, sink.poll_timeout_ms)
 
     def poll(self, max_records: int) -> list:
-        polled = self._consumer.poll(timeout_ms=POLL_TIMEOUT_MS, max_records=max_records)
+        polled = self._consumer.poll(timeout_ms=self._poll_timeout_ms, max_records=max_records)
         return [record for records in polled.values() for record in records]
 
     def commit(self) -> None:

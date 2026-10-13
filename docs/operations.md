@@ -69,6 +69,7 @@ One process runs a sink per topic, each on its own thread; the variables below a
 | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
 | `WRITER_BATCH_SIZE` | `100` | unset |
 | `WRITER_BATCH_TIMEOUT_SECONDS` | `5.0` | unset |
+| `WRITER_POLL_TIMEOUT_MS` | `1000` | unset |
 | `CLICKHOUSE_HOST` | `localhost` | `clickhouse` |
 | `CLICKHOUSE_PORT` | `8123` | `8123` |
 | `CLICKHOUSE_DB` | `metrics` | `metrics` |

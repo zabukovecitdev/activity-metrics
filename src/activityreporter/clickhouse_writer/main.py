@@ -24,7 +24,9 @@ def main() -> None:
         sinks = [
             sink_type.from_settings(
                 stack.enter_context(
-                    KafkaRecordsConsumer.from_settings(kafka, sink_type.topic(kafka), sink_type.group_id())
+                    KafkaRecordsConsumer.from_settings(
+                        kafka, clickhouse_sink_settings, sink_type.topic(kafka), sink_type.group_id()
+                    )
                 ),
                 stack.enter_context(ClickHouseRepository.from_settings(clickhouse)),
                 clickhouse_sink_settings,
