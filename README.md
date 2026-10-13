@@ -8,25 +8,41 @@ agent ──HTTP──▶ collector ─┬─▶ Kafka raw_metrics ─┬──�
 
 ## Project layout
 
-One package, `src/activityreporter/`, split by application. Every application has the same shape:
-
-| File            | Layer        | Holds                                                         |
-|-----------------|--------------|---------------------------------------------------------------|
-| `main.py`       | entrypoint   | wiring and process start (`cli()`), nothing else              |
-| `api.py`        | entrypoint   | HTTP routes (agent only)                                      |
-| `service.py`    | service      | the application's logic                                       |
-| `repository.py` | data access  | every read/write of data, one `<Source><Data>Repository` each |
-| `models.py`     | domain       | types used only by this application                           |
+One package, `src/activityreporter/`, split by application. Each application keeps `main.py` (wiring and process start, `cli()`, nothing else) at its root, and everything else lives in a directory named for its role, one class per file, the file named after the class (`KafkaMetricsProducer` in `producers/kafka_metrics_producer.py`). `__init__.py` files are empty: import from the full module path.
 
 ```
 src/activityreporter/
-  shared/            code used by more than one application: Metric, Machine, Evaluation
-  agent/             runs on every machine, serves /v1/metrics and /v1/machine
-  collector/         scrapes agents, publishes to raw_metrics and machines
-  anomaly_detector/  PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
-  clickhouse_writer/ one consumer per topic, Kafka topic → ClickHouse table: raw_metrics → metrics,
-                     evaluations → evaluations, machines → machines
-tests/               mirrors src/activityreporter/
+  shared/              code used by more than one application
+    models/              Metric, Machine, Evaluation, MetricObservation, MetricsResponse
+    settings/            KafkaSettings, ClickHouseSettings, IngesterSettings, CollectorSettings, AgentSettings
+    observability/       Prometheus counters
+  agent/               runs on every machine, serves /v1/metrics and /v1/machine
+    api/                 FastAPI routes
+    readers/             PsutilSystemReader: reads the host
+    services/            MetricsService
+  collector/           scrapes agents, publishes to raw_metrics and machines
+    agents/              AgentsFileLoader, AgentUrls
+    clients/             HttpAgentClient
+    parsers/             MetricsParser, MachineParser
+    producers/           KafkaJsonProducer, KafkaMetricsProducer, KafkaMachinesProducer
+    services/            Collector
+  anomaly_detector/    PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
+    algorithms/          MAD, EWMA
+    detectors/           Detector, MadDetector, EwmaDetector, DetectorRegistry
+    exceptions/          InsufficientDataError
+    models/              Result, MadScore, EwmaScore
+    services/            MetricEvaluator (no PyFlink)
+    flink/               everything that imports PyFlink
+      processors/          AnomalyDetectionFunction
+      sources/             KafkaMetricsSource
+      sinks/               KafkaEvaluationsSink
+      type_info/           RowTypeInfo, METRIC_TYPE_INFO, EVALUATION_TYPE_INFO
+      watermarks/          EventTimeWatermarks, EpochSecondsTimestampAssigner
+  clickhouse_writer/   one ingester per topic, Kafka topic → ClickHouse table
+    consumers/           KafkaRecordsConsumer
+    repositories/        ClickHouseRepository
+    ingesters/           TopicIngester, MetricsIngester, EvaluationsIngester, MachinesIngester
+tests/                 mirrors src/activityreporter/; shared builders in tests/support/
 ```
 
 ## Running
@@ -157,10 +173,10 @@ On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHI
 - Parallelism is 2. The stream is keyed by `(machine_id, name)` so each series keeps its own state. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`.
 - State is the last hour of `(event_time, value)` pairs for that key (`WINDOW_MS`).
 
-Scoring rules (`anomaly_detector/detection.py`, called from `AnomalyDetector.process_element` in `service.py`):
+Scoring rules (`MetricEvaluator` in `anomaly_detector/services/metric_evaluator.py`, called from `AnomalyDetectionFunction.process_element` in `anomaly_detector/flink/processors/`):
 
 - `type` other than `gauge`, and the names `system.battery.charging`, `system.battery.utilization`, `system.memory.limit`, and `system.uptime`, are dropped without state. Those series are flags, values that barely move, or ever-growing counters, so every small step would be flagged.
-- `detectors_for(name)` picks the detectors for the series: `METRIC_DETECTORS` for a metric listed there, `DEFAULT_DETECTORS` otherwise. Each scores the latest value against the window once the window has `min_points` values. Until then that detector emits nothing for the series.
+- `DetectorRegistry.for_metric(name)` picks the detectors for the series: `METRIC_DETECTORS` for a metric listed there, `DEFAULT_DETECTORS` otherwise. Each scores the latest value against the window once the window has `min_points` values. Until then that detector emits nothing for the series.
 
 | Metric | `mad` | `ewma` |
 | --- | --- | --- |
@@ -168,11 +184,11 @@ Scoring rules (`anomaly_detector/detection.py`, called from `AnomalyDetector.pro
 | `system.memory.usage` | `min_relative=0.02` (2% of the median) | `min_relative=0.02` (2% of the average) |
 | any other scored gauge | `min_relative=0.01` | `min_relative=0.01` |
 
-`detection.py` and `detectors.py` do not import PyFlink, so their tests run in the regular `uv` environment.
+Everything outside `anomaly_detector/flink/` is free of PyFlink, so its tests run in the regular `uv` environment.
 
 ### Detectors
 
-A detector (`anomaly_detector/detectors.py`) has a `name`, `min_points`, and `evaluate(window) -> Result`. `Result` is what the dashboard draws, in the value's units:
+A detector (`anomaly_detector/detectors/`) has a `name`, `min_points`, and `evaluate(window) -> Result`. `Result` is what the dashboard draws, in the value's units:
 
 | Field | `mad` | `ewma` |
 | --- | --- | --- |
@@ -183,11 +199,11 @@ A detector (`anomaly_detector/detectors.py`) has a `name`, `min_points`, and `ev
 
 The score and threshold behind `is_anomaly` stay inside the detector; only the flag is published. A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
 
-To add an algorithm, write a class with that shape and add it to `DEFAULT_DETECTORS` and the lists in `METRIC_DETECTORS`. No schema, writer, or dashboard change is needed: its anomalies show up on every chart, labelled with its name.
+To add an algorithm, write a class with that shape and add it to `DetectorRegistry.DEFAULT_DETECTORS` and the lists in `DetectorRegistry.METRIC_DETECTORS`. No schema, ingester, or dashboard change is needed: its anomalies show up on every chart, labelled with its name.
 
-`MAD` (`anomaly_detector/mad.py`):
+`MAD` (`anomaly_detector/algorithms/mad.py`):
 
-- Needs at least 2 values; below that it raises `InsufficientDataError` from `anomaly_detector/errors.py`.
+- Needs at least 2 values; below that it raises `InsufficientDataError` from `anomaly_detector/exceptions/insufficient_data_error.py`.
 - Modified z-score: `|last - median| / (1.4826 × median absolute deviation)`, threshold `3.5`.
 - When the median absolute deviation is 0 (over half the values equal the median), the scale is `1.253314 × mean absolute deviation` instead (Iglewicz & Hoaglin). When that is 0 too, every value is equal and the score is 0. The score is always finite, so it can be encoded as JSON.
 - The scale has a floor, `max(min_deviation, min_relative × |median|) / THRESHOLD`, so a deviation smaller than `min_deviation` and than `min_relative` of the median never reaches the threshold. Without it, a series that barely moves has a tiny MAD and every step is flagged: memory in use changing by 32 KB on a 470 MB median scored 8, against a threshold of 3.5. Both default to 0, the textbook modified z-score.
@@ -195,9 +211,9 @@ To add an algorithm, write a class with that shape and add it to `DEFAULT_DETECT
 To tune the floors, count what they let through, for example `SELECT metric_name, algorithm, toDate(timestamp) AS day, countIf(is_anomaly) FROM evaluations FINAL GROUP BY ALL`. At one sample every 10 seconds a series has 8,640 a day.
 - Returned numbers are Python `float`s; numpy scalars cannot be encoded by PyFlink's coders.
 
-`EWMA` (`anomaly_detector/ewma.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
+`EWMA` (`anomaly_detector/algorithms/ewma.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
 
-Input rows follow `Metric` (`shared/models/metric.py`) and output rows follow `Evaluation` (`shared/models/evaluation.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/repository.py` must name the same fields as those models or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
+Input rows follow `Metric` (`shared/models/metric.py`) and output rows follow `Evaluation` (`shared/models/evaluation.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/flink/type_info/` must name the same fields as those models or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
 
 ### Evaluation record
 
@@ -222,19 +238,19 @@ Published on `evaluations` as JSON, without a Kafka key:
 
 Job submission, the Kafka connector jar, and consumer-group rules are in [docs/operations.md](docs/operations.md).
 
-## ClickHouse writers
+## ClickHouse ingesters
 
-`clickhouse-writer` is one process that runs one writer per topic on its own thread, each with its own Kafka consumer and ClickHouse client, so each topic has its own offsets and its own batches. `TopicWriter` in `clickhouse_writer/service.py` is the abstract base: it polls, converts, batches, writes and commits. A subclass in `clickhouse_writer/writers.py` names the table, its columns, the record model, the topic, and implements `to_row`. A record is converted by the writer of the topic it came from:
+`clickhouse-writer` is one process that runs one ingester per topic on its own thread, each with its own Kafka consumer and ClickHouse client, so each topic has its own offsets and its own batches. `TopicIngester` in `clickhouse_writer/ingesters/topic_ingester.py` is the abstract base: it polls, converts, batches, writes and commits. A subclass in `clickhouse_writer/ingesters/` names the table, its columns, the record model, the topic, and implements `to_row`. A record is converted by the ingester of the topic it came from:
 
-| Writer | Topic variable | Default topic | Table | Group |
+| Ingester | Topic variable | Default topic | Table | Group |
 | --- | --- | --- | --- | --- |
-| `MetricsWriter` | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `metrics` | `clickhouse-metrics-writer` |
-| `EvaluationsWriter` | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` | `clickhouse-evaluations-writer` |
-| `MachinesWriter` | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` | `clickhouse-machines-writer` |
+| `MetricsIngester` | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `metrics` | `clickhouse-metrics-writer` |
+| `EvaluationsIngester` | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` | `clickhouse-evaluations-writer` |
+| `MachinesIngester` | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` | `clickhouse-machines-writer` |
 
-The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To write another topic, subclass `TopicWriter` and add it to `WRITERS`. A writer that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
+The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To load another topic, subclass `TopicIngester` and add it to `INGESTERS` (`ingesters/all_ingesters.py`). An ingester that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
 
-Records are decoded as JSON into the writer's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into the ingester's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
 `ClickHouseRepository.insert_batch` writes each table over HTTP (`clickhouse-connect`), then `ClickHouseWriter` commits offsets. Offsets belong to the consumer, not a table, so the commit waits until every table in the flush is written; a failed insert leaves them uncommitted and the whole flush is replayed, including tables that were already written. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 

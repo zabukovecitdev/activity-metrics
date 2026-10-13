@@ -22,7 +22,7 @@ Grafana                       pick a host, see its series and anomalies
 | **collector** | Scrapes every agent every 10 s, fetches machine info every 5 min, and publishes both to Kafka. Gives each sample a `metric_id` (UUIDv7). | One place decides when and what to collect. `metric_id` follows the sample everywhere after this. |
 | **Kafka** | Topics `raw_metrics`, `machines`, `evaluations`. | Decouples collecting from scoring from storing: each can be down or replayed without losing data. *Learning goal.* |
 | **Flink job** | Keeps the last hour of each series (`machine_id`, `name`) and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. *Learning goal*: a plain Kafka consumer would do at this scale. |
-| **clickhouse-writer** | One process, one writer per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `TopicWriter` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its writer's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. |
+| **clickhouse-writer** | One process, one ingester per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `TopicIngester` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its ingester's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. |
 | **ClickHouse** | Tables `metrics`, `evaluations`, `machines`. Schema in `db/migrations`. | Fast time-range queries for Grafana, and a good fit for append-only data. |
 | **Grafana** | Dashboard `machine-usage-metrics.json`, provisioned on start. | Charts without writing a frontend. |
 
@@ -41,7 +41,7 @@ Two algorithms score every gauge except battery, `system.memory.limit`, and `sys
 - **MAD**: how far the value is from the median of the last hour, in units of the typical spread. Flags both directions. Needs 20 samples.
 - **EWMA**: how far the value rises above a moving average. Flags only rises. Needs 11 samples.
 
-On its own, each one flags tiny steps in a series that barely moves, so each has a minimum deviation per metric (`METRIC_DETECTORS` in `anomaly_detector/detection.py`):
+On its own, each one flags tiny steps in a series that barely moves, so each has a minimum deviation per metric (`DetectorRegistry.METRIC_DETECTORS` in `anomaly_detector/detectors/detector_registry.py`):
 
 | Metric | Smallest deviation that can be flagged |
 | --- | --- |
@@ -49,7 +49,7 @@ On its own, each one flags tiny steps in a series that barely moves, so each has
 | `system.memory.usage` | 2 % of its level |
 | anything else | 1 % of its level |
 
-To add an algorithm: write a class in `anomaly_detector/detectors.py` that returns the shared result fields, and add it to the detector lists. The table and dashboard don't change.
+To add an algorithm: write a class in `anomaly_detector/detectors/` that returns the shared result fields, and add it to the detector lists. The table and dashboard don't change.
 
 ## Running it
 

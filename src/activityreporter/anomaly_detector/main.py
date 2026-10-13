@@ -5,14 +5,12 @@ from pyflink.common import Configuration
 from pyflink.common.typeinfo import Types
 from pyflink.datastream import CheckpointingMode, StreamExecutionEnvironment
 
-from activityreporter.anomaly_detector.repository import (
-    EVALUATION_TYPE_INFO,
-    event_time_watermarks,
-    kafka_evaluations_sink,
-    kafka_raw_metrics_source,
-)
-from activityreporter.anomaly_detector.service import AnomalyDetector
-from activityreporter.shared.settings import KafkaSettings
+from activityreporter.anomaly_detector.flink.processors.anomaly_detection_function import AnomalyDetectionFunction
+from activityreporter.anomaly_detector.flink.sinks.kafka_evaluations_sink import KafkaEvaluationsSink
+from activityreporter.anomaly_detector.flink.sources.kafka_metrics_source import KafkaMetricsSource
+from activityreporter.anomaly_detector.flink.type_info.evaluation_type_info import EVALUATION_TYPE_INFO
+from activityreporter.anomaly_detector.flink.watermarks.event_time_watermarks import EventTimeWatermarks
+from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
 PARALLELISM = 2
 
@@ -36,12 +34,12 @@ def main() -> None:
     env.get_checkpoint_config().set_min_pause_between_checkpoints(500)
     env.get_checkpoint_config().set_checkpoint_timeout(60000)
 
-    raw_metrics = env.from_source(kafka_raw_metrics_source(kafka), event_time_watermarks(), "Kafka Source")
+    raw_metrics = env.from_source(KafkaMetricsSource.build(kafka), EventTimeWatermarks.build(), "Kafka Source")
     evaluations = raw_metrics \
         .key_by(lambda m: (m["machine_id"], m["name"]), key_type=Types.TUPLE([Types.STRING(), Types.STRING()])) \
-        .process(AnomalyDetector(), output_type=EVALUATION_TYPE_INFO)
+        .process(AnomalyDetectionFunction(), output_type=EVALUATION_TYPE_INFO)
 
-    evaluations.sink_to(kafka_evaluations_sink(kafka))
+    evaluations.sink_to(KafkaEvaluationsSink.build(kafka))
 
     env.execute("Anomaly Detection")
 

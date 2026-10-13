@@ -1,0 +1,6 @@
+from activityreporter.clickhouse_writer.ingesters.evaluations_ingester import EvaluationsIngester
+from activityreporter.clickhouse_writer.ingesters.machines_ingester import MachinesIngester
+from activityreporter.clickhouse_writer.ingesters.metrics_ingester import MetricsIngester
+from activityreporter.clickhouse_writer.ingesters.topic_ingester import TopicIngester
+
+INGESTERS: list[type[TopicIngester]] = [MetricsIngester, EvaluationsIngester, MachinesIngester]
