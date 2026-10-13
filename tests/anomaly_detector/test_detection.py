@@ -47,17 +47,17 @@ def test_mad_flags_a_spike_and_reports_its_band():
     evaluation = by_algorithm(build_metric(90.0), BASELINE)["mad"]
 
     # The CPU floor (10 points) is wider than the spread, so the band is the median +- 10.
-    assert evaluation == Evaluation(
-        metric_id="01a0e974-dc94-74df-ae87-e0e6064b18ef",
-        machine_id="server-42",
-        metric_name="system.cpu.utilization",
-        timestamp=1790595000.25,
-        algorithm="mad",
-        baseline=11.0,
-        lower=pytest.approx(1.0),
-        upper=pytest.approx(21.0),
-        is_anomaly=True,
-    )
+    assert evaluation.model_dump() == {
+        "metric_id": "01a0e974-dc94-74df-ae87-e0e6064b18ef",
+        "machine_id": "server-42",
+        "metric_name": "system.cpu.utilization",
+        "timestamp": 1790595000.25,
+        "algorithm": "mad",
+        "baseline": 11.0,
+        "lower": pytest.approx(1.0),
+        "upper": pytest.approx(21.0),
+        "is_anomaly": True,
+    }
 
 
 def test_mad_flags_drops_too():

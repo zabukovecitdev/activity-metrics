@@ -1,18 +1,7 @@
-from dataclasses import dataclass
-
 import numpy as np
 
 from activityreporter.anomaly_detector.errors import InsufficientDataError
-
-
-@dataclass(frozen=True)
-class Score:
-    score: float
-    median: float
-    # The scale the score is divided by, after the floor.
-    scale: float
-    # The scale from the values alone, before the floor.
-    spread_scale: float = 0.0
+from activityreporter.shared.models import MadScore
 
 
 class MAD:
@@ -33,7 +22,7 @@ class MAD:
         self.min_deviation = min_deviation
         self.min_relative = min_relative
 
-    def score(self, values: list[float]) -> Score:
+    def score(self, values: list[float]) -> MadScore:
         """Modified z-score of the last (most recent) value against all of them."""
         if len(values) < self.MINIMAL_POINT_COUNT:
             raise InsufficientDataError(values)
@@ -48,9 +37,9 @@ class MAD:
         scale = max(spread_scale, floor)
         if scale == 0:
             # Every value is the same and there is no floor.
-            return Score(score=0.0, median=median, scale=0.0)
+            return MadScore(score=0.0, median=median, scale=0.0)
 
-        return Score(score=float(deviations[-1]) / scale, median=median, scale=scale, spread_scale=spread_scale)
+        return MadScore(score=float(deviations[-1]) / scale, median=median, scale=scale, spread_scale=spread_scale)
 
     def is_anomaly(self, values: list[float]) -> bool:
         return self.score(values).score >= self.THRESHOLD

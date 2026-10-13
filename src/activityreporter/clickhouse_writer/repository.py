@@ -69,7 +69,7 @@ class ClickHouseRepository:
         if self._client is not None:
             self._client.close()
 
-    def __enter__(self) -> ClickHouseRepository:
+    def __enter__(self) -> Self:
         self.connect()
         return self
 

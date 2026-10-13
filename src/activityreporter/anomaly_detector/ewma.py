@@ -1,14 +1,7 @@
 import math
-from dataclasses import dataclass
 
 from activityreporter.anomaly_detector.errors import InsufficientDataError
-
-
-@dataclass(frozen=True)
-class Score:
-    score: float
-    average: float
-    scale: float
+from activityreporter.shared.models import EwmaScore
 
 
 class EWMA:
@@ -29,7 +22,7 @@ class EWMA:
         self.min_deviation = min_deviation
         self.min_relative = min_relative
 
-    def score(self, values: list[float]) -> Score:
+    def score(self, values: list[float]) -> EwmaScore:
         """Deviation of the last (most recent) value above the moving average, in units of the allowed margin."""
         if len(values) < self.MINIMAL_POINT_COUNT:
             raise InsufficientDataError(values)
@@ -43,7 +36,7 @@ class EWMA:
             scale = max(self.THRESHOLD_MULTIPLIER * math.sqrt(variance), floor)
             score = deviation / scale
             if index == len(values) - 1:
-                return Score(score=score, average=average, scale=scale)
+                return EwmaScore(score=score, average=average, scale=scale)
 
             is_anomaly = index >= self.WARMUP_READINGS and score > self.THRESHOLD
             alpha = self.ALPHA * self.ANOMALY_DAMPING if is_anomaly else self.ALPHA

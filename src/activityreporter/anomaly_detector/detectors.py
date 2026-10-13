@@ -1,18 +1,8 @@
-from dataclasses import dataclass
 from typing import Protocol
 
 from activityreporter.anomaly_detector.ewma import EWMA
 from activityreporter.anomaly_detector.mad import MAD
-
-
-@dataclass(frozen=True)
-class Result:
-    """What every algorithm reports for the latest value of a window, in the value's units:
-    the line and band to draw, and whether the value is outside it."""
-    baseline: float
-    lower: float | None
-    upper: float
-    is_anomaly: bool
+from activityreporter.shared.models import Result
 
 
 class Detector(Protocol):

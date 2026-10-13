@@ -1,8 +1,9 @@
-from dataclasses import dataclass
+import uuid
+
+from pydantic import BaseModel, Field, field_validator
 
 
-@dataclass
-class Evaluation:
+class Evaluation(BaseModel):
     """One metric sample scored by one algorithm, as published on the evaluations topic.
 
     Every scored sample gets one per algorithm, anomalous or not, so the line and
@@ -11,11 +12,17 @@ class Evaluation:
     without a lower band.
     """
     metric_id: str
-    machine_id: str
-    metric_name: str
+    machine_id: str = Field(min_length=1)
+    metric_name: str = Field(min_length=1)
     timestamp: float
-    algorithm: str
+    algorithm: str = Field(min_length=1)
     baseline: float
     lower: float | None
     upper: float
     is_anomaly: bool
+
+    @field_validator("metric_id")
+    @classmethod
+    def metric_id_is_uuid(cls, value: str) -> str:
+        uuid.UUID(value)
+        return value

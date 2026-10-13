@@ -1,5 +1,3 @@
-from dataclasses import astuple
-
 from pyflink.common import Row
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import KeyedProcessFunction, RuntimeContext
@@ -28,5 +26,5 @@ class AnomalyDetector(KeyedProcessFunction):
         self.recent_values.update(window)
 
         for evaluation in evaluate(value, [v for _, v in window]):
-            # Positional, in dataclass field order, which is the order of EVALUATION_TYPE_INFO.
-            yield Row(*astuple(evaluation))
+            # Positional, in model field order, which is the order of EVALUATION_TYPE_INFO.
+            yield Row(*evaluation.model_dump().values())

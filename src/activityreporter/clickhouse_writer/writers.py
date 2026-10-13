@@ -18,12 +18,6 @@ def metric_uuid(metric_id: Any) -> uuid.UUID:
     return uuid.UUID(str(metric_id))
 
 
-def non_empty(value: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"expected a non-empty string, got {value!r}")
-    return value
-
-
 class MetricsWriter(TopicWriter):
     table = "metrics"
     columns = ["metric_id", "machine_id", "name", "timestamp", "type", "unit", "value", "attributes"]
@@ -53,8 +47,8 @@ class EvaluationsWriter(TopicWriter):
 
     def to_row(self, e: Evaluation) -> list:
         return [
-            metric_uuid(e.metric_id), non_empty(e.machine_id), non_empty(e.metric_name), utc(e.timestamp),
-            non_empty(e.algorithm), float(e.baseline), None if e.lower is None else float(e.lower), float(e.upper),
+            metric_uuid(e.metric_id), e.machine_id, e.metric_name, utc(e.timestamp),
+            e.algorithm, float(e.baseline), None if e.lower is None else float(e.lower), float(e.upper),
             bool(e.is_anomaly),
         ]
 
