@@ -37,7 +37,12 @@ class EWMA:
             deviation = value - average
             floor = max(self.min_deviation, self.min_relative * abs(average))
             scale = max(self.THRESHOLD_MULTIPLIER * math.sqrt(variance), floor)
-            score = deviation / scale
+            # A series that is still exactly 0 has no spread and, with only a relative floor, no
+            # margin either. Dividing would kill the Flink task; a rise is then every margin at once.
+            if scale == 0:
+                score = math.inf if deviation > 0 else -math.inf if deviation < 0 else 0.0
+            else:
+                score = deviation / scale
             if index == len(window) - 1:
                 return Result(
                     baseline=average,
