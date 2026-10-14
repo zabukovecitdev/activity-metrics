@@ -3,5 +3,6 @@ __pycache__/
 *.pyc
 .idea/
 dist/
-flink/
+# Repo-root directory only: the local PyFlink venv and connector jar from `make anomaly-detector`.
+/flink/
 graphify-out/
