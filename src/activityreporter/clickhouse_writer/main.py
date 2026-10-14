@@ -6,13 +6,16 @@ from contextlib import ExitStack
 from prometheus_client import start_http_server
 
 from activityreporter.clickhouse_writer.consumers.kafka_records_consumer import KafkaRecordsConsumer
-from activityreporter.clickhouse_writer.sinks.all_sinks import SINKS
 from activityreporter.clickhouse_writer.repositories.clickhouse_repository import ClickHouseRepository
+from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import ClickHouseEvaluationsSink
+from activityreporter.clickhouse_writer.sinks.clickhouse_machines_sink import ClickHouseMachinesSink
+from activityreporter.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
 from activityreporter.shared.settings.clickhouse_settings import ClickHouseSettings
 from activityreporter.shared.settings.clickhouse_sink_settings import ClickHouseSinkSettings
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
 METRICS_PORT = 8000
+SINKS = [ClickHouseMetricsSink, ClickHouseEvaluationsSink, ClickHouseMachinesSink]
 
 
 def main() -> None:
@@ -22,13 +25,16 @@ def main() -> None:
     with ExitStack() as stack:
         # A Kafka consumer and a ClickHouse client are not thread safe, so each sink gets its own pair.
         sinks = [
-            sink_type.from_settings(
+            sink_type(
                 stack.enter_context(
-                    KafkaRecordsConsumer.from_settings(
-                        kafka, clickhouse_sink_settings, sink_type.topic(kafka), sink_type.group_id()
+                    KafkaRecordsConsumer(
+                        sink_type.topic(kafka),
+                        kafka.connection_string,
+                        sink_type.group_id(),
+                        clickhouse_sink_settings.poll_timeout_ms,
                     )
                 ),
-                stack.enter_context(ClickHouseRepository.from_settings(clickhouse)),
+                stack.enter_context(ClickHouseRepository(clickhouse)),
                 clickhouse_sink_settings,
             )
             for sink_type in SINKS

@@ -10,11 +10,9 @@ from pydantic import ValidationError
 
 from activityreporter.collector.clients.agent_urls import AgentUrls
 from activityreporter.collector.clients.http_agent_client import HttpAgentClient
-from activityreporter.collector.parsers.machine_parser import MachineParser
 from activityreporter.collector.parsers.metrics_parser import MetricsParser
-from activityreporter.collector.producers.kafka_producer_base import KafkaProducerBase
-from activityreporter.collector.producers.kafka_machines_producer import KafkaMachinesProducer
-from activityreporter.collector.producers.kafka_metrics_producer import KafkaMetricsProducer
+from activityreporter.collector.producers.kafka_records_producer import KafkaRecordsProducer
+from activityreporter.shared.models.machine import Machine
 from activityreporter.shared.observability.metrics import Metrics
 from activityreporter.shared.settings.collector_settings import CollectorSettings
 
@@ -26,8 +24,8 @@ class Collector:
         self,
         endpoints: Iterable[str],
         agent_metrics: HttpAgentClient,
-        raw_metrics: KafkaMetricsProducer,
-        machines: KafkaMachinesProducer,
+        raw_metrics: KafkaRecordsProducer,
+        machines: KafkaRecordsProducer,
         settings: CollectorSettings,
     ):
         self._endpoints = set(endpoints)
@@ -65,19 +63,21 @@ class Collector:
         if now - self._machine_refreshed_at.get(endpoint, -math.inf) < self._settings.machine_refresh_seconds:
             return
 
-        machine = await self._receive("machine", AgentUrls.machine_url(endpoint), MachineParser.parse, self._machines)
+        machine = await self._receive(
+            "machine", AgentUrls.machine_url(endpoint), Machine.model_validate_json, self._machines
+        )
         if machine is None:
             return
 
         try:
-            await asyncio.to_thread(self._machines.publish, machine)
+            await asyncio.to_thread(self._machines.publish, [machine])
         except KafkaError:
             logger.exception("Failed to publish machine info from %s to Kafka", endpoint)
             return
         # Only after a successful publish, so a failure is retried on the next scrape.
         self._machine_refreshed_at[endpoint] = now
 
-    async def _receive[T](self, kind: str, url: str, parse: Callable[[str], T], producer: KafkaProducerBase) -> T | None:
+    async def _receive[T](self, kind: str, url: str, parse: Callable[[str], T], producer: KafkaRecordsProducer) -> T | None:
         """`parse` applied to the body at `url`, or None once the failure is logged.
 
         The one place agent responses are validated: an invalid one is counted and sent to `producer`'s dead letter

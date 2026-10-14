@@ -1,8 +1,7 @@
 import pytest
 
-from activityreporter.anomaly_detector.detectors.detector_registry import DetectorRegistry
+from activityreporter.anomaly_detector.algorithms.mad import MAD
 from activityreporter.anomaly_detector.services.metric_evaluator import MetricEvaluator
-from activityreporter.anomaly_detector.detectors.mad_detector import MadDetector
 from activityreporter.shared.models.evaluation import Evaluation
 
 
@@ -79,15 +78,11 @@ def test_detectors_are_skipped_until_they_have_enough_values():
     assert MetricEvaluator.evaluate(build_metric(1.0), [1.0]) == []
 
 
-def test_unknown_metrics_get_the_default_detectors():
-    assert DetectorRegistry.for_metric("system.something.new") is DetectorRegistry.DEFAULT_DETECTORS
-
-
 def test_cpu_moving_less_than_ten_points_on_an_idle_machine_is_not_an_anomaly():
     assert not by_algorithm(build_metric(19.0), IDLE)["mad"].is_anomaly
     assert not by_algorithm(build_metric(19.0), IDLE)["ewma"].is_anomaly
     # Without the floor MAD would flag it.
-    assert MadDetector().evaluate(IDLE + [19.0]).is_anomaly
+    assert MAD().evaluate(IDLE + [19.0]).is_anomaly
 
 
 def test_cpu_rise_of_more_than_ten_points_on_an_idle_machine_is_an_anomaly():
@@ -115,11 +110,20 @@ def test_memory_jumping_more_than_two_percent_is_an_anomaly():
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"type": "counter"},
         {"name": "system.memory.limit"},
         {"name": "system.uptime"},
+        {"name": "system.something.new"},
     ],
 )
-def test_is_scored_skips_non_gauges_flags_and_uptime(overrides):
+def test_only_metrics_with_detectors_are_scored(overrides):
     assert not MetricEvaluator.is_scored(build_metric(1.0, **overrides))
     assert MetricEvaluator.is_scored(build_metric(1.0))
+
+
+def test_observe_gets_each_detectors_name_and_a_duration():
+    seen: list[tuple[str, float]] = []
+
+    MetricEvaluator.evaluate(build_metric(11.0), BASELINE + [11.0], observe=lambda name, seconds: seen.append((name, seconds)))
+
+    assert sorted(name for name, _ in seen) == ["ewma", "mad"]
+    assert all(seconds >= 0 for _, seconds in seen)

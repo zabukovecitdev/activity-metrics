@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import (
+    ClickHouseSinkBase,
+)
 from activityreporter.clickhouse_writer.sinks.row_values import RowValues
-from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
 from activityreporter.shared.models.evaluation import Evaluation
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
@@ -17,9 +19,15 @@ class ClickHouseEvaluationsSink(ClickHouseSinkBase):
     def topic(cls, kafka: KafkaSettings) -> str:
         return kafka.evaluations_topic
 
-    def to_row(self, e: Evaluation) -> list:
+    def to_row(self, record: Evaluation) -> list:
         return [
-            RowValues.metric_uuid(e.metric_id), e.machine_id, e.metric_name, RowValues.utc(e.timestamp),
-            e.algorithm, float(e.baseline), None if e.lower is None else float(e.lower), float(e.upper),
-            bool(e.is_anomaly),
+            RowValues.metric_uuid(record.metric_id),
+            record.machine_id,
+            record.metric_name,
+            RowValues.utc(record.timestamp),
+            record.algorithm,
+            float(record.baseline),
+            None if record.lower is None else float(record.lower),
+            float(record.upper),
+            bool(record.is_anomaly),
         ]

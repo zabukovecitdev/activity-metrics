@@ -4,13 +4,14 @@ import pytest
 from clickhouse_connect.driver.exceptions import OperationalError
 
 from activityreporter.clickhouse_writer.repositories.clickhouse_repository import ClickHouseRepository
+from activityreporter.shared.settings.clickhouse_settings import ClickHouseSettings
 
 COLUMNS = ["a"]
 
 
-def insert_with(client: MagicMock, rows: list, **repository_kwargs) -> None:
+def insert_with(client: MagicMock, rows: list, **settings) -> None:
     with patch("activityreporter.clickhouse_writer.repositories.clickhouse_repository.clickhouse_connect.get_client", return_value=client):
-        repository = ClickHouseRepository("localhost", 8123, "user", "password", "metrics", **repository_kwargs)
+        repository = ClickHouseRepository(ClickHouseSettings(**settings))
         repository.connect()
         repository.insert_batch("metrics", COLUMNS, rows)
 
@@ -49,7 +50,7 @@ def test_insert_batch_raises_after_exhausting_retries():
 
     with patch("activityreporter.clickhouse_writer.repositories.clickhouse_repository.time.sleep") as sleep, \
          pytest.raises(OperationalError):
-        insert_with(client, [["row"]], max_retries=3, backoff_base_seconds=1.0)
+        insert_with(client, [["row"]], max_retries=3, backoff_base_seconds=0.5)
 
     assert client.insert.call_count == 3
-    assert [call.args[0] for call in sleep.call_args_list] == [1.0, 2.0]
+    assert [call.args[0] for call in sleep.call_args_list] == [0.5, 1.0]

@@ -12,6 +12,10 @@ class AnomalyDetectionFunction(KeyedProcessFunction):
     """Emits one Evaluation row per detector for each scored sample, anomalous or not."""
 
     def open(self, runtime_context: RuntimeContext):
+        self.metrics_group = runtime_context.get_metrics_group()
+        self.evaluations_emitted = self.metrics_group.counter("evaluations_emitted")
+        # Per detector, as a count and a total of microseconds: the mean is rate(score_micros) / rate(scores).
+        self.score_metrics: dict[str, tuple] = {}
         self.recent_values = runtime_context.get_list_state(
             ListStateDescriptor("recent_values", Types.TUPLE([Types.LONG(), Types.DOUBLE()]))
         )
@@ -25,6 +29,15 @@ class AnomalyDetectionFunction(KeyedProcessFunction):
         window.append((event_time, value["value"]))
         self.recent_values.update(window)
 
-        for evaluation in MetricEvaluator.evaluate(value, [v for _, v in window]):
+        for evaluation in MetricEvaluator.evaluate(value, [v for _, v in window], observe=self._observe):
+            self.evaluations_emitted.inc()
             # Positional, in model field order, which is the order of EVALUATION_TYPE_INFO.
             yield Row(*evaluation.model_dump().values())
+
+    def _observe(self, algorithm: str, seconds: float) -> None:
+        if algorithm not in self.score_metrics:
+            group = self.metrics_group.add_group("algorithm", algorithm)
+            self.score_metrics[algorithm] = (group.counter("scores"), group.counter("score_micros"))
+        scores, micros = self.score_metrics[algorithm]
+        scores.inc()
+        micros.inc(round(seconds * 1_000_000))

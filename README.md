@@ -8,7 +8,7 @@ agent ──HTTP──▶ collector ─┬─▶ Kafka raw_metrics ─┬──�
 
 ## Project layout
 
-One package, `src/activityreporter/`, split by application. Each application keeps `main.py` (wiring and process start, `cli()`, nothing else) at its root, and everything else lives in a directory named for its role, one class per file, the file named after the class (`KafkaMetricsProducer` in `producers/kafka_metrics_producer.py`). `__init__.py` files are empty: import from the full module path.
+One package, `src/activityreporter/`, split by application. Each application keeps `main.py` (wiring and process start, `cli()`, nothing else) at its root, and everything else lives in a directory named for its role, one class per file, the file named after the class (`KafkaRecordsProducer` in `producers/kafka_records_producer.py`). `__init__.py` files are empty: import from the full module path.
 
 ```
 src/activityreporter/
@@ -18,19 +18,16 @@ src/activityreporter/
     observability/       Prometheus counters
   agent/               runs on every machine, serves /v1/metrics and /v1/machine
     api/                 FastAPI routes
-    readers/             PsutilSystemReader: reads the host
-    services/            MetricsService
+    services/            MetricsService: reads the host
   collector/           scrapes agents, publishes to raw_metrics and machines
     clients/             HttpAgentClient, AgentUrls
     config/              AgentsFileLoader: reads collector.toml
-    parsers/             MetricsParser, MachineParser
-    producers/           KafkaProducerBase, KafkaMetricsProducer, KafkaMachinesProducer
+    parsers/             MetricsParser
+    producers/           KafkaRecordsProducer
     services/            Collector
   anomaly_detector/    PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
-    algorithms/          MAD, EWMA
-    detectors/           Detector, MadDetector, EwmaDetector, DetectorRegistry
-    exceptions/          InsufficientDataError
-    models/              Result, MadScore, EwmaScore
+    algorithms/          Detector, MAD, EWMA
+    models/              Result
     services/            MetricEvaluator (no PyFlink)
     flink/               everything that imports PyFlink
       processors/          AnomalyDetectionFunction
@@ -104,10 +101,6 @@ Interactive docs: `GET /` redirects to `/docs`.
 | `system.memory.usage` | `By` | Always. Bytes used. |
 | `system.memory.limit` | `By` | Always. Bytes total. |
 | `system.uptime` | `s` | Always. Seconds since `psutil.boot_time()`. |
-| `system.battery.utilization` | `%` | Only when `psutil.sensors_battery()` returns a battery. |
-| `system.battery.charging` | `1` | Only when a battery is present. `1.0` if `power_plugged`, else `0.0`. |
-
-`sensors_battery()` raises `FileNotFoundError` when `/sys/class/power_supply` is missing (typical in a container). That error is treated as "no battery", and the two battery series are omitted.
 
 `attributes` is reserved for extra series dimensions. Current samples leave it unset.
 
@@ -175,35 +168,33 @@ On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHI
 
 Scoring rules (`MetricEvaluator` in `anomaly_detector/services/metric_evaluator.py`, called from `AnomalyDetectionFunction.process_element` in `anomaly_detector/flink/processors/`):
 
-- `type` other than `gauge`, and the names `system.battery.charging`, `system.battery.utilization`, `system.memory.limit`, and `system.uptime`, are dropped without state. Those series are flags, values that barely move, or ever-growing counters, so every small step would be flagged.
-- `DetectorRegistry.for_metric(name)` picks the detectors for the series: `METRIC_DETECTORS` for a metric listed there, `DEFAULT_DETECTORS` otherwise. Each scores the latest value against the window once the window has `min_points` values. Until then that detector emits nothing for the series.
+- Only the metrics in `MetricEvaluator.DETECTORS` are scored; every other series is dropped without state. `system.memory.limit` and `system.uptime` barely move or only grow, so every small step would be flagged.
+- Each of the metric's detectors scores the latest value against the window once the window has `min_points` values. Until then that detector emits nothing for the series.
 
 | Metric | `mad` | `ewma` |
 | --- | --- | --- |
 | `system.cpu.utilization` | `min_deviation=10.0` (percentage points) | `min_deviation=10.0` |
 | `system.memory.usage` | `min_relative=0.02` (2% of the median) | `min_relative=0.02` (2% of the average) |
-| any other scored gauge | `min_relative=0.01` | `min_relative=0.01` |
 
 Everything outside `anomaly_detector/flink/` is free of PyFlink, so its tests run in the regular `uv` environment.
 
 ### Detectors
 
-A detector (`anomaly_detector/detectors/`) has a `name`, `min_points`, and `evaluate(window) -> Result`. `Result` is what the dashboard draws, in the value's units:
+A detector (`Detector` in `anomaly_detector/algorithms/`) has a `name`, `min_points`, and `evaluate(window) -> Result`. `Result` is what the dashboard draws, in the value's units:
 
 | Field | `mad` | `ewma` |
 | --- | --- | --- |
 | `baseline` | window median | exponentially weighted average |
 | `lower` / `upper` | median ∓ `THRESHOLD × scale` | `None` / average + `THRESHOLD × scale` (only rises are flagged) |
 | `is_anomaly` | modified z-score `>= 3.5` | deviation ÷ scale `> 1.0` |
-| `min_points` | 20 | 11 (`EWMA.WARMUP_READINGS + 1`) |
+| `min_points` | 20 | 11 (`EWMA.WARMUP_READINGS + 1`); fewer raises `ValueError` |
 
 The score and threshold behind `is_anomaly` stay inside the detector; only the flag is published. A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
 
-To add an algorithm, write a class with that shape and add it to `DetectorRegistry.DEFAULT_DETECTORS` and the lists in `DetectorRegistry.METRIC_DETECTORS`. No schema, sink, or dashboard change is needed: its anomalies show up on every chart, labelled with its name.
+To add an algorithm, write a class with that shape and add it to the lists in `MetricEvaluator.DETECTORS`. To score another metric, add its entry there. No schema, sink, or dashboard change is needed: its anomalies show up on every chart, labelled with its name.
 
 `MAD` (`anomaly_detector/algorithms/mad.py`):
 
-- Needs at least 2 values; below that it raises `InsufficientDataError` from `anomaly_detector/exceptions/insufficient_data_error.py`.
 - Modified z-score: `|last - median| / (1.4826 × median absolute deviation)`, threshold `3.5`.
 - When the median absolute deviation is 0 (over half the values equal the median), the scale is `1.253314 × mean absolute deviation` instead (Iglewicz & Hoaglin). When that is 0 too, every value is equal and the score is 0. The score is always finite, so it can be encoded as JSON.
 - The scale has a floor, `max(min_deviation, min_relative × |median|) / THRESHOLD`, so a deviation smaller than `min_deviation` and than `min_relative` of the median never reaches the threshold. Without it, a series that barely moves has a tiny MAD and every step is flagged: memory in use changing by 32 KB on a 470 MB median scored 8, against a threshold of 3.5. Both default to 0, the textbook modified z-score.
@@ -248,7 +239,7 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 | `ClickHouseEvaluationsSink` | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` | `clickhouse-evaluations-writer` |
 | `ClickHouseMachinesSink` | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` | `clickhouse-machines-writer` |
 
-The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To load another topic, subclass `ClickHouseSinkBase` and add it to `SINKS` (`sinks/all_sinks.py`). A sink that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
+The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To load another topic, subclass `ClickHouseSinkBase` and add it to `SINKS` in `clickhouse_writer/main.py`. A sink that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
 
 Records are decoded as JSON into the sink's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
@@ -260,7 +251,7 @@ SELECT machine_id, name, count() FROM metrics FINAL GROUP BY machine_id, name
 
 `None` maps are stored as empty maps and `None` bands as `NULL`. Epoch-second and ISO-8601 times are converted to UTC `datetime`s (`DateTime64(3, 'UTC')`).
 
-ClickHouse errors retry up to 5 times. Backoff is `backoff_base_seconds * 2^(attempt-1)` with a 1 second base (1s, 2s, 4s, 8s). The HTTP client holds no transaction, so the same client is reused.
+ClickHouse errors retry up to `CLICKHOUSE_MAX_RETRIES` times (default 5). Backoff is `CLICKHOUSE_BACKOFF_BASE_SECONDS * 2^(attempt-1)` with a default base of 1 second (1s, 2s, 4s, 8s). The HTTP client holds no transaction, so the same client is reused.
 
 ## Database
 
@@ -318,8 +309,6 @@ Panels:
 - **CPU** and **Memory** gauges (memory is `system.memory.usage / system.memory.limit`), **Memory used**, and **Anomalies**: anomalous evaluations of every metric and algorithm in the time range.
 - **CPU usage** and **Memory usage** (with the limit dashed): the series with every algorithm's anomalies as points, one colour per algorithm (query `B`, split by the `algorithm` column). Where two algorithms flag the same sample, their points overlap; the tooltip lists both.
 - **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then a table of the last 200 anomalies with their values.
-
-Battery series are still collected when a machine has a battery, but the dashboard doesn't show them.
 
 ## Tests
 

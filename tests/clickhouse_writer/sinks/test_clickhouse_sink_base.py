@@ -4,11 +4,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic_core import to_jsonable_python
 
-from activityreporter.clickhouse_writer.sinks.all_sinks import SINKS
+from activityreporter.clickhouse_writer.main import SINKS
 from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import ClickHouseEvaluationsSink
 from activityreporter.clickhouse_writer.sinks.clickhouse_machines_sink import ClickHouseMachinesSink
 from activityreporter.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
 from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
+from activityreporter.shared.settings.clickhouse_sink_settings import ClickHouseSinkSettings
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
 from tests.support.builders import build_evaluation, build_machine, build_metric, kafka_record, parse_record
 
@@ -23,7 +24,7 @@ SINK_CASES = pytest.mark.parametrize(
 
 def test_clickhouse_sink_base_is_abstract():
     with pytest.raises(TypeError):
-        ClickHouseSinkBase(MagicMock(), MagicMock())
+        ClickHouseSinkBase(MagicMock(), MagicMock(), ClickHouseSinkSettings())
 
 
 @SINK_CASES
@@ -76,12 +77,13 @@ def machine_record(machine_id: str) -> MagicMock:
 
 
 def machine_row(machine_id: str) -> list:
-    return ClickHouseMachinesSink(MagicMock(), MagicMock())._parse(machine_record(machine_id))
+    return parse_record(ClickHouseMachinesSink, {**to_jsonable_python(build_machine()), "machine_id": machine_id})
 
 
 def build_sink(batch_size=100, batch_timeout_seconds=5.0):
     records, store = MagicMock(), MagicMock()
-    return ClickHouseMachinesSink(records, store, batch_size, batch_timeout_seconds), records, store
+    settings = ClickHouseSinkSettings(batch_size=batch_size, batch_timeout_seconds=batch_timeout_seconds)
+    return ClickHouseMachinesSink(records, store, settings), records, store
 
 
 def inserted(store) -> list:

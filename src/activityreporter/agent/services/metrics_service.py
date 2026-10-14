@@ -1,36 +1,49 @@
+import os
+import platform
 import time
+from datetime import datetime, timezone
 
-from activityreporter.agent.readers.psutil_system_reader import PsutilSystemReader
+import machineid
+import psutil
+
 from activityreporter.shared.models.machine import Machine
-from activityreporter.shared.models.metric import Metric
+from activityreporter.shared.models.metric_observation import MetricObservation
+from activityreporter.shared.models.metrics_response import MetricsResponse
 
 
 class MetricsService:
-    def __init__(self, reader: PsutilSystemReader):
-        self._reader = reader
-
-    async def collect_metrics(self) -> list[Metric]:
-        machine_id = self._reader.read_machine_id()
-        cpu_utilization = self._reader.read_cpu_utilization()
-        memory = self._reader.read_memory()
-        battery = self._reader.read_battery()
-        uptime = self._reader.read_uptime()
+    async def collect_metrics(self) -> MetricsResponse:
+        machine_id = machineid.id()
+        cpu_utilization = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        uptime = time.time() - psutil.boot_time()
         timestamp = time.time()
 
-        def gauge(name: str, unit: str, value: float) -> Metric:
-            return Metric(timestamp=timestamp, name=name, type="gauge", unit=unit, value=value, machine_id=machine_id)
+        def gauge(name: str, unit: str, value: float) -> MetricObservation:
+            return MetricObservation(name=name, type="gauge", unit=unit, value=value)
 
-        metrics = [
-            gauge("system.cpu.utilization", "%", cpu_utilization),
-            gauge("system.memory.usage", "By", memory.used),
-            gauge("system.memory.limit", "By", memory.total),
-            gauge("system.uptime", "s", uptime),
-        ]
-        if battery is not None and battery.percent is not None:
-            metrics.append(gauge("system.battery.utilization", "%", battery.percent))
-        if battery is not None and battery.power_plugged is not None:
-            metrics.append(gauge("system.battery.charging", "1", float(battery.power_plugged)))
-        return metrics
+        return MetricsResponse(
+            machine_id=machine_id,
+            timestamp=datetime.fromtimestamp(timestamp, timezone.utc),
+            metrics=[
+                gauge("system.cpu.utilization", "%", cpu_utilization),
+                gauge("system.memory.usage", "By", memory.used),
+                gauge("system.memory.limit", "By", memory.total),
+                gauge("system.uptime", "s", uptime),
+            ],
+        )
 
     async def describe_machine(self) -> Machine:
-        return self._reader.read_machine()
+        return Machine(
+            machine_id=machineid.id(),
+            hostname=platform.node(),
+            os=platform.system().lower(),
+            os_version=platform.release(),
+            architecture=platform.machine(),
+            # cpu_count() is None when the platform can't tell.
+            cores=psutil.cpu_count() or 0,
+            total_memory=psutil.virtual_memory().total,
+            total_disk=psutil.disk_usage(os.path.abspath(os.sep)).total,
+            last_boot=datetime.fromtimestamp(psutil.boot_time(), timezone.utc),
+            observed_at=time.time(),
+        )
