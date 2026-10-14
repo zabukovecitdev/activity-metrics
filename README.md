@@ -21,8 +21,8 @@ src/activityreporter/
     readers/             PsutilSystemReader: reads the host
     services/            MetricsService
   collector/           scrapes agents, publishes to raw_metrics and machines
-    agents/              AgentsFileLoader, AgentUrls
-    clients/             HttpAgentClient
+    clients/             HttpAgentClient, AgentUrls
+    config/              AgentsFileLoader: reads collector.toml
     parsers/             MetricsParser, MachineParser
     producers/           KafkaProducerBase, KafkaMetricsProducer, KafkaMachinesProducer
     services/            Collector

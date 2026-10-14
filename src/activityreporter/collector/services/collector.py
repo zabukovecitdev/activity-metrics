@@ -8,7 +8,7 @@ import httpx
 from kafka.errors import KafkaError
 from pydantic import ValidationError
 
-from activityreporter.collector.agents.agent_urls import AgentUrls
+from activityreporter.collector.clients.agent_urls import AgentUrls
 from activityreporter.collector.clients.http_agent_client import HttpAgentClient
 from activityreporter.collector.parsers.machine_parser import MachineParser
 from activityreporter.collector.parsers.metrics_parser import MetricsParser

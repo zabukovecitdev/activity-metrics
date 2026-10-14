@@ -5,8 +5,8 @@ import sys
 
 from prometheus_client import start_http_server
 
-from activityreporter.collector.agents.agent_urls import AgentUrls
-from activityreporter.collector.agents.agents_file_loader import AgentsFileLoader
+from activityreporter.collector.clients.agent_urls import AgentUrls
+from activityreporter.collector.config.agents_file_loader import AgentsFileLoader
 from activityreporter.collector.clients.http_agent_client import HttpAgentClient
 from activityreporter.collector.producers.kafka_machines_producer import KafkaMachinesProducer
 from activityreporter.collector.producers.kafka_metrics_producer import KafkaMetricsProducer

@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from activityreporter.collector.agents.agents_file_loader import AgentsFileLoader
+from activityreporter.collector.config.agents_file_loader import AgentsFileLoader
 
 
 def write(tmp_path, content: str) -> str:

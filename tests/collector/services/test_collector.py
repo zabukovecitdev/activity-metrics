@@ -7,7 +7,7 @@ from kafka.errors import KafkaError
 from prometheus_client import REGISTRY
 
 from activityreporter.agent.main import app
-from activityreporter.collector.agents.agent_urls import AgentUrls
+from activityreporter.collector.clients.agent_urls import AgentUrls
 from activityreporter.collector.clients.http_agent_client import HttpAgentClient
 from activityreporter.collector.services.collector import Collector
 from activityreporter.shared.settings.collector_settings import CollectorSettings
