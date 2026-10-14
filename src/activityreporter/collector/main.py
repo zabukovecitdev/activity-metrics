@@ -5,16 +5,15 @@ import sys
 
 from prometheus_client import start_http_server
 
-from activityreporter.collector.repository import (
-    HttpAgentMetricsRepository,
-    KafkaMachinesRepository,
-    KafkaRawMetricsRepository,
-    load_agents,
-    metrics_url,
-)
-from activityreporter.collector.service import Collector
+from activityreporter.collector.clients.agent_urls import AgentUrls
+from activityreporter.collector.config.agents_file_loader import AgentsFileLoader
+from activityreporter.collector.clients.http_agent_client import HttpAgentClient
+from activityreporter.collector.producers.kafka_machines_producer import KafkaMachinesProducer
+from activityreporter.collector.producers.kafka_metrics_producer import KafkaMetricsProducer
+from activityreporter.collector.services.collector import Collector
 from activityreporter.shared.observability.metrics import Metrics
-from activityreporter.shared.settings import CollectorSettings, KafkaSettings
+from activityreporter.shared.settings.collector_settings import CollectorSettings
+from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
 # Relative to the working directory: the repo root locally, /app in the container.
 AGENTS_FILE = "collector.toml"
@@ -30,13 +29,13 @@ async def main(agents: list[str]) -> None:
     main_task = asyncio.current_task()
     assert main_task is not None
     asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, main_task.cancel)
-    endpoints = {metrics_url(agent) for agent in agents}
+    endpoints = {AgentUrls.metrics_url(agent) for agent in agents}
     kafka = KafkaSettings()
     with (
-        KafkaRawMetricsRepository.from_settings(kafka) as raw_metrics,
-        KafkaMachinesRepository.from_settings(kafka) as machines,
+        KafkaMetricsProducer.from_settings(kafka) as raw_metrics,
+        KafkaMachinesProducer.from_settings(kafka) as machines,
     ):
-        async with HttpAgentMetricsRepository() as agent_metrics:
+        async with HttpAgentClient() as agent_metrics:
             collector = Collector(endpoints, agent_metrics, raw_metrics, machines, CollectorSettings())
             try:
                 await collector.run()
@@ -46,7 +45,7 @@ async def main(agents: list[str]) -> None:
 
 def cli() -> None:
     try:
-        agents = load_agents(AGENTS_FILE)
+        agents = AgentsFileLoader.load(AGENTS_FILE)
     except (OSError, ValueError) as e:
         sys.exit(f"Cannot load agents: {e}")
 

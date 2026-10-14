@@ -10,10 +10,10 @@ class Machine(BaseModel):
     ignored, so a producer may add one before every consumer knows it.
     """
     machine_id: str = Field(min_length=1)
-    hostname: str
-    os: str
-    os_version: str
-    architecture: str
+    hostname: str = Field(min_length=1)
+    os: str = Field(min_length=1)
+    os_version: str = Field(min_length=1)
+    architecture: str = Field(min_length=1)
     cores: NonNegativeInt
     total_memory: NonNegativeInt
     total_disk: NonNegativeInt

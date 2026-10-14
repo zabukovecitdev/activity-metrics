@@ -59,7 +59,7 @@ The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The 
 
 ### ClickHouse writer
 
-One process runs a writer per topic, each on its own thread; the variables below apply to all three.
+One process runs a sink per topic, each on its own thread; the variables below apply to all three.
 
 | Variable | Default | Compose |
 | --- | --- | --- |
@@ -69,6 +69,7 @@ One process runs a writer per topic, each on its own thread; the variables below
 | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
 | `WRITER_BATCH_SIZE` | `100` | unset |
 | `WRITER_BATCH_TIMEOUT_SECONDS` | `5.0` | unset |
+| `WRITER_POLL_TIMEOUT_MS` | `1000` | unset |
 | `CLICKHOUSE_HOST` | `localhost` | `clickhouse` |
 | `CLICKHOUSE_PORT` | `8123` | `8123` |
 | `CLICKHOUSE_DB` | `metrics` | `metrics` |
