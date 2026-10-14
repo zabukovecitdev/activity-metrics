@@ -1,15 +1,15 @@
 import numpy as np
 
-from activityreporter.anomaly_detector.exceptions.insufficient_data_error import InsufficientDataError
-from activityreporter.anomaly_detector.models.mad_score import MadScore
+from activityreporter.anomaly_detector.models.result import Result
 
 
 class MAD:
+    name = "mad"
+    min_points = 20
     SIGMA = 1.4826
     # Iglewicz & Hoaglin: when over half the values equal the median, MAD is 0
     # and the mean absolute deviation, scaled to match it, stands in.
     MEAN_SIGMA = 1.253314
-    MINIMAL_POINT_COUNT = 2
     THRESHOLD = 3.5
 
     def __init__(self, min_deviation: float = 0.0, min_relative: float = 0.0):
@@ -22,24 +22,18 @@ class MAD:
         self.min_deviation = min_deviation
         self.min_relative = min_relative
 
-    def score(self, values: list[float]) -> MadScore:
-        """Modified z-score of the last (most recent) value against all of them."""
-        if len(values) < self.MINIMAL_POINT_COUNT:
-            raise InsufficientDataError(values)
-
+    def evaluate(self, window: list[float]) -> Result:
+        """Modified z-score of the last (most recent) value against all of them, as the band around the median."""
         # float() throughout: numpy scalars can't be encoded by PyFlink's coders.
-        median = float(np.median(values))
-        deviations = np.abs(np.asarray(values, dtype=float) - median)
+        median = float(np.median(window))
+        deviations = np.abs(np.asarray(window, dtype=float) - median)
         spread_scale = self.SIGMA * float(np.median(deviations))
         if spread_scale == 0:
             spread_scale = self.MEAN_SIGMA * float(np.mean(deviations))
         floor = max(self.min_deviation, self.min_relative * abs(median)) / self.THRESHOLD
         scale = max(spread_scale, floor)
-        if scale == 0:
-            # Every value is the same and there is no floor.
-            return MadScore(score=0.0, median=median, scale=0.0)
+        margin = self.THRESHOLD * scale
+        # A scale of 0 means every value is the same and there is no floor: nothing stands out.
+        is_anomaly = scale > 0 and float(deviations[-1]) / scale >= self.THRESHOLD
 
-        return MadScore(score=float(deviations[-1]) / scale, median=median, scale=scale, spread_scale=spread_scale)
-
-    def is_anomaly(self, values: list[float]) -> bool:
-        return self.score(values).score >= self.THRESHOLD
+        return Result(baseline=median, lower=median - margin, upper=median + margin, is_anomaly=is_anomaly)

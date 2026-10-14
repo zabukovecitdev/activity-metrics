@@ -1,4 +1,4 @@
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,3 +10,5 @@ class ClickHouseSettings(BaseSettings):
     user: str = "user"
     password: SecretStr = SecretStr("password")
     db: str = "metrics"
+    max_retries: int = Field(5, gt=0)
+    backoff_base_seconds: float = Field(1.0, ge=0)

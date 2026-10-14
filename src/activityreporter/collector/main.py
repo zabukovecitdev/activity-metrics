@@ -8,10 +8,8 @@ from prometheus_client import start_http_server
 from activityreporter.collector.clients.agent_urls import AgentUrls
 from activityreporter.collector.config.agents_file_loader import AgentsFileLoader
 from activityreporter.collector.clients.http_agent_client import HttpAgentClient
-from activityreporter.collector.producers.kafka_machines_producer import KafkaMachinesProducer
-from activityreporter.collector.producers.kafka_metrics_producer import KafkaMetricsProducer
+from activityreporter.collector.producers.kafka_records_producer import KafkaRecordsProducer
 from activityreporter.collector.services.collector import Collector
-from activityreporter.shared.observability.metrics import Metrics
 from activityreporter.shared.settings.collector_settings import CollectorSettings
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
@@ -32,8 +30,8 @@ async def main(agents: list[str]) -> None:
     endpoints = {AgentUrls.metrics_url(agent) for agent in agents}
     kafka = KafkaSettings()
     with (
-        KafkaMetricsProducer.from_settings(kafka) as raw_metrics,
-        KafkaMachinesProducer.from_settings(kafka) as machines,
+        KafkaRecordsProducer(kafka.connection_string, kafka.raw_metrics_topic) as raw_metrics,
+        KafkaRecordsProducer(kafka.connection_string, kafka.machines_topic) as machines,
     ):
         async with HttpAgentClient() as agent_metrics:
             collector = Collector(endpoints, agent_metrics, raw_metrics, machines, CollectorSettings())
@@ -53,7 +51,7 @@ def cli() -> None:
     try:
         asyncio.run(main(agents))
     except KeyboardInterrupt:
-        Metrics.EXCEPTIONS.inc()
+        pass
 
 
 if __name__ == "__main__":

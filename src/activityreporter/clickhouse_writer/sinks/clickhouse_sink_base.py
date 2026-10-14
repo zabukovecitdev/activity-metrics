@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import json
 import logging
 import time
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
-from activityreporter.clickhouse_writer.consumers.kafka_records_consumer import KafkaRecordsConsumer
-from activityreporter.clickhouse_writer.sinks.record_parser import RecordParser
-from activityreporter.clickhouse_writer.repositories.clickhouse_repository import ClickHouseRepository
+from pydantic import BaseModel
+
+from activityreporter.clickhouse_writer.consumers.kafka_records_consumer import (
+    KafkaRecordsConsumer,
+)
+from activityreporter.clickhouse_writer.repositories.clickhouse_repository import (
+    ClickHouseRepository,
+)
 from activityreporter.shared.observability.metrics import Metrics
 from activityreporter.shared.settings.clickhouse_sink_settings import (
-    DEFAULT_BATCH_SIZE,
-    DEFAULT_BATCH_TIMEOUT_SECONDS,
     ClickHouseSinkSettings,
 )
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
@@ -30,19 +32,15 @@ class ClickHouseSinkBase(ABC):
 
     table: ClassVar[str]
     columns: ClassVar[list[str]]
-    record_type: ClassVar[type]
+    record_type: ClassVar[type[BaseModel]]
 
     def __init__(
-        self,
-        consumer: KafkaRecordsConsumer,
-        repository: ClickHouseRepository,
-        batch_size: int = DEFAULT_BATCH_SIZE,
-        batch_timeout_seconds: float = DEFAULT_BATCH_TIMEOUT_SECONDS,
+        self, consumer: KafkaRecordsConsumer, repository: ClickHouseRepository, settings: ClickHouseSinkSettings
     ):
         self._consumer = consumer
         self._repository = repository
-        self._batch_size = batch_size
-        self._batch_timeout_seconds = batch_timeout_seconds
+        self._batch_size = settings.batch_size
+        self._batch_timeout_seconds = settings.batch_timeout_seconds
         self._running = True
 
     @classmethod
@@ -53,17 +51,6 @@ class ClickHouseSinkBase(ABC):
     @classmethod
     def group_id(cls) -> str:
         return f"clickhouse-{cls.table}-writer"
-
-    @classmethod
-    def from_settings(
-        cls, consumer: KafkaRecordsConsumer, repository: ClickHouseRepository, settings: ClickHouseSinkSettings
-    ) -> ClickHouseSinkBase:
-        return cls(
-            consumer,
-            repository,
-            batch_size=settings.batch_size,
-            batch_timeout_seconds=settings.batch_timeout_seconds,
-        )
 
     @abstractmethod
     def to_row(self, record: Any) -> list:
@@ -88,23 +75,28 @@ class ClickHouseSinkBase(ABC):
             self._flush(rows)
 
     def _poll(self) -> list[list]:
-        parsed = (self._parse(record) for record in self._consumer.poll(max_records=self._batch_size))
+        records = self._consumer.poll(max_records=self._batch_size)
+        Metrics.MESSAGES_CONSUMED.labels(self.table).inc(len(records))
+        parsed = (self._parse(record) for record in records)
         return [row for row in parsed if row is not None]
 
     def _parse(self, record) -> list | None:
         # Converting here, not at insert time, keeps a bad record from failing every retry of its batch.
+        # Unknown fields are ignored: a producer may add one before every consumer is deployed with it.
         try:
-            return self.to_row(RecordParser.parse(self.record_type, json.loads(record.value)))
+            return self.to_row(self.record_type.model_validate_json(record.value))
         except (TypeError, ValueError) as e:
             logger.error(
                 "Skipping malformed record %s[%s]@%s: %r", record.topic, record.partition, record.offset, e
             )
+            # We should probably send the record to a dead letter topic, but we don't have one yet. For now, just count it.
             Metrics.MALFORMED.labels(self.table).inc()
             return None
 
     def _flush(self, rows: list[list]) -> None:
         # A crash before the commit replays the batch, and ReplacingMergeTree collapses the duplicates.
-        self._repository.insert_batch(self.table, self.columns, rows)
-        self._consumer.commit()
+        with Metrics.WRITE_SECONDS.labels(self.table).time():
+            self._repository.insert_batch(self.table, self.columns, rows)
+            self._consumer.commit()
         Metrics.ROWS_WRITTEN.labels(self.table).inc(len(rows))
         logger.info("Wrote %d %s rows to ClickHouse and committed offsets", len(rows), self.table)

@@ -58,7 +58,7 @@
 ### 1.4 Dead code  ⏱ 10 min
 - `MAD.is_anomaly()` and `EWMA.is_anomaly()` — only `.score()` is used by the detectors.
 - `collector/main.py` → `EXCEPTIONS` counter only increments on Ctrl-C. A metric that measures "the dev pressed Ctrl-C" is noise. Delete it.
-- **Done when:** removed, tests green. ☐
+- **Done when:** removed, tests green. ☑
 
 ---
 
@@ -71,19 +71,19 @@
 - **Interview question:** *"Why does MadDetector wrap MAD? What does the wrapper add?"* Honest answer today: a different return type. That's a weak answer.
 - **Do:** let `MAD` and `EWMA` classes themselves implement `name`, `min_points`, `evaluate(window) -> Result`. Delete `MadDetector`, `EwmaDetector`, and the intermediate `Score` classes (fold what you need into `Result`, or keep the numbers local).
 - Keep the `Detector` Protocol (two classes use it, it's 5 lines).
-- **Done when:** `detectors.py` is gone or < 25 lines, tests ported, all green. ☐
+- **Done when:** `detectors.py` is gone or < 25 lines, tests ported, all green. ☑
 
 ### 2.2 "Scored" blacklist → allowlist  ⏱ 30 min
 - **Today:** `NOT_ANOMALY_SCORED = {battery…, memory.limit, uptime}` + `DEFAULT_DETECTORS` (1 % rule for "anything else") + `METRIC_DETECTORS`.
 - **Problem:** you wrote rules for metrics that aren't scored or shown. A reader asks *"what's 'any other gauge'?"* Answer: nothing exists.
 - **Do:** score **only** what's in `METRIC_DETECTORS` (cpu, memory.usage). Delete `NOT_ANOMALY_SCORED`, `DEFAULT_DETECTORS`; `is_scored` becomes `name in METRIC_DETECTORS`.
 - **Bonus:** the README scoring table shrinks from 3 rows to 2.
-- **Done when:** adding a scored metric = one dict entry. ☐
+- **Done when:** adding a scored metric = one dict entry. ☑
 
 ### 2.3 Cut battery metrics  ⏱ 20 min
 - Collected, published, stored. Never scored, never on the dashboard (README admits it).
 - YAGNI. Delete from `agent/service.py`, `agent/repository.py` (`read_battery`), README table, tests.
-- **Done when:** agent returns 3 metrics. ☐
+- **Done when:** agent returns 3 metrics. ☑
 
 ### 2.4 `Metric.metric_id` is `str | None`  ⏱ 45 min
 - **Why it's smelly:** the agent builds a `Metric` *without* an id, the collector fills it in. A type that's "valid but incomplete" leaks into the writer, which has to re-validate the id.
