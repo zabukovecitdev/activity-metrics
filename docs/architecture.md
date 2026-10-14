@@ -21,7 +21,7 @@ Grafana                       pick a host, see its series and anomalies
 | **agent** | FastAPI app on every machine. `/v1/metrics` returns CPU, memory, uptime, and battery when there is one; `/v1/machine` returns hostname, OS, cores, memory, and disk. | Each machine only has to answer HTTP. It knows nothing about Kafka or the database. |
 | **collector** | Scrapes every agent every 10 s, fetches machine info every 5 min, and publishes both to Kafka. Gives each sample a `metric_id` (UUIDv7). | One place decides when and what to collect. `metric_id` follows the sample everywhere after this. |
 | **Kafka** | Topics `raw_metrics`, `machines`, `evaluations`. | Decouples collecting from scoring from storing: each can be down or replayed without losing data. *Learning goal.* |
-| **Flink job** | Keeps the last hour of each series (`machine_id`, `name`) and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. *Learning goal*: a plain Kafka consumer would do at this scale. |
+| **Flink job** | Keeps the last hour of each series (`machine_id`, `name`) and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. A checkout of this tree cannot start it: `main.py` imports Kafka source, sink, type-info, and watermark modules under `anomaly_detector/flink/` that are not in git. | Stateful stream processing per series. *Learning goal*: a plain Kafka consumer would do at this scale. |
 | **clickhouse-writer** | One process, one sink per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `ClickHouseSinkBase` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its sink's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. |
 | **ClickHouse** | Tables `metrics`, `evaluations`, `machines`. Schema in `db/migrations`. | Fast time-range queries for Grafana, and a good fit for append-only data. |
 | **Grafana** | Dashboard `machine-usage-metrics.json`, provisioned on start. | Charts without writing a frontend. |
@@ -55,7 +55,7 @@ To add an algorithm: write a class in `anomaly_detector/detectors/` that returns
 
 - `make up` starts the stack; `make agent` runs an agent on this machine.
 - `WAIT=300 make smoke` checks every step end to end.
-- After a change to the Flink job: `docker compose restart jobmanager`.
+- After a change to the Flink job: `docker compose restart jobmanager`. That restart fails until the missing `anomaly_detector/flink/` modules are in the tree; see [operations](operations.md).
 
 Details are in [README](../README.md) and [operations](operations.md).
 

@@ -37,14 +37,14 @@
 *Goal: nothing in the repo contradicts itself or looks unfinished.*
 
 ### 1.1 Docs say "no checkpointing", code has checkpointing  ⏱ 10 min
-- **Where:** `docs/architecture.md` → "Not doing yet" says *"Flink checkpointing… restarted job starts with empty windows"*. But `anomaly_detector/main.py` enables `enable_checkpointing(1000)` EXACTLY_ONCE, and `docker-compose.yml` mounts a `flink_checkpoints` volume.
+- **Where:** `docs/operations.md` → "Flink job" still says checkpointing is off and a restarted job starts with empty windows. `docs/architecture.md` already describes the checkpoint. `anomaly_detector/main.py` enables `enable_checkpointing(1000)` EXACTLY_ONCE, and `docker-compose.yml` mounts a `flink_checkpoints` volume.
 - **Why it's dangerous:** first thing an interviewer reads is the doc, first thing they open is `main.py`. They *will* notice.
-- **Do:** delete that bullet. Replace with one honest sentence: *"Flink state is checkpointed every second to a local volume; the Kafka sink is at-least-once, duplicates are collapsed by ReplacingMergeTree."*
-- **Before writing that, check one thing:** `kafka_evaluations_sink` in `anomaly_detector/repository.py` sets no `delivery_guarantee`. PyFlink's default is NONE/at-least-once, **not** exactly-once (verify in the connector docs). So "EXACTLY_ONCE" in `main.py` only covers Flink-internal state. Be able to say that out loud.
+- **Do:** delete the operations sentence. Replace with one honest sentence: *"Flink state is checkpointed every second to a local volume; the Kafka sink is at-least-once, duplicates are collapsed by ReplacingMergeTree."*
+- **Before writing that, check one thing:** the sink that set the delivery guarantee was `kafka_evaluations_sink` in `anomaly_detector/repository.py` at `fb3a28e`, and it did set `DeliveryGuarantee.AT_LEAST_ONCE`. That file was deleted in the role restructure. `main.py` now imports `KafkaEvaluationsSink` from `anomaly_detector/flink/sinks/kafka_evaluations_sink.py`, which is not in git (the `flink/` gitignore). `EXACTLY_ONCE` in `main.py` only covers Flink-internal state. Be able to say that out loud.
 - **Done when:** doc and code tell the same story. ☐
 
 ### 1.2 The half-built DLQ  ⏱ 15 min
-- **Where:** uncommitted diff in `collector/repository.py`: `self._dlq_topic = f"{topic}_dlq"`. Nothing reads it.
+- **Where:** `KafkaProducerBase` in `collector/producers/kafka_producer_base.py` sets `self._dlq_topic = f"{topic}_dlq"`. `Collector._receive` publishes invalid agent bodies there (`raw_metrics_dlq`, `machines_dlq`). Nothing consumes those topics.
 - **Decide (pick ONE, don't dither):**
   - **Delete it.** (Recommended. The writer already logs + counts malformed records via the `MALFORMED` counter.)
   - OR implement: on publish failure → send to the DLQ. Only if you can explain what consumes the DLQ. You can't yet, so delete.
@@ -67,11 +67,11 @@
 *Goal: fewer concepts to explain at a whiteboard. Each task REMOVES lines.*
 
 ### 2.1 Four layers for one calculation → two  ⏱ 45 min
-- **Today:** `MadDetector` → builds `MAD` → returns `Score` → mapped to `Result`. Same for EWMA. Plus `Protocol Detector`.
+- **Today:** `MadDetector` (`detectors/mad_detector.py`) builds `MAD`, gets a `MadScore`, and returns `Result`. Same for EWMA (`EwmaScore`). Plus `Protocol Detector` in `detectors/detector.py`. The old `detectors.py` is gone; the wrapper is not.
 - **Interview question:** *"Why does MadDetector wrap MAD? What does the wrapper add?"* Honest answer today: a different return type. That's a weak answer.
 - **Do:** let `MAD` and `EWMA` classes themselves implement `name`, `min_points`, `evaluate(window) -> Result`. Delete `MadDetector`, `EwmaDetector`, and the intermediate `Score` classes (fold what you need into `Result`, or keep the numbers local).
 - Keep the `Detector` Protocol (two classes use it, it's 5 lines).
-- **Done when:** `detectors.py` is gone or < 25 lines, tests ported, all green. ☐
+- **Done when:** `MadDetector` and `EwmaDetector` no longer wrap `MAD` and `EWMA` (they still do, under `detectors/`), tests ported, all green. ☐
 
 ### 2.2 "Scored" blacklist → allowlist  ⏱ 30 min
 - **Today:** `NOT_ANOMALY_SCORED = {battery…, memory.limit, uptime}` + `DEFAULT_DETECTORS` (1 % rule for "anything else") + `METRIC_DETECTORS`.
@@ -82,23 +82,23 @@
 
 ### 2.3 Cut battery metrics  ⏱ 20 min
 - Collected, published, stored. Never scored, never on the dashboard (README admits it).
-- YAGNI. Delete from `agent/service.py`, `agent/repository.py` (`read_battery`), README table, tests.
+- YAGNI. Delete from `agent/services/metrics_service.py` and `agent/readers/psutil_system_reader.py` (`read_battery`), README table, tests.
 - **Done when:** agent returns 3 metrics. ☐
 
 ### 2.4 `Metric.metric_id` is `str | None`  ⏱ 45 min
 - **Why it's smelly:** the agent builds a `Metric` *without* an id, the collector fills it in. A type that's "valid but incomplete" leaks into the writer, which has to re-validate the id.
-- **Do:** agent returns `MetricObservation`s directly (that type already exists for the API). Delete the `Metric` → `MetricObservation` mapping in `agent/api.py`. Collector builds the full `Metric` with a real id. Now `metric_id: str` (required).
-- **Also:** one modelling style. Today `Machine` is pydantic, `Metric`/`Evaluation` are dataclasses. Interviewer: *"Why both?"* **Either** write the reason in one comment above the models (Flink-side rows are dataclasses), **or** convert the non-Flink ones to pydantic.
+- **Do:** agent returns `MetricObservation`s directly (that type already exists for the API). Delete the `Metric` → `MetricObservation` mapping in `agent/api/v1_router.py`. Collector builds the full `Metric` with a real id. Now `metric_id: str` (required).
+- **Also:** one modelling style. `Machine`, `Metric`, and `Evaluation` are all pydantic models. `metric_id` on `Metric` is still `str | None`.
 - **Done when:** no `Optional` id anywhere; one-line comment explains the split if it stays. ☐
 
 ### 2.5 Blocking call inside `async def`  ⏱ 15 min
-- `agent/api.py` handlers are `async def`, but `psutil.cpu_percent(interval=0.1)` **blocks 100 ms on the event loop**. Two concurrent scrapes serialize.
+- `agent/api/v1_router.py` handlers are `async def`, but `psutil.cpu_percent(interval=0.1)` **blocks 100 ms on the event loop**. Two concurrent scrapes serialize. The call is `PsutilSystemReader.read_cpu_utilization`, reached from `MetricsService.collect_metrics`.
 - Classic interview catch.
-- **Do:** make `service.collect_metrics` / `describe_machine` and the handlers plain `def` (FastAPI runs them in a threadpool). Nothing here is truly async.
+- **Do:** make `MetricsService.collect_metrics` / `describe_machine` and the handlers in `agent/api/v1_router.py` plain `def` (FastAPI runs them in a threadpool). Nothing here is truly async.
 - **Done when:** no `async def` without an `await` in `agent/`. ☐
 
 ### 2.6 Small things (batch in one commit)  ⏱ 20 min
-- `collector/service.py::run`: `collect()` then `sleep(10)` → interval is 10 s **+ scrape time**, so it drifts. Either comment it ("gap between rounds, not a fixed rate") or sleep for the remainder.
+- `collector/services/collector.py::run`: `collect()` then `sleep(scrape_interval_seconds)` → interval is the scrape time **plus** the sleep, so it drifts. Either comment it ("gap between rounds, not a fixed rate") or sleep for the remainder.
 - `Metric.timestamp: float | int` → `float`.
 - Flink image runs Python 3.10, `Makefile` builds a 3.11 venv, and the code says "no newer syntax". Make the Makefile match the image.
 - **Done when:** each either fixed or commented. ☐

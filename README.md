@@ -8,7 +8,7 @@ agent ──HTTP──▶ collector ─┬─▶ Kafka raw_metrics ─┬──�
 
 ## Project layout
 
-One package, `src/activityreporter/`, split by application. Each application keeps `main.py` (wiring and process start, `cli()`, nothing else) at its root, and everything else lives in a directory named for its role, one class per file, the file named after the class (`KafkaMetricsProducer` in `producers/kafka_metrics_producer.py`). `__init__.py` files are empty: import from the full module path.
+One package, `src/activityreporter/`, split by application. Each application keeps `main.py` (wiring and process start, `cli()`, nothing else) at its root, and everything else lives in a directory named for its role, one class per file, the file named after the class (`KafkaMetricsProducer` in `producers/kafka_metrics_producer.py`). `__init__.py` files are empty. `from activityreporter.shared.models import Metric` raises `ImportError`; import the module, `activityreporter.shared.models.metric`.
 
 ```
 src/activityreporter/
@@ -32,16 +32,12 @@ src/activityreporter/
     exceptions/          InsufficientDataError
     models/              Result, MadScore, EwmaScore
     services/            MetricEvaluator (no PyFlink)
-    flink/               everything that imports PyFlink
+    flink/               PyFlink process function; the source, sink, types, and watermarks are not in git (see below)
       processors/          AnomalyDetectionFunction
-      sources/             KafkaMetricsSource
-      sinks/               KafkaEvaluationsSink
-      type_info/           RowTypeInfo, METRIC_TYPE_INFO, EVALUATION_TYPE_INFO
-      watermarks/          EventTimeWatermarks, EpochSecondsTimestampAssigner
   clickhouse_writer/   one sink per topic, Kafka topic → ClickHouse table
     consumers/           KafkaRecordsConsumer
     repositories/        ClickHouseRepository
-    sinks/           ClickHouseSinkBase, ClickHouseMetricsSink, ClickHouseEvaluationsSink, ClickHouseMachinesSink
+    sinks/               ClickHouseSinkBase, ClickHouseMetricsSink, ClickHouseEvaluationsSink, ClickHouseMachinesSink
 tests/                 mirrors src/activityreporter/; shared builders in tests/support/
 ```
 
@@ -96,7 +92,7 @@ Interactive docs: `GET /` redirects to `/docs`.
 }
 ```
 
-`timestamp` is the sample time from `service.collect_metrics()` (`time.time()`), formatted as UTC ISO-8601.
+`timestamp` is the sample time from `MetricsService.collect_metrics()` (`agent/services/metrics_service.py`, `time.time()`), formatted as UTC ISO-8601.
 
 | Name | Unit | When present |
 | --- | --- | --- |
@@ -128,15 +124,15 @@ It adds `/v1/metrics` and `/v1/machine` to each. The file is read once, at start
 
 Every 10 seconds (`COLLECTOR_SCRAPE_INTERVAL_SECONDS`) the collector GETs each agent's `/v1/metrics`. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
 
-A non-2xx response or a transport error is logged and skipped. One bad agent does not cancel the other scrapes in that round.
+A non-2xx response or a transport error is logged as `Failed to fetch metrics from ...` or `Failed to fetch machine from ...` and skipped. One bad agent does not cancel the other scrapes in that round.
 
-Both responses, `/v1/metrics` and `/v1/machine`, are validated in one place, `Collector._receive`: the body is parsed with `model_validate_json`, so invalid JSON and a wrong shape fail the same way. An invalid response is logged, counted in `activityreporter_collector_invalid_responses_total{kind="metrics"|"machine"}`, and published as received to the dead letter topic of the topic it was meant for, `raw_metrics_dlq` or `machines_dlq`, keyed by the agent URL:
+`Collector._receive` (`collector/services/collector.py`) is the only caller. It hands the raw body to `MetricsParser.parse` or `MachineParser.parse`, and each parser calls `model_validate_json`, so invalid JSON and a wrong shape fail the same way. An invalid response is logged as `Invalid metrics from ...` or `Invalid machine from ...`, counted in `activityreporter_collector_invalid_responses_total{kind="metrics"|"machine"}`, and published as received to the dead letter topic of the topic it was meant for, `raw_metrics_dlq` or `machines_dlq`, keyed by the agent URL:
 
 ```json
 {"url": "http://192.168.1.20:8080/v1/metrics", "error": "1 validation error for MetricsResponse ...", "body": "<the response body>"}
 ```
 
-One invalid metric sends the whole response there. A failure to publish to the dead letter topic is logged and the scrape carries on.
+One invalid metric sends the whole response there. A failure to publish to the dead letter topic is logged as `Failed to dead-letter invalid metrics from ...` (or `machine`) and the scrape carries on. Only a `ValidationError` is dead-lettered.
 
 Required JSON fields: `machine_id` (string), `timestamp` (ISO-8601), `metrics` (array of objects with `name`, `type`, `unit`, `value`). `attributes` is optional. The response is validated against `MetricsResponse` (`shared/models/metrics_response.py`): `machine_id` must be non-empty and `timestamp` must carry a UTC offset. The shared timestamp is converted to epoch seconds and copied onto every `Metric`. Each `Metric` gets its own `metric_id`, a UUIDv7 string from `uuid.uuid7()`: the sample's identity from here on, in Kafka, in `metrics`, and in its `evaluations`. The agent does not send one.
 
@@ -161,17 +157,24 @@ Kafka record shape:
 
 ### Machine info
 
-On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. A response missing a field, or with an empty `machine_id`, is logged as `Malformed machine info from ...`.
+On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port. `AgentUrls.machine_url` replaces the metrics path with `/v1/machine`. The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`) by `KafkaMachinesProducer`, keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged (`Failed to fetch machine from ...`, `Invalid machine from ...`, or `Failed to publish machine info from ... to Kafka`) and retried on the next scrape; it never stops that endpoint's metrics.
 
 ## Anomaly detection
 
-`anomaly_detector/main.py` is the PyFlink job `Anomaly Detection`.
+`anomaly_detector/main.py` is the PyFlink job `Anomaly Detection`. Parallelism is 2. The stream is keyed by `(machine_id, name)` so each series keeps its own state. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`. State, in `AnomalyDetectionFunction`, is the last hour of `(event_time, value)` pairs for that key (`WINDOW_MS`).
 
-- Source topic: `KAFKA_RAW_METRICS_TOPIC` (default `raw_metrics`), consumer group `anomaly-detector`, starting offset `earliest`.
-- Sink topic: `KAFKA_EVALUATIONS_TOPIC` (default `evaluations`). Every scored sample produces one evaluation per detector, anomalous or not, so the baseline and bands can be drawn next to the raw series.
-- Event time is `timestamp * 1000` milliseconds. Out-of-orderness bound is 5 seconds. Kafka record timestamps are not used.
-- Parallelism is 2. The stream is keyed by `(machine_id, name)` so each series keeps its own state. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`.
-- State is the last hour of `(event_time, value)` pairs for that key (`WINDOW_MS`).
+`main.py` then imports four modules that are not in the repository:
+
+| Import | Path `main.py` expects |
+| --- | --- |
+| `KafkaMetricsSource` | `anomaly_detector/flink/sources/kafka_metrics_source.py` |
+| `KafkaEvaluationsSink` | `anomaly_detector/flink/sinks/kafka_evaluations_sink.py` |
+| `EVALUATION_TYPE_INFO` | `anomaly_detector/flink/type_info/evaluation_type_info.py` |
+| `EventTimeWatermarks` | `anomaly_detector/flink/watermarks/event_time_watermarks.py` |
+
+`.gitignore` lists `flink/`, which matches every directory of that name, not only the local `flink/` virtualenv at the repo root. `git add` skips new files under `anomaly_detector/flink/`. The processor file is present only because it was renamed from the already-tracked `service.py`. With PyFlink installed, importing the job raises `ModuleNotFoundError: No module named 'activityreporter.anomaly_detector.flink.sinks'`, the package of the first missing import.
+
+The last committed copy of that wiring is `anomaly_detector/repository.py` at `fb3a28e`, deleted in the restructure. A checkout runs `main.py` and stops on the missing imports. That deleted file built the source from `KAFKA_RAW_METRICS_TOPIC` (default `raw_metrics`), group `anomaly-detector`, starting offset `earliest`; the sink to `KAFKA_EVALUATIONS_TOPIC` (default `evaluations`) with `DeliveryGuarantee.AT_LEAST_ONCE` and no Kafka key; event time `int(value["timestamp"] * 1000)` milliseconds with a 5-second out-of-orderness bound (`MAX_OUT_OF_ORDERNESS`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` had to name the same fields as `Metric` and `Evaluation`, or `row_type_info` raised `RuntimeError` at import. Every scored sample produced one evaluation per detector, anomalous or not.
 
 Scoring rules (`MetricEvaluator` in `anomaly_detector/services/metric_evaluator.py`, called from `AnomalyDetectionFunction.process_element` in `anomaly_detector/flink/processors/`):
 
@@ -195,7 +198,7 @@ A detector (`anomaly_detector/detectors/`) has a `name`, `min_points`, and `eval
 | `baseline` | window median | exponentially weighted average |
 | `lower` / `upper` | median ∓ `THRESHOLD × scale` | `None` / average + `THRESHOLD × scale` (only rises are flagged) |
 | `is_anomaly` | modified z-score `>= 3.5` | deviation ÷ scale `> 1.0` |
-| `min_points` | 20 | 11 (`EWMA.WARMUP_READINGS + 1`) |
+| `min_points` | 20 | 11 (`EWMA.MINIMAL_POINT_COUNT`, which is `WARMUP_READINGS + 1`) |
 
 The score and threshold behind `is_anomaly` stay inside the detector; only the flag is published. A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
 
@@ -213,11 +216,11 @@ To tune the floors, count what they let through, for example `SELECT metric_name
 
 `EWMA` (`anomaly_detector/algorithms/ewma.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
 
-Input rows follow `Metric` (`shared/models/metric.py`) and output rows follow `Evaluation` (`shared/models/evaluation.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/flink/type_info/` must name the same fields as those models or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
+Input rows follow `Metric` (`shared/models/metric.py`) and output rows follow `Evaluation` (`shared/models/evaluation.py`). The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax. The row-type check that enforced that match was `row_type_info` in the deleted `repository.py`.
 
 ### Evaluation record
 
-Published on `evaluations` as JSON, without a Kafka key:
+`Evaluation` is published on `evaluations` as JSON, without a Kafka key. The sink that writes it is one of the modules missing above; this is the model:
 
 ```json
 {
@@ -250,7 +253,7 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To load another topic, subclass `ClickHouseSinkBase` and add it to `SINKS` (`sinks/all_sinks.py`). A sink that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
 
-Records are decoded as JSON into the sink's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into the sink's record model (`RecordParser`) and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record <topic>[<partition>]@<offset>` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. Each poll waits up to `WRITER_POLL_TIMEOUT_MS` (default 1000; `ClickHouseSinkSettings.poll_timeout_ms` is an `int` with `gt=0`). `SIGTERM` sets a flag that each sink checks after the current poll, then flushes a partial batch. `insert_batch` finishes its retries before the loop reads that flag again. An empty poll does not write or commit.
 
 `ClickHouseRepository.insert_batch` writes the sink's table over HTTP (`clickhouse-connect`), then `ClickHouseSinkBase` commits the offsets of its own consumer. A failed insert leaves them uncommitted and the whole batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 

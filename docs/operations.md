@@ -30,7 +30,7 @@ Process commands from the `Makefile`:
 
 ## Environment
 
-Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are noted when they differ.
+Defaults below are the field defaults of the pydantic-settings classes in `shared/settings/`, one class per file: `KafkaSettings` (`KAFKA_`), `ClickHouseSettings` (`CLICKHOUSE_`), `ClickHouseSinkSettings` (`WRITER_`), `CollectorSettings` (`COLLECTOR_`), and `AgentSettings` (no prefix, so the field is `PORT`). Compose overrides are noted when they differ.
 
 ### Collector
 
@@ -75,6 +75,8 @@ One process runs a sink per topic, each on its own thread; the variables below a
 | `CLICKHOUSE_DB` | `metrics` | `metrics` |
 | `CLICKHOUSE_USER` | `user` | `user` |
 | `CLICKHOUSE_PASSWORD` | `password` | `password` |
+
+`WRITER_POLL_TIMEOUT_MS` is `ClickHouseSinkSettings.poll_timeout_ms`, passed into `KafkaRecordsConsumer`. Each `poll` blocks up to that many milliseconds. `0` and any non-positive integer are rejected at startup (`Field(gt=0)`). `SIGTERM` calls `ClickHouseSinkBase.stop`, which sets a flag checked after the current poll, so shutdown waits for that poll and then flushes a partial batch. `ClickHouseRepository.insert_batch` finishes its retries before the loop reads that flag again.
 
 `CLICKHOUSE_PORT` is the HTTP port. From the host, ClickHouse is `localhost:8123` (HTTP) and `localhost:9000` (native) with the same database, user, and password. Inside Compose the writer waits until the `migrate` container exits successfully.
 
@@ -150,9 +152,9 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Collector exits with `Cannot load agents: ...`.** `collector.toml` is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs; the message names which. Compose restarts the collector, so the line repeats in `docker compose logs collector` until the file is fixed. If the message says `collector.toml` is a directory, Docker created it for the mount because the file was missing: delete it and restore the file from git. On start the collector logs `Agents from collector.toml: [...]`.
 
-**Scrape errors every 10 seconds.** The collector logs `Failed to scrape metrics from ...` for transport and HTTP errors, and `Malformed response from ...` for a 200 body that is missing `machine_id`, `timestamp`, or a complete metric object. An entry in `collector.toml` with a path, like `http://host:8080/v1/metrics`, still scrapes `/v1/metrics` at the root: list the base URL only.
+**Scrape errors every 10 seconds.** The collector logs `Failed to fetch metrics from ...` for transport and HTTP errors, and `Invalid metrics from ...` for a 200 body that is not a `MetricsResponse` (missing `machine_id` or `timestamp`, an empty `machine_id`, or a metric object missing a field). The same two lines with `machine` are `/v1/machine`. An entry in `collector.toml` with a path, like `http://host:8080/v1/metrics`, still scrapes `/v1/metrics` at the root: `AgentUrls.metrics_url` joins an absolute path, so list the base URL only.
 
-**Kafka send failures.** When `KafkaRawMetricsRepository.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host, `kafka:9092` from Compose services.
+**Kafka send failures.** When `KafkaMetricsProducer.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Machine info uses `KafkaMachinesProducer.publish` and logs `Failed to publish machine info from ... to Kafka`. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host, `kafka:9092` from Compose services.
 
 **`metrics` stays empty while raw samples are flowing.** The writer reads `raw_metrics` directly. Check the writer logs and that its group is `clickhouse-metrics-writer`, not a group another process also uses.
 
@@ -164,9 +166,11 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Bands drop to 0 in a custom Grafana query.** A `LEFT JOIN` from `metrics` to `evaluations` fills unmatched rows with `0` unless the query ends with `SETTINGS join_use_nulls = 1`.
 
-**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after; check its log for `Failed to fetch machine info` or `Malformed machine info` (an agent older than this change has no `observed_at`), and that `clickhouse-writer` is running.
+**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after; check its log for `Failed to fetch machine from`, `Invalid machine from` (an agent older than this change has no `observed_at`), or `Failed to publish machine info`, and that `clickhouse-writer` is running.
 
-**Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The jobmanager leaves `KAFKA_CONNECTOR_JAR` unset so the image copy is the only one on the classpath.
+**Flink job fails at import.** `anomaly_detector/main.py` imports `KafkaMetricsSource`, `KafkaEvaluationsSink`, `EVALUATION_TYPE_INFO`, and `EventTimeWatermarks` from `anomaly_detector/flink/sources`, `sinks`, `type_info`, and `watermarks`. Those modules are not in the repository. `.gitignore` has `flink/`, which ignores every directory of that name, so new files under the package were never committed. The processor file is tracked only because it was renamed from `service.py`. `docker compose logs jobmanager` shows `ModuleNotFoundError`. The last committed source, sink, row types, and watermarks are `anomaly_detector/repository.py` in `fb3a28e`. Narrowing the ignore rule to the repo-root virtualenv (for example `/flink/`) is what lets a later add record the package.
+
+**Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The jobmanager leaves `KAFKA_CONNECTOR_JAR` unset so the image copy is the only one on the classpath. This is the failure after the missing modules above are actually on the path.
 
 **Flink jobmanager keeps restarting.** In Application Mode the jobmanager exits when the job can't start, for example on a Python error in `main` or an import error in `./src`. `docker compose logs jobmanager` shows the traceback. A job that starts and then fails is restarted by Flink first, and shows up under *Exceptions* in the Web UI.
 
