@@ -28,7 +28,7 @@
 
 ## 📍 Do this next
 
-**→ Task 1.1** (fix the checkpointing doc lie). 10 minutes. Go.
+**→ Task 1.2** (the half-built DLQ). 15 minutes. Go.
 
 ---
 
@@ -41,10 +41,10 @@
 - **Why it's dangerous:** first thing an interviewer reads is the doc, first thing they open is `main.py`. They *will* notice.
 - **Do:** delete that bullet. Replace with one honest sentence: *"Flink state is checkpointed every second to a local volume; the Kafka sink is at-least-once, duplicates are collapsed by ReplacingMergeTree."*
 - **Before writing that, check one thing:** `kafka_evaluations_sink` in `anomaly_detector/repository.py` sets no `delivery_guarantee`. PyFlink's default is NONE/at-least-once, **not** exactly-once (verify in the connector docs). So "EXACTLY_ONCE" in `main.py` only covers Flink-internal state. Be able to say that out loud.
-- **Done when:** doc and code tell the same story. ☐
+- **Done.** Architecture already said checkpoints are every second and the sink is at-least-once. `docs/operations.md` now says the same, including that `docker compose restart jobmanager` starts a new job and does not load the retained files. ☑
 
 ### 1.2 The half-built DLQ  ⏱ 15 min
-- **Where:** uncommitted diff in `collector/repository.py`: `self._dlq_topic = f"{topic}_dlq"`. Nothing reads it.
+- **Where:** `KafkaRecordsProducer.dead_letter` publishes an invalid agent body to `<topic>_dlq` (`raw_metrics_dlq`, `machines_dlq`). Nothing consumes those topics. Malformed records in the writer are counted on `Metrics.MALFORMED` and skipped; they are not dead-lettered.
 - **Decide (pick ONE, don't dither):**
   - **Delete it.** (Recommended. The writer already logs + counts malformed records via the `MALFORMED` counter.)
   - OR implement: on publish failure → send to the DLQ. Only if you can explain what consumes the DLQ. You can't yet, so delete.
@@ -180,8 +180,8 @@ Pick at most **one**:
 
 ## ✅ Master checklist
 
-**Phase 1** ☐ 1.1 doc lie · ☐ 1.2 DLQ · ☐ 1.3 EWMA rename · ☐ 1.4 dead code
-**Phase 2** ☐ 2.1 collapse detectors · ☐ 2.2 allowlist · ☐ 2.3 drop battery · ☐ 2.4 metric_id type · ☐ 2.5 async/blocking · ☐ 2.6 small stuff
+**Phase 1** ☑ 1.1 doc lie · ☐ 1.2 DLQ · ☑ 1.3 EWMA rename · ☑ 1.4 dead code
+**Phase 2** ☑ 2.1 collapse detectors · ☑ 2.2 allowlist · ☑ 2.3 drop battery · ☐ 2.4 metric_id type · ☐ 2.5 async/blocking · ☐ 2.6 small stuff
 **Phase 3** ☐ 3.1 · ☐ 3.2 · ☐ 3.3 · ☐ 3.4
 **Phase 4** ☐ 4.1 README · ☐ 4.2 screenshot · ☐ 4.3 not-doing · ☐ 4.4 CI
 

@@ -15,7 +15,7 @@ src/activityreporter/
   shared/              code used by more than one application
     models/              Metric, Machine, Evaluation, MetricObservation, MetricsResponse
     settings/            KafkaSettings, ClickHouseSettings, ClickHouseSinkSettings, CollectorSettings, AgentSettings
-    observability/       Prometheus counters
+    observability/       Prometheus counters and the ClickHouse write-latency histogram
   agent/               runs on every machine, serves /v1/metrics and /v1/machine
     api/                 FastAPI routes
     services/            MetricsService: reads the host
@@ -309,6 +309,8 @@ Panels:
 - **CPU** and **Memory** gauges (memory is `system.memory.usage / system.memory.limit`), **Memory used**, and **Anomalies**: anomalous evaluations of every metric and algorithm in the time range.
 - **CPU usage** and **Memory usage** (with the limit dashed): the series with every algorithm's anomalies as points, one colour per algorithm (query `B`, split by the `algorithm` column). Where two algorithms flag the same sample, their points overlap; the tooltip lists both.
 - **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then a table of the last 200 anomalies with their values.
+
+`docker/grafana/dashboards/pipeline-performance.json` is provisioned as *Pipeline performance* (uid `pipeline-performance`). It reads Prometheus, not ClickHouse: publish and consume rates, dead letters, Flink source lag, mean detector time, ClickHouse write latency, backpressure, and the last checkpoint duration. Range `now-30m`, refresh 10 seconds, no variables. The series and the scrape targets are in [docs/operations.md](docs/operations.md).
 
 ## Tests
 
