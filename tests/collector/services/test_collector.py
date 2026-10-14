@@ -1,4 +1,5 @@
 import uuid
+from typing import cast
 from unittest.mock import patch
 
 import httpx
@@ -9,6 +10,7 @@ from prometheus_client import REGISTRY
 from activityreporter.agent.main import app
 from activityreporter.collector.clients.agent_urls import AgentUrls
 from activityreporter.collector.clients.http_agent_client import HttpAgentClient
+from activityreporter.collector.producers.kafka_records_producer import KafkaRecordsProducer
 from activityreporter.collector.services.collector import Collector
 from activityreporter.shared.settings.collector_settings import CollectorSettings
 
@@ -33,7 +35,9 @@ class RecordingProducer:
 
 
 def build_collector(agent_metrics, raw_metrics=None, machines=None) -> Collector:
-    return Collector({ENDPOINT}, agent_metrics, raw_metrics or RecordingProducer(), machines or RecordingProducer(), CollectorSettings())
+    raw_metrics = cast(KafkaRecordsProducer, raw_metrics or RecordingProducer())
+    machines = cast(KafkaRecordsProducer, machines or RecordingProducer())
+    return Collector({ENDPOINT}, agent_metrics, raw_metrics, machines, CollectorSettings())
 
 
 async def collect_with_transport(transport: httpx.AsyncBaseTransport) -> list:

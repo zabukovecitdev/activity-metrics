@@ -24,7 +24,7 @@ SINK_CASES = pytest.mark.parametrize(
 
 def test_clickhouse_sink_base_is_abstract():
     with pytest.raises(TypeError):
-        ClickHouseSinkBase(MagicMock(), MagicMock(), ClickHouseSinkSettings())
+        ClickHouseSinkBase(MagicMock(), MagicMock(), ClickHouseSinkSettings())  # pyright: ignore[reportAbstractUsage]
 
 
 @SINK_CASES
@@ -77,7 +77,9 @@ def machine_record(machine_id: str) -> MagicMock:
 
 
 def machine_row(machine_id: str) -> list:
-    return parse_record(ClickHouseMachinesSink, {**to_jsonable_python(build_machine()), "machine_id": machine_id})
+    row = parse_record(ClickHouseMachinesSink, {**to_jsonable_python(build_machine()), "machine_id": machine_id})
+    assert row is not None
+    return row
 
 
 def build_sink(batch_size=100, batch_timeout_seconds=5.0):

@@ -50,3 +50,5 @@ class EWMA:
             alpha = self.ALPHA * self.ANOMALY_DAMPING if is_anomaly else self.ALPHA
             average += alpha * deviation
             variance = (1 - alpha) * (variance + alpha * deviation**2)
+
+        raise AssertionError("unreachable: the loop returns on the last value")

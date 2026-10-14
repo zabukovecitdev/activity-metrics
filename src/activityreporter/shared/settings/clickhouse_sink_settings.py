@@ -7,4 +7,4 @@ class ClickHouseSinkSettings(BaseSettings):
 
     batch_size: int = 100
     batch_timeout_seconds: float = 5.0
-    poll_timeout_ms: int = Field(1000, gt=0)
+    poll_timeout_ms: int = Field(default=1000, gt=0)

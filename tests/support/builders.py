@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from unittest.mock import MagicMock
 
 from pydantic_core import to_jsonable_python
@@ -48,7 +49,7 @@ def build_machine(timestamp: float = 1.0) -> Machine:
         cores=16,
         total_memory=34_359_738_368,
         total_disk=1_000_204_886_016,
-        last_boot="2026-10-01T06:30:00+00:00",
+        last_boot=datetime.fromisoformat("2026-10-01T06:30:00+00:00"),
         observed_at=timestamp,
     )
 

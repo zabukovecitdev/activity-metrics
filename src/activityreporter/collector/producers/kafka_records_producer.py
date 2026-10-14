@@ -20,7 +20,7 @@ class KafkaRecordsProducer:
         self._producer = KafkaProducer(
             bootstrap_servers=[bootstrap_servers],
             value_serializer=to_json,
-            key_serializer=lambda k: k.encode("utf-8"),
+            key_serializer=lambda key: str(key).encode("utf-8"),
             acks="all",
             retries=3,
         )

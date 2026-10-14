@@ -30,6 +30,7 @@ def test_band_is_symmetric_around_the_median():
     result = MAD().evaluate(STEADY + [50.0])
 
     assert result.baseline == 50.0
+    assert result.lower is not None
     assert result.baseline - result.lower == pytest.approx(result.upper - result.baseline)
     assert not result.is_anomaly
 

@@ -20,8 +20,9 @@ class ClickHouseMachinesSink(ClickHouseSinkBase):
     def topic(cls, kafka: KafkaSettings) -> str:
         return kafka.machines_topic
 
-    def to_row(self, m: Machine) -> list:
+    def to_row(self, record: Machine) -> list:
         return [
-            m.machine_id, m.hostname, m.os, m.os_version, m.architecture, m.cores, m.total_memory, m.total_disk,
-            m.last_boot.astimezone(timezone.utc), RowValues.utc(m.observed_at),
+            record.machine_id, record.hostname, record.os, record.os_version, record.architecture, record.cores,
+            record.total_memory, record.total_disk,
+            record.last_boot.astimezone(timezone.utc), RowValues.utc(record.observed_at),
         ]
