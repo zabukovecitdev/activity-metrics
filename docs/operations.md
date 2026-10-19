@@ -30,7 +30,7 @@ Process commands from the `Makefile`:
 
 ## Environment
 
-Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are noted when they differ.
+Defaults are the field defaults on the settings classes in `shared/settings/`. Compose overrides are noted when they differ.
 
 ### Collector
 
@@ -39,8 +39,20 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
 | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `raw_metrics` |
 | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
+| `COLLECTOR_SCRAPE_INTERVAL_SECONDS` | `1` | unset |
+| `COLLECTOR_MACHINE_REFRESH_SECONDS` | `300` | unset |
 
 The agents to scrape are not an environment variable but `collector.toml`; see [Local stack](#local-stack) and the README.
+
+`CollectorSettings` (`shared/settings/collector_settings.py`, prefix `COLLECTOR_`) is built in `collector/main.py` after the Kafka producers, and both fields must be greater than 0. `0`, a negative, `""`, and `10s` fail startup with a pydantic `ValidationError` whose `loc` is the field name (`scrape_interval_seconds` or `machine_refresh_seconds`). Names are case-insensitive. `SCRAPE_INTERVAL_SECONDS` and `MACHINE_REFRESH_SECONDS` are ignored. `inf` is accepted: `asyncio.sleep` then never returns, so the collector finishes one round and stops. The interval is the sleep after `collect()` in `Collector.run`, so the time between samples is that gap plus the scrapes (the agent blocks about 100 ms on CPU).
+
+### Agent
+
+| Variable | Default | Compose |
+| --- | --- | --- |
+| `PORT` | `8080` | unset; the `dev` profile service does not publish `8080` |
+
+`AgentSettings` has no prefix. `PORT` is read when the server starts (`AgentSettings()` inside `main`), and the process binds `0.0.0.0`. A non-integer fails validation on field `port`. `AGENT_PORT` is not read. The name is case-insensitive.
 
 ### Anomaly detector
 
@@ -150,9 +162,9 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Collector exits with `Cannot load agents: ...`.** `collector.toml` is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs; the message names which. Compose restarts the collector, so the line repeats in `docker compose logs collector` until the file is fixed. If the message says `collector.toml` is a directory, Docker created it for the mount because the file was missing: delete it and restore the file from git. On start the collector logs `Agents from collector.toml: [...]`.
 
-**Scrape errors every 10 seconds.** The collector logs `Failed to scrape metrics from ...` for transport and HTTP errors, and `Malformed response from ...` for a 200 body that is missing `machine_id`, `timestamp`, or a complete metric object. An entry in `collector.toml` with a path, like `http://host:8080/v1/metrics`, still scrapes `/v1/metrics` at the root: list the base URL only.
+**Scrape errors on every round.** The default gap is 1 second (`COLLECTOR_SCRAPE_INTERVAL_SECONDS`); the round also waits on the agents. The collector logs `Failed to fetch metrics from ...` for transport and HTTP errors, and `Invalid metrics from ...` for a 200 body that fails `MetricsResponse` validation. The same two lines exist for `machine`. An invalid body is published to that topic's `_dlq`. An entry in `collector.toml` with a path, like `http://host:8080/v1/metrics`, still scrapes `/v1/metrics` at the root: `AgentUrls` joins an absolute path, so list the base URL only.
 
-**Kafka send failures.** When `KafkaRawMetricsRepository.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host, `kafka:9092` from Compose services.
+**Kafka send failures.** When `KafkaRecordsProducer.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` or `Failed to publish machine info from ... to Kafka` and that endpoint's scrape continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host, `kafka:9092` from Compose services.
 
 **`metrics` stays empty while raw samples are flowing.** The writer reads `raw_metrics` directly. Check the writer logs and that its group is `clickhouse-metrics-writer`, not a group another process also uses.
 
@@ -160,14 +172,18 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **`Skipping malformed record` in a writer log.** The record is not valid JSON or lacks a required field. A metric or evaluation also needs a valid `metric_id`, an evaluation a non-empty `machine_id`, `metric_name`, and `algorithm`, and a machine a non-empty `machine_id` and a `last_boot` with a UTC offset. Records published before `metric_id` existed have none; they are skipped, not retried.
 
-**`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing for a series until the last hour holds `min_points` samples of that `(machine_id, name)`: 11 for `ewma` and 20 for `mad`, about 2 and 3.5 minutes at the 10-second scrape interval. Only `system.cpu.utilization` and `system.memory.usage` are scored. A job started before this change still publishes to `anomalies`; `make up` recreates the cluster with the new job.
+**`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing for a series until the last hour holds `min_points` samples of that `(machine_id, name)`: 11 for `ewma` and 20 for `mad`. At the default 1-second gap between rounds that is a little over 11 seconds and 20 seconds, because each round also waits on the agent. A `COLLECTOR_SCRAPE_INTERVAL_SECONDS` of 10 makes it about 2 and 3.5 minutes. Only `system.cpu.utilization` and `system.memory.usage` are scored. A job started before this change still publishes to `anomalies`; `make up` recreates the cluster with the new job.
 
 **Bands drop to 0 in a custom Grafana query.** A `LEFT JOIN` from `metrics` to `evaluations` fills unmatched rows with `0` unless the query ends with `SETTINGS join_use_nulls = 1`.
 
-**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after; check its log for `Failed to fetch machine info` or `Malformed machine info` (an agent older than this change has no `observed_at`), and that `clickhouse-writer` is running.
+**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every `COLLECTOR_MACHINE_REFRESH_SECONDS` (default 300) after that. Check its log for `Failed to fetch machine from` or `Invalid machine from`, and that `clickhouse-writer` is running.
 
 **Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The jobmanager leaves `KAFKA_CONNECTOR_JAR` unset so the image copy is the only one on the classpath.
 
 **Flink jobmanager keeps restarting.** In Application Mode the jobmanager exits when the job can't start, for example on a Python error in `main` or an import error in `./src`. `docker compose logs jobmanager` shows the traceback. A job that starts and then fails is restarted by Flink first, and shows up under *Exceptions* in the Web UI.
 
 **`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL.
+
+**The time picker does not move the gauges.** On *Machine usage metrics*, **Machine** reads `machines FINAL` with no time filter. **Uptime** and **CPU** are the latest sample (`ORDER BY timestamp DESC LIMIT 1`, no `FINAL`). **Memory** and **Memory used** are the last hour (`now() - INTERVAL 1 HOUR`). **Anomalies**, **CPU usage**, **Memory usage**, the detector explorer, and **Recent anomalies** follow the picker (`$__timeFilter` and `FINAL`). The host and metric variables reload on dashboard load, not when the range changes.
+
+**A Grafana save did not change the repo.** `docker/grafana/dashboards` is mounted read-only and `allowUiUpdates` is true, so a UI save stays in the `grafana_data` volume. Edit the JSON and restart Grafana.

@@ -119,7 +119,7 @@ It adds `/v1/metrics` and `/v1/machine` to each. The file is read once, at start
 
 ## Collector contract
 
-Every 10 seconds (`COLLECTOR_SCRAPE_INTERVAL_SECONDS`) the collector GETs each agent's `/v1/metrics`. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
+After each round the collector sleeps `COLLECTOR_SCRAPE_INTERVAL_SECONDS` (default 1) and then GETs each agent's `/v1/metrics` again. The sleep is the gap between rounds, not a fixed rate: the round itself waits on the agents, and the CPU reading blocks about 100 ms. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections. Compose does not set the interval.
 
 A non-2xx response or a transport error is logged and skipped. One bad agent does not cancel the other scrapes in that round.
 
@@ -133,7 +133,7 @@ One invalid metric sends the whole response there. A failure to publish to the d
 
 Required JSON fields: `machine_id` (string), `timestamp` (ISO-8601), `metrics` (array of objects with `name`, `type`, `unit`, `value`). `attributes` is optional. The response is validated against `MetricsResponse` (`shared/models/metrics_response.py`): `machine_id` must be non-empty and `timestamp` must carry a UTC offset. The shared timestamp is converted to epoch seconds and copied onto every `Metric`. Each `Metric` gets its own `metric_id`, a UUIDv7 string from `uuid.uuid7()`: the sample's identity from here on, in Kafka, in `metrics`, and in its `evaluations`. The agent does not send one.
 
-Each `Metric` is published to Kafka as JSON (`pydantic_core.to_json`), keyed by `machine_id`. Producer settings: `acks=all`, `retries=3`, send timeout 10 seconds. The producer is flushed and closed on the way out of `main`, including `SIGTERM` (installed as the default interrupt handler).
+Each `Metric` is published to Kafka as JSON (`pydantic_core.to_json`), keyed by `machine_id`. Producer settings: `acks=all`, `retries=3`, send timeout 10 seconds. `SIGTERM` cancels the scrape task (`SIGTERM received, shutting down`). The producers flush and close as their `with` blocks exit. Ctrl-C is a `KeyboardInterrupt` in `cli`.
 
 Kafka record shape:
 
@@ -154,7 +154,7 @@ Kafka record shape:
 
 ### Machine info
 
-On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. A response missing a field, or with an empty `machine_id`, is logged as `Malformed machine info from ...`.
+On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The check runs at the start of the round and uses `<`, so a refresh that lands exactly on the interval runs again. The timestamp updates only after a successful publish, so a failed fetch or publish is retried on the next scrape and never stops that endpoint's metrics. The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A transport or HTTP error is logged as `Failed to fetch machine from ...`. A body that fails `Machine` validation (missing field, empty `machine_id`, `last_boot` without a UTC offset) is logged as `Invalid machine from ...`.
 
 ## Anomaly detection
 
@@ -174,7 +174,7 @@ Scoring rules (`MetricEvaluator` in `anomaly_detector/services/metric_evaluator.
 | Metric | `mad` | `ewma` |
 | --- | --- | --- |
 | `system.cpu.utilization` | `min_deviation=10.0` (percentage points) | `min_deviation=10.0` |
-| `system.memory.usage` | `min_relative=0.02` (2% of the median) | `min_relative=0.02` (2% of the average) |
+| `system.memory.usage` | `min_relative=0.02` (2% of the median) | `min_deviation=0`, `min_relative=0.02` (2% of the average) |
 
 Everything outside `anomaly_detector/flink/` is free of PyFlink, so its tests run in the regular `uv` environment.
 
@@ -199,10 +199,10 @@ To add an algorithm, write a class with that shape and add it to the lists in `M
 - When the median absolute deviation is 0 (over half the values equal the median), the scale is `1.253314 × mean absolute deviation` instead (Iglewicz & Hoaglin). When that is 0 too, every value is equal and the score is 0. The score is always finite, so it can be encoded as JSON.
 - The scale has a floor, `max(min_deviation, min_relative × |median|) / THRESHOLD`, so a deviation smaller than `min_deviation` and than `min_relative` of the median never reaches the threshold. Without it, a series that barely moves has a tiny MAD and every step is flagged: memory in use changing by 32 KB on a 470 MB median scored 8, against a threshold of 3.5. Both default to 0, the textbook modified z-score.
 
-To tune the floors, count what they let through, for example `SELECT metric_name, algorithm, toDate(timestamp) AS day, countIf(is_anomaly) FROM evaluations FINAL GROUP BY ALL`. At one sample every 10 seconds a series has 8,640 a day.
+To tune the floors, count what they let through, for example `SELECT metric_name, algorithm, toDate(timestamp) AS day, countIf(is_anomaly) FROM evaluations FINAL GROUP BY ALL`. The gap between rounds defaults to 1 second, and each round also waits on the agent, so a series is a bit under one sample a second rather than the 8,640 a day of a 10-second gap.
 - Returned numbers are Python `float`s; numpy scalars cannot be encoded by PyFlink's coders.
 
-`EWMA` (`anomaly_detector/algorithms/ewma.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`; the floors default to 10 and 0 and are set per metric above, since 10 means percentage points for CPU but bytes for memory. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
+`EWMA` (`anomaly_detector/algorithms/ewma.py`) walks the window with `alpha = 0.1`, scoring each value against the average before it. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`. The class defaults are `min_deviation=10` and `min_relative=0`. Memory passes `min_deviation=0`: 10 would be 10 bytes, so only the 2% floor applies. Values flagged after the 10-reading warm-up move the average with a damped `alpha`, so a spike does not drag the baseline along.
 
 Input rows follow `Metric` (`shared/models/metric.py`) and output rows follow `Evaluation` (`shared/models/evaluation.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/flink/type_info/` must name the same fields as those models or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
 
@@ -241,7 +241,7 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To load another topic, subclass `ClickHouseSinkBase` and add it to `SINKS` in `clickhouse_writer/main.py`. A sink that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
 
-Records are decoded as JSON into the sink's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+Records are decoded as JSON into the sink's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` sets a flag the loop reads after the current poll (`WRITER_POLL_TIMEOUT_MS`, default 1000) and after an `insert_batch` already in progress, retries included, then flushes a partial batch. An empty poll does not write or commit.
 
 `ClickHouseRepository.insert_batch` writes the sink's table over HTTP (`clickhouse-connect`), then `ClickHouseSinkBase` commits the offsets of its own consumer. A failed insert leaves them uncommitted and the whole batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 
@@ -297,18 +297,20 @@ The TimescaleDB schema (Flyway `V1`–`V5`) was removed along with TimescaleDB; 
 
 ## Grafana
 
-`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Machine usage metrics*. It uses only the metrics the agent already reports. Variables:
+`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Machine usage metrics* (uid `ad8rn6h`). It uses only the metrics the agent already reports. The dashboard opens on the last 30 minutes (`now-30m`), refreshes every 5 seconds, and uses the browser timezone. The directory is mounted read-only, so a save in the UI stays in the `grafana_data` volume and does not change the JSON in git. Variables:
 
 - `host` (shown as *Machine*): the hostname from `machines`, or the machine id for a machine the collector hasn't described yet.
 - `machine_id`: hidden, the id of the selected host; every panel filters on it. Two machines with the same hostname would both map to the first id, so give them different hostnames.
 - `metric_name` (*Explorer metric*): the metrics a detector has scored for that machine.
 
+All three reload when the dashboard loads (`refresh: 1` in the JSON), not when the time range changes, and `allowCustomValue` is false.
+
 Panels:
 
-- **Machine**: hostname, OS, architecture, cores, memory, disk, last boot, and last seen, from `machines`. **Uptime** from `system.uptime`.
-- **CPU** and **Memory** gauges (memory is `system.memory.usage / system.memory.limit`), **Memory used**, and **Anomalies**: anomalous evaluations of every metric and algorithm in the time range.
-- **CPU usage** and **Memory usage** (with the limit dashed): the series with every algorithm's anomalies as points, one colour per algorithm (query `B`, split by the `algorithm` column). Where two algorithms flag the same sample, their points overlap; the tooltip lists both.
-- **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then a table of the last 200 anomalies with their values.
+- **Machine**: hostname, OS, architecture, cores, memory, disk, last boot, and last seen, from `machines FINAL`. No time filter, so the picker does not move it. **Uptime** and the **CPU** gauge are the latest sample (`ORDER BY timestamp DESC LIMIT 1`, no `FINAL`), also ignoring the picker.
+- **Memory** gauge (`system.memory.usage / system.memory.limit`) and **Memory used** are the last hour (`timestamp >= now() - INTERVAL 1 HOUR`), again ignoring the picker. **Anomalies** counts anomalous evaluations of every metric and algorithm inside the picker (`$__timeFilter`, `FINAL`).
+- **CPU usage** and **Memory usage** (with the limit dashed): the series in the picked range, with every algorithm's anomalies as points, one colour per algorithm (query `B`, split by the `algorithm` column). Both queries use `FINAL`. Where two algorithms flag the same sample, their points overlap; the tooltip lists both.
+- **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines, all with `$__timeFilter` and `FINAL`; then **Recent anomalies**, the last 200 anomalous samples in the picked range.
 
 ## Tests
 

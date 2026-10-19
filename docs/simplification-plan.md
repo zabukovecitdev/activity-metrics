@@ -98,7 +98,7 @@
 - **Done when:** no `async def` without an `await` in `agent/`. ☐
 
 ### 2.6 Small things (batch in one commit)  ⏱ 20 min
-- `collector/service.py::run`: `collect()` then `sleep(10)` → interval is 10 s **+ scrape time**, so it drifts. Either comment it ("gap between rounds, not a fixed rate") or sleep for the remainder.
+- `collector/services/collector.py::run`: `collect()` then `sleep(scrape_interval_seconds)` (default 1, was 10) → the gap is that many seconds **plus scrape time**, so it drifts. Either comment it ("gap between rounds, not a fixed rate") or sleep for the remainder.
 - `Metric.timestamp: float | int` → `float`.
 - Flink image runs Python 3.10, `Makefile` builds a 3.11 venv, and the code says "no newer syntax". Make the Makefile match the image.
 - **Done when:** each either fixed or commented. ☐
