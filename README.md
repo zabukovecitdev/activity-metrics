@@ -259,9 +259,15 @@ ClickHouse errors retry up to `CLICKHOUSE_MAX_RETRIES` times (default 5). Backof
 
 | Migration | Effect |
 | --- | --- |
-| 000001 | `metrics` and `evaluations` tables, `ReplacingMergeTree`, daily partitions, 24-hour TTL. `machines` table, `ReplacingMergeTree(observed_at)`, no TTL. |
+| 000001 | `metrics` table, `ReplacingMergeTree`, hourly partitions, 24-hour TTL. |
+| 000002 | `anomalies` table, same engine, partitioning, and TTL. |
+| 000003 | `evaluations` table, same engine, partitioning, and TTL. |
+| 000004 | `machines` table, `ReplacingMergeTree(observed_at)`, no TTL. |
+| 000005 | Drops `anomalies`; its `down` recreates it. |
+| 000006 | Replaces `evaluations` with the 9 columns the dashboard needs; its `down` recreates the 000003 table. |
+| 000007 | Recreates `metrics` and `evaluations` with daily partitions. `machines` is unchanged. Applied versions stay in the tree, because `migrate` stops when the file for the recorded version is gone. |
 
-Partitions are daily, not hourly: a replay with historical timestamps split into one part per hour it touched, and 38k NAB rows made 16k parts and ran ClickHouse out of memory.
+Partitions are daily, not hourly: a replay with historical timestamps split into one part per hour it touched, and 38k NAB rows made 16k parts and ran ClickHouse out of memory. The partition key cannot be altered, and these rows expire within about 48 hours, so 000007 drops the two tables and creates them again.
 
 `metrics` holds only what devices report. Columns: `metric_id` (`UUID`), `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `ingested_at`. Sorting (and deduplication) key `(machine_id, name, timestamp, metric_id)`: queries filter by series and time, and `metric_id` makes each sample unique, including two series at the same instant that differ only in `attributes`. `ttl_only_drop_parts` drops whole expired daily parts instead of rewriting them, so a row lives up to about 48 hours.
 
