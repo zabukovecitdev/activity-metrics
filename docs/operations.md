@@ -91,6 +91,24 @@ Writing a migration:
 - Test `make migrate-down && make migrate` locally before committing.
 - `x-multi-statement` splits on every `;`, including one inside a `--` comment, so keep semicolons out of comments.
 
+The tree has one migration, `000001_create_tables`. It creates `metrics`, `evaluations`, and `machines`. `metrics` and `evaluations` use `PARTITION BY toYYYYMMDD(timestamp)`, a 24-hour TTL, and `ttl_only_drop_parts = 1` (a row can remain about 48 hours, until that whole day is past the TTL). `machines` has no TTL. The statements are `CREATE TABLE IF NOT EXISTS`. ClickHouse has no way to change `PARTITION BY` on a table that already exists, so this file leaves an older table as it is. `000001_create_tables.down.sql` drops all three tables. `make migrate-down` runs that only when the database is at version 1. On version 6 it fails the check below, before any `DROP`.
+
+**`error: no migration found for version 6: read down for version 6 .: file does not exist`.** The `clickhouse_data` volume was migrated by the removed files `000002` through `000006` (hourly partitions). `make up` keeps named volumes. golang-migrate v4.20.1 (`migrate/migrate` in the Compose image) checks that a file for the version stored in `schema_migrations` still exists before it looks for a newer one. Version 6 has neither an up nor a down file, so the `migrate` container prints that line on stderr and exits 1. The `.` is the file source's own path, the directory mounted at `/migrations`. `clickhouse-writer` stays down: it waits on `service_completed_successfully`. The same line names whatever version is recorded when that version's files are gone (2 through 6).
+
+A volume recorded at version 1, from the old hourly `metrics`-only `000001`, prints `no change` and exits 0. Migrate matches the version number and does not compare the file body, so the new `000001_create_tables` counts as already applied. `CREATE TABLE IF NOT EXISTS` leaves the hourly table in place. `evaluations` and `machines` are absent when that volume never ran the later files; the writer starts, and its inserts fail.
+
+`force` rewrites the version in `schema_migrations` and runs no DDL. After `force 1`, the next `up` is `no change` and the hourly tables remain. Replace the volume:
+
+```bash
+docker compose down
+docker volume rm "$(docker volume ls -q \
+  --filter label=com.docker.compose.project.working_dir="$PWD" \
+  --filter label=com.docker.compose.volume=clickhouse_data)"
+make up
+```
+
+That removes `clickhouse_data` only. `flink_checkpoints`, `grafana_data`, and `prometheus_data` stay. The old tables still drop each hourly part once every row in that hour is 24 hours old, so the volume is a short-lived copy.
+
 **`Dirty database version N. Fix and force version.`** Migration `N` failed. `schema_migrations` marks it dirty and `migrate` refuses to run. Undo whatever part of `N` did apply (or finish it by hand), then record the real state and rerun:
 
 ```bash
@@ -130,7 +148,7 @@ Task slots on the taskmanager: 2, matching the job parallelism.
 
 ## Packaging
 
-The wheel contains `src/activityreporter`. Console scripts:
+Console scripts, from `[project.scripts]` in `pyproject.toml`:
 
 | Script | Entry |
 | --- | --- |
@@ -138,7 +156,17 @@ The wheel contains `src/activityreporter`. Console scripts:
 | `collector` | `activityreporter.collector.main:cli` |
 | `clickhouse-writer` | `activityreporter.clickhouse_writer.main:cli` |
 
-The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent` (`dev` profile only), `collector`, and `clickhouse-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
+The root `Dockerfile` builds one image, `activityreporter:latest`, for the Compose `agent` (`dev` profile), `collector`, and `clickhouse-writer` services. Each service's `command` is the script name. The anomaly detector runs in the Flink image.
+
+The image copies `uv` 0.11.28 from `ghcr.io/astral-sh/uv:0.11.28` and installs with the image's Python 3.14:
+
+```dockerfile
+UV_PYTHON_DOWNLOADS=never uv sync --frozen --no-default-groups --no-editable --no-cache
+```
+
+`--frozen` installs the versions pinned in `uv.lock`. A `pyproject.toml` change without a matching lock fails the image build. `--no-default-groups` skips `dev` and `experiments` (`tool.uv.default-groups`). `--no-editable` installs this project into `/app/.venv`. `UV_PYTHON_DOWNLOADS=never` uses the interpreter in the image. `ENV PATH=/app/.venv/bin:$PATH` is how `command: collector` finds the script.
+
+Commit an updated `uv.lock` in the same change as `pyproject.toml`. Local `uv sync` and `uv run`, which `make venv`, `make test`, and `make agent` call, install the default groups, including `experiments`.
 
 ## Smoke test
 
@@ -170,4 +198,4 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Flink jobmanager keeps restarting.** In Application Mode the jobmanager exits when the job can't start, for example on a Python error in `main` or an import error in `./src`. `docker compose logs jobmanager` shows the traceback. A job that starts and then fails is restarted by Flink first, and shows up under *Exceptions* in the Web UI.
 
-**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL.
+**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain until their daily part expires (about 48 hours; see [Migrations](#migrations)). A volume left by the old hourly migrations is kept too, and `migrate` exits 1 with `no migration found for version 6`; that section has the volume reset.

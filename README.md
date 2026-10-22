@@ -261,7 +261,7 @@ ClickHouse errors retry up to `CLICKHOUSE_MAX_RETRIES` times (default 5). Backof
 | --- | --- |
 | 000001 | `metrics` and `evaluations` tables, `ReplacingMergeTree`, daily partitions, 24-hour TTL. `machines` table, `ReplacingMergeTree(observed_at)`, no TTL. |
 
-Partitions are daily, not hourly: a replay with historical timestamps split into one part per hour it touched, and 38k NAB rows made 16k parts and ran ClickHouse out of memory.
+Partitions are daily, not hourly: a replay with historical timestamps split into one part per hour it touched, and 38k NAB rows made 16k parts and ran ClickHouse out of memory. `make up` keeps `clickhouse_data`. A volume whose `schema_migrations` row still points at the removed files (`000002`–`000006`, or the old hourly `000001`) stays on those partitions. The reset is in [docs/operations.md](docs/operations.md#migrations).
 
 `metrics` holds only what devices report. Columns: `metric_id` (`UUID`), `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `ingested_at`. Sorting (and deduplication) key `(machine_id, name, timestamp, metric_id)`: queries filter by series and time, and `metric_id` makes each sample unique, including two series at the same instant that differ only in `attributes`. `ttl_only_drop_parts` drops whole expired daily parts instead of rewriting them, so a row lives up to about 48 hours.
 

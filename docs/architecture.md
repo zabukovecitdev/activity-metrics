@@ -32,7 +32,7 @@ Grafana                       pick a host, see its series and anomalies
 - **`evaluations`**: one row per sample *per algorithm*, anomalous or not, with only what the dashboard draws: `baseline`, `lower`, `upper`, `is_anomaly`. It's linked to its sample by `metric_id`, and the value stays in `metrics`. A new algorithm is a new `algorithm` value, not a schema change.
 - **`machines`**: the latest description of each machine, joined to the other two on `machine_id`.
 
-`metrics` and `evaluations` keep 24 hours; `machines` keeps everything. All three are `ReplacingMergeTree`, so a replayed batch collapses to one row per key on merge.
+`metrics` and `evaluations` are partitioned by day (`toYYYYMMDD(timestamp)`). A row expires 24 hours after its `timestamp`, and `ttl_only_drop_parts` drops that day's part only once every row in it has expired, so a row can remain for about 48 hours. `machines` has no TTL. All three are `ReplacingMergeTree`, so a replayed batch collapses to one row per key on merge. A volume created by the previous migration files keeps its old partitions; the reset is in [operations](operations.md#migrations).
 
 ## Anomaly detection
 
@@ -65,5 +65,5 @@ On purpose, until there's a reason:
 - **End-to-end exactly-once.** Flink checkpoints its window state and source offsets every second to a local volume, in `EXACTLY_ONCE` mode, which covers Flink's own state only. The Kafka sink is `AT_LEAST_ONCE`: it flushes to Kafka on every checkpoint, so a failure can repeat evaluations but not lose them. Repeats collapse in ClickHouse (`ReplacingMergeTree`). Exactly-once would need a transactional sink and `read_committed` consumers; not worth it while ClickHouse deduplicates anyway.
 - **Alerting.** Anomalies are only visible on the dashboard.
 - **Anomaly episodes.** Each anomalous sample is its own row; consecutive ones aren't grouped into one event.
-- **Long-term storage and downsampling.** Everything older than 24 hours is gone.
+- **Long-term storage and downsampling.** A row's TTL is 24 hours. Its daily part stays until every row in that day has expired, so samples can remain for about 48 hours.
 - **Authentication** on the agent, and secrets outside `docker-compose.yml`.

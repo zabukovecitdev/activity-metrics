@@ -30,7 +30,7 @@ dev = [
     "pytest (>=9.1.1,<10.0.0)",
     "pytest-asyncio (>=1.4.0,<2.0.0)",
 ]
-# The notebook and Streamlit app in experiments/. Installed by `uv sync`, never by the image's `pip install .`.
+# Notebook and Streamlit app. Local `uv sync` installs this group; the image passes `--no-default-groups`.
 experiments = [
     "ipykernel>=7.4.0",
     "ipympl>=0.10.0",
