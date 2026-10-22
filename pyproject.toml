@@ -3,7 +3,7 @@ name = "activityreporter"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "Zabukovec",email = "rok.zabukovec@heureka.group"}
+    {name = "Zabukovec",email = "rok.zabukovec.it@gmail.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.14"
@@ -51,3 +51,10 @@ packages = ["src/activityreporter"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["src"]
+
+# pyflink only exists in the Flink image (its pemja dependency needs a JDK and doesn't build here).
+[tool.pyright]
+executionEnvironments = [
+    { root = "src/activityreporter/anomaly_detector", extraPaths = ["src"], reportMissingImports = "none" },
+    { root = "src" },
+]

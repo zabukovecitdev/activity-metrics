@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import (
     ClickHouseSinkBase,
 )
@@ -10,7 +12,7 @@ from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
 class ClickHouseEvaluationsSink(ClickHouseSinkBase):
     table = "evaluations"
-    columns = [
+    columns: ClassVar[list[str]] = [
         "metric_id", "machine_id", "metric_name", "timestamp", "algorithm", "baseline", "lower", "upper", "is_anomaly",
     ]
     record_type = Evaluation
