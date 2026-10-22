@@ -37,7 +37,8 @@ class EWMA:
             deviation = value - average
             floor = max(self.min_deviation, self.min_relative * abs(average))
             scale = max(self.THRESHOLD_MULTIPLIER * math.sqrt(variance), floor)
-            score = deviation / scale
+            # A scale of 0 means a flat series and no floor: only a rise stands out, and any rise does.
+            score = deviation / scale if scale > 0 else math.inf if deviation > 0 else 0.0
             if index == len(window) - 1:
                 return Result(
                     baseline=average,

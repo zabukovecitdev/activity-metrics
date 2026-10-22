@@ -42,6 +42,14 @@ def test_relative_floor_ignores_rises_below_it():
     assert ewma.evaluate(STEADY_MEMORY + [1_030_000_000.0]).is_anomaly
 
 
+def test_flat_series_without_a_floor_flags_only_a_rise():
+    ewma = EWMA(min_deviation=0.0)
+
+    assert not ewma.evaluate([5.0] * 30).is_anomaly
+    assert ewma.evaluate([5.0] * 30 + [5.1]).is_anomaly
+    assert not ewma.evaluate([5.0] * 30 + [4.9]).is_anomaly
+
+
 def test_upper_band_is_at_least_the_floor_above_the_average():
     result = EWMA(min_deviation=0.0, min_relative=0.02).evaluate(STEADY_MEMORY + [1_000_000_000.0])
 
