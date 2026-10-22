@@ -164,7 +164,7 @@ On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHI
 - Sink topic: `KAFKA_EVALUATIONS_TOPIC` (default `evaluations`). Every scored sample produces one evaluation per detector, anomalous or not, so the baseline and bands can be drawn next to the raw series.
 - Event time is `timestamp * 1000` milliseconds. Out-of-orderness bound is 5 seconds. Kafka record timestamps are not used.
 - Parallelism is 2. The stream is keyed by `(machine_id, name)` so each series keeps its own state. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`.
-- State is the last hour of `(event_time, value)` pairs for that key (`WINDOW_MS`).
+- State is the last 360 values for that key (`WINDOW_POINTS`), one hour at the 10-second scrape interval. A count keeps the window full at any sample rate: an hour of 5-minute NAB data holds 12 values, fewer than `mad` needs.
 
 Scoring rules (`MetricEvaluator` in `anomaly_detector/services/metric_evaluator.py`, called from `AnomalyDetectionFunction.process_element` in `anomaly_detector/flink/processors/`):
 

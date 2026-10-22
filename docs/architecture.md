@@ -21,7 +21,7 @@ Grafana                       pick a host, see its series and anomalies
 | **agent** | FastAPI app on every machine. `/v1/metrics` returns CPU, memory, and uptime; `/v1/machine` returns hostname, OS, cores, memory, and disk. | Each machine only has to answer HTTP. It knows nothing about Kafka or the database. |
 | **collector** | Scrapes every agent every 10 s, fetches machine info every 5 min, and publishes both to Kafka. Gives each sample a `metric_id` (UUIDv7). | One place decides when and what to collect. `metric_id` follows the sample everywhere after this. |
 | **Kafka** | Topics `raw_metrics`, `machines`, `evaluations`. | Decouples collecting from scoring from storing: each can be down or replayed without losing data. *Learning goal.* |
-| **Flink job** | Keeps the last hour of each series (`machine_id`, `name`) and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. *Learning goal*: a plain Kafka consumer would do at this scale. |
+| **Flink job** | Keeps the last 360 values of each series (`machine_id`, `name`) and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. *Learning goal*: a plain Kafka consumer would do at this scale. |
 | **clickhouse-writer** | One process, one sink per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `ClickHouseSinkBase` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its sink's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. |
 | **ClickHouse** | Tables `metrics`, `evaluations`, `machines`. Schema in `db/migrations`. | Fast time-range queries for Grafana, and a good fit for append-only data. |
 | **Grafana** | Dashboard `machine-usage-metrics.json`, provisioned on start. | Charts without writing a frontend. |
@@ -38,7 +38,7 @@ Grafana                       pick a host, see its series and anomalies
 
 Two algorithms score CPU and memory usage:
 
-- **MAD**: how far the value is from the median of the last hour, in units of the typical spread. Flags both directions. Needs 20 samples.
+- **MAD**: how far the value is from the median of the last 360 values, in units of the typical spread. Flags both directions. Needs 20 samples.
 - **EWMA**: how far the value rises above a moving average. Flags only rises. Needs 11 samples.
 
 On its own, each one flags tiny steps in a series that barely moves, so each has a minimum deviation per metric (`MetricEvaluator.DETECTORS` in `anomaly_detector/services/metric_evaluator.py`):

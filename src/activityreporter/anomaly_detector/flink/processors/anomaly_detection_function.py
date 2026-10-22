@@ -5,7 +5,9 @@ from pyflink.datastream.state import ListStateDescriptor
 
 from activityreporter.anomaly_detector.services.metric_evaluator import MetricEvaluator
 
-WINDOW_MS = 60 * 60 * 1000
+# A count, not a time span, so the window holds enough values for every detector at any sample rate.
+# One hour at the 10-second scrape interval.
+WINDOW_POINTS = 360
 
 
 class AnomalyDetectionFunction(KeyedProcessFunction):
@@ -17,19 +19,17 @@ class AnomalyDetectionFunction(KeyedProcessFunction):
         # Per detector, as a count and a total of microseconds: the mean is rate(score_micros) / rate(scores).
         self.score_metrics: dict[str, tuple] = {}
         self.recent_values = runtime_context.get_list_state(
-            ListStateDescriptor("recent_values", Types.TUPLE([Types.LONG(), Types.DOUBLE()]))
+            ListStateDescriptor("recent_values", Types.DOUBLE())
         )
 
     def process_element(self, value, ctx: 'KeyedProcessFunction.Context'):
         if not MetricEvaluator.is_scored(value):
             return
 
-        event_time = ctx.timestamp()
-        window = [(t, v) for t, v in self.recent_values.get() if t >= event_time - WINDOW_MS]
-        window.append((event_time, value["value"]))
+        window = [*self.recent_values.get(), value["value"]][-WINDOW_POINTS:]
         self.recent_values.update(window)
 
-        for evaluation in MetricEvaluator.evaluate(value, [v for _, v in window], observe=self._observe):
+        for evaluation in MetricEvaluator.evaluate(value, window, observe=self._observe):
             self.evaluations_emitted.inc()
             # Positional, in model field order, which is the order of EVALUATION_TYPE_INFO.
             yield Row(*evaluation.model_dump().values())
