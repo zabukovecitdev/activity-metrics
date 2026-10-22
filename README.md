@@ -168,7 +168,7 @@ On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHI
 
 Scoring rules (`MetricEvaluator` in `anomaly_detector/services/metric_evaluator.py`, called from `AnomalyDetectionFunction.process_element` in `anomaly_detector/flink/processors/`):
 
-- Only the metrics in `MetricEvaluator.DETECTORS` are scored; every other series is dropped without state. `system.memory.limit` and `system.uptime` barely move or only grow, so every small step would be flagged.
+- Only the metrics in `MetricEvaluator.DETECTORS`, and NAB benchmark series (names that start with `nab.`), are scored; every other series is dropped without state. A NAB series gets `NAB_DETECTORS`: `mad` and `ewma` without floors, because NAB values range from 0.1 to millions. `system.memory.limit` and `system.uptime` barely move or only grow, so every small step would be flagged.
 - Each of the metric's detectors scores the latest value against the window once the window has `min_points` values. Until then that detector emits nothing for the series.
 
 | Metric | `mad` | `ewma` |
