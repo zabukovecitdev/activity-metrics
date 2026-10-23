@@ -65,3 +65,4 @@ also_copy = ["src/activityreporter/__init__.py", "src/activityreporter/anomaly_d
 executionEnvironments = [
     { root = "src/activityreporter/anomaly_detector", extraPaths = ["src"], reportMissingImports = "none" },
     { root = "src" },
+]
