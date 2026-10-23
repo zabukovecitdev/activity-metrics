@@ -27,6 +27,7 @@ clickhouse-writer = "activityreporter.clickhouse_writer.main:cli"
 
 [dependency-groups]
 dev = [
+    "mutmut>=3.8.0",
     "pytest (>=9.1.1,<10.0.0)",
     "pytest-asyncio (>=1.4.0,<2.0.0)",
 ]
@@ -50,11 +51,17 @@ packages = ["src/activityreporter"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+addopts = "--ignore=mutants"
 pythonpath = ["src"]
+
+# `make mutate`. mutmut only copies the paths it mutates, so the rest of the package has to be listed in also_copy.
+[tool.mutmut]
+source_paths = ["src/activityreporter/anomaly_detector/algorithms/", "src/activityreporter/anomaly_detector/services/"]
+pytest_add_cli_args_test_selection = ["tests/anomaly_detector/"]
+also_copy = ["src/activityreporter/__init__.py", "src/activityreporter/anomaly_detector/__init__.py", "src/activityreporter/anomaly_detector/models", "src/activityreporter/shared", "tests"]
 
 # pyflink only exists in the Flink image (its pemja dependency needs a JDK and doesn't build here).
 [tool.pyright]
 executionEnvironments = [
     { root = "src/activityreporter/anomaly_detector", extraPaths = ["src"], reportMissingImports = "none" },
     { root = "src" },
-]

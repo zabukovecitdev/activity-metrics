@@ -120,6 +120,23 @@ def test_only_metrics_with_detectors_are_scored(overrides):
     assert MetricEvaluator.is_scored(build_metric(1.0))
 
 
+def test_nab_series_are_scored_without_floors():
+    metric = build_metric(1.0, name="nab.exchange-2_cpc_results", unit="%")
+    window = [0.10, 0.11, 0.12, 0.11, 0.10] * 4
+
+    assert MetricEvaluator.is_scored(metric)
+    # A rise of 0.4 is far below the 10-point CPU floor, but far outside this series' spread.
+    assert by_algorithm({**metric, "value": 0.5}, window)["mad"].is_anomaly
+    assert by_algorithm({**metric, "value": 0.5}, window)["ewma"].is_anomaly
+
+
+def test_flat_nab_series_is_scored_without_an_error():
+    evaluations = MetricEvaluator.evaluate(build_metric(5.0, name="nab.art_flatline"), [5.0] * 30)
+
+    assert sorted(e.algorithm for e in evaluations) == ["ewma", "mad"]
+    assert not any(e.is_anomaly for e in evaluations)
+
+
 def test_observe_gets_each_detectors_name_and_a_duration():
     seen: list[tuple[str, float]] = []
 
