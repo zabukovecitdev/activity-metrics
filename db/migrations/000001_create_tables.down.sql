@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS machines;
+DROP TABLE IF EXISTS evaluations;
+DROP TABLE IF EXISTS metrics;

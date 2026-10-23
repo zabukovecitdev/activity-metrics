@@ -11,7 +11,9 @@ from pydantic import ValidationError
 from activityreporter.collector.clients.agent_urls import AgentUrls
 from activityreporter.collector.clients.http_agent_client import HttpAgentClient
 from activityreporter.collector.parsers.metrics_parser import MetricsParser
-from activityreporter.collector.producers.kafka_records_producer import KafkaRecordsProducer
+from activityreporter.collector.producers.kafka_records_producer import (
+    KafkaRecordsProducer,
+)
 from activityreporter.shared.models.machine import Machine
 from activityreporter.shared.observability.metrics import Metrics
 from activityreporter.shared.settings.collector_settings import CollectorSettings

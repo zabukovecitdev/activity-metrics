@@ -259,14 +259,11 @@ ClickHouse errors retry up to `CLICKHOUSE_MAX_RETRIES` times (default 5). Backof
 
 | Migration | Effect |
 | --- | --- |
-| 000001 | `metrics` table, `ReplacingMergeTree`, hourly partitions, 24-hour TTL. |
-| 000002 | `anomalies` table, same engine, partitioning, and TTL. |
-| 000003 | `evaluations` table, same engine, partitioning, and TTL. |
-| 000004 | `machines` table, `ReplacingMergeTree(observed_at)`, no TTL. |
-| 000005 | Drops `anomalies`; its `down` recreates it. |
-| 000006 | Replaces `evaluations` with the 9 columns the dashboard needs; its `down` recreates the 000003 table. |
+| 000001 | `metrics` and `evaluations` tables, `ReplacingMergeTree`, daily partitions, 24-hour TTL. `machines` table, `ReplacingMergeTree(observed_at)`, no TTL. |
 
-`metrics` holds only what devices report. Columns: `metric_id` (`UUID`), `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `ingested_at`. Sorting (and deduplication) key `(machine_id, name, timestamp, metric_id)`: queries filter by series and time, and `metric_id` makes each sample unique, including two series at the same instant that differ only in `attributes`. `ttl_only_drop_parts` drops whole expired hourly parts instead of rewriting them.
+Partitions are daily, not hourly: a replay with historical timestamps split into one part per hour it touched, and 38k NAB rows made 16k parts and ran ClickHouse out of memory.
+
+`metrics` holds only what devices report. Columns: `metric_id` (`UUID`), `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `ingested_at`. Sorting (and deduplication) key `(machine_id, name, timestamp, metric_id)`: queries filter by series and time, and `metric_id` makes each sample unique, including two series at the same instant that differ only in `attributes`. `ttl_only_drop_parts` drops whole expired daily parts instead of rewriting them, so a row lives up to about 48 hours.
 
 `evaluations` columns are the fields of the evaluation record: `metric_id` is `UUID`, `baseline` and `upper` are `Float64`, `lower` is `Nullable(Float64)`, `is_anomaly` is `Bool`. Sorting (and deduplication) key `(machine_id, metric_name, algorithm, timestamp, metric_id)`: one algorithm's results for a series over time are contiguous, and a replayed evaluation collapses on merge. Anomalous samples are `WHERE is_anomaly`.
 
