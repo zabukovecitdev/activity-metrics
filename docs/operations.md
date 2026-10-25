@@ -24,6 +24,7 @@ Process commands from the `Makefile`:
 | `collector` | `uv run collector` | `activityreporter.collector.main:cli` |
 | `clickhouse-writer` | `uv run clickhouse-writer` | `activityreporter.clickhouse_writer.main:cli` |
 | `test` | `uv run pytest` | |
+| `mutate` | `uv run mutmut run` | dev dependency; see [Mutation testing](#mutation-testing) |
 | `anomaly-detector` | `flink/.venv/bin/python -m activityreporter.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
 `anomaly-detector` creates `flink/.venv` with Python 3.11 and `apache-flink==1.19.1`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
@@ -39,8 +40,10 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | `KAFKA_CONNECTION_STRING` | `localhost:9094` | `kafka:9092` |
 | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `raw_metrics` |
 | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
+| `COLLECTOR_SCRAPE_INTERVAL_SECONDS` | `1` | unset |
+| `COLLECTOR_MACHINE_REFRESH_SECONDS` | `300` | unset |
 
-The agents to scrape are not an environment variable but `collector.toml`; see [Local stack](#local-stack) and the README.
+`CollectorSettings` (`shared/settings/collector_settings.py`) reads those two with `env_prefix=COLLECTOR_` and `gt=0`. The scrape value is the sleep after a round finishes. The old names `SCRAPE_INTERVAL_SECONDS` and `MACHINE_REFRESH_SECONDS` are ignored. The agents to scrape are not an environment variable but `collector.toml`; see [Local stack](#local-stack) and the README.
 
 ### Anomaly detector
 
@@ -107,7 +110,7 @@ The cluster exists for this one job. There is nothing to submit or cancel:
 
 - **Code change:** `docker compose restart jobmanager`. The job starts again from the new code.
 - **Job fails:** the `exponential-delay` restart strategy restarts it inside the cluster. If it fails for good, the jobmanager exits and Compose starts it again (`restart: unless-stopped`).
-- **State:** checkpointing is off, so a restarted job starts with empty windows and reads `raw_metrics` from `earliest` again. The evaluations it writes again have the same key and collapse in `ReplacingMergeTree`.
+- **State:** `anomaly_detector/main.py` calls `enable_checkpointing(1000)` in `EXACTLY_ONCE` mode, with a 500 ms minimum pause and a 60 s timeout. Compose sets `state.checkpoints.dir` to `file:///checkpoints` and retains files on cancellation (`RETAIN_ON_CANCELLATION`). The jobmanager command is `standalone-job` with no savepoint path, so `docker compose restart jobmanager` starts a new job: windows are empty and the Kafka source reads `raw_metrics` from `earliest` again. Replayed evaluations share a sorting key with the first copy and collapse in `ReplacingMergeTree`. A task failure while that job is still running restores its own checkpoint (`restart-strategy.type: exponential-delay`). The window list state is named `recent_values` and its type is a list of doubles (`WINDOW_POINTS`, 360). Checkpoints written before that change stored `(event time, value)` tuples under the same name. They remain on the volume. Resume a job only from a checkpoint written with the double list.
 
 The taskmanager still runs as its own service and registers with the jobmanager at `jobmanager:6123`.
 
@@ -140,6 +143,12 @@ The wheel contains `src/activityreporter`. Console scripts:
 
 The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent` (`dev` profile only), `collector`, and `clickhouse-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
 
+## Mutation testing
+
+`make mutate` runs `uv run mutmut run`. `[tool.mutmut]` in `pyproject.toml` mutates `src/activityreporter/anomaly_detector/algorithms/` and `services/`, then runs `tests/anomaly_detector/`. mutmut copies only the paths it mutates, so `also_copy` lists the rest of what those tests import: the package and detector `__init__.py` files, `anomaly_detector/models`, `shared`, and `tests`. A new import from anywhere else fails the mutant run with `ImportError` until that path is added there.
+
+`mutmut` is in the `dev` dependency group. The app image installs with `--no-default-groups`, so run this on the host after `uv sync`. The `mutants/` directory is gitignored. `pytest` is configured with `--ignore=mutants`, so `make test` does not collect a leftover tree. `uv run mutmut results` lists what survived; `uv run mutmut show <id>` prints one mutant. The Flink process function is outside `source_paths` because it imports PyFlink, which is not installed in this environment.
+
 ## Smoke test
 
 `make smoke` runs `scripts/smoke-test.sh` against the running stack. It checks that the containers are up and `migrate` exited 0, that `raw_metrics`, `machines`, and `evaluations` have messages, that the Flink job `Anomaly Detection` is `RUNNING` (`/jobs/overview` on port 8081), that `metrics`, `machines`, and `evaluations` have rows from the last 10 minutes and every evaluation's `metric_id` is in `metrics`, and that Grafana, its ClickHouse datasource, and the dashboard respond. Each failure prints a hint.
@@ -150,9 +159,9 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Collector exits with `Cannot load agents: ...`.** `collector.toml` is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs; the message names which. Compose restarts the collector, so the line repeats in `docker compose logs collector` until the file is fixed. If the message says `collector.toml` is a directory, Docker created it for the mount because the file was missing: delete it and restore the file from git. On start the collector logs `Agents from collector.toml: [...]`.
 
-**Scrape errors every 10 seconds.** The collector logs `Failed to scrape metrics from ...` for transport and HTTP errors, and `Malformed response from ...` for a 200 body that is missing `machine_id`, `timestamp`, or a complete metric object. An entry in `collector.toml` with a path, like `http://host:8080/v1/metrics`, still scrapes `/v1/metrics` at the root: list the base URL only.
+**Scrape errors each round.** The collector logs `Failed to fetch metrics from ...` for transport and HTTP errors, and `Invalid metrics from ...` for a 200 body that fails `MetricsResponse` validation. The gap before the next round is `COLLECTOR_SCRAPE_INTERVAL_SECONDS` (default 1). An entry in `collector.toml` with a path, like `http://host:8080/v1/metrics`, still scrapes `/v1/metrics` at the root: list the base URL only.
 
-**Kafka send failures.** When `KafkaRawMetricsRepository.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host, `kafka:9092` from Compose services.
+**Kafka send failures.** When `KafkaRecordsProducer.publish` raises `KafkaError`, the collector logs `Failed to publish metrics from ... to Kafka` and the scrape loop continues. Check `KAFKA_CONNECTION_STRING`: `localhost:9094` from the host, `kafka:9092` from Compose services.
 
 **`metrics` stays empty while raw samples are flowing.** The writer reads `raw_metrics` directly. Check the writer logs and that its group is `clickhouse-metrics-writer`, not a group another process also uses.
 
@@ -160,11 +169,13 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **`Skipping malformed record` in a writer log.** The record is not valid JSON or lacks a required field. A metric or evaluation also needs a valid `metric_id`, an evaluation a non-empty `machine_id`, `metric_name`, and `algorithm`, and a machine a non-empty `machine_id` and a `last_boot` with a UTC offset. Records published before `metric_id` existed have none; they are skipped, not retried.
 
-**`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing for a series until the window holds `min_points` samples of that `(machine_id, name)`: 11 for `ewma` and 20 for `mad`, about 2 and 3.5 minutes at the 10-second scrape interval. Only `system.cpu.utilization`, `system.memory.usage` and NAB series (names that start with `nab.`) are scored. A job started before this change still publishes to `anomalies`; `make up` recreates the cluster with the new job.
+**`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing until that series' window holds `min_points` values: 11 for `ewma` and 20 for `mad`. At the default 1-second gap that is about 11 and 20 seconds; at a steady 10-second cadence, about 2 and 3.5 minutes; a 5-minute NAB series needs about 100 minutes before `mad` emits. Only `system.cpu.utilization`, `system.memory.usage`, and names that start with `nab.` are scored. A `docker compose restart jobmanager` starts empty and rereads `raw_metrics` from `earliest`, so the warm-up runs again.
+
+**A flat `nab.` series flags every rise, with the upper band on the baseline.** Floorless EWMA (`EWMA(min_deviation=0.0)`) treats a scale of 0 as "any rise is an anomaly" and sets `upper` equal to `baseline`. On the detector explorer the dashed upper line sits on the average and the point is marked. A flat continuation and a drop are not anomalies. This used to raise `ZeroDivisionError` and restart the job. CPU and memory keep a positive floor, so a tiny step there stays inside the band.
 
 **Bands drop to 0 in a custom Grafana query.** A `LEFT JOIN` from `metrics` to `evaluations` fills unmatched rows with `0` unless the query ends with `SETTINGS join_use_nulls = 1`.
 
-**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 5 minutes after; check its log for `Failed to fetch machine info` or `Malformed machine info` (an agent older than this change has no `last_seen_at`), and that `clickhouse-writer` is running.
+**The Machine drop-down shows an id instead of a hostname.** `machines` has no row for it yet. The collector fetches `/v1/machine` on its first scrape of an endpoint and every 300 seconds after (`COLLECTOR_MACHINE_REFRESH_SECONDS`); check its log for `Failed to fetch machine from` or `Invalid machine from` (a body missing `last_seen_at`, or a `last_boot` without a UTC offset, fails validation), and that `clickhouse-writer` is running.
 
 **Flink job cannot find the Kafka connector.** On a local run, set `KAFKA_CONNECTOR_JAR` to the downloaded jar. In the image, confirm `/opt/flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar` is mode `644`. The jobmanager leaves `KAFKA_CONNECTOR_JAR` unset so the image copy is the only one on the classpath.
 
