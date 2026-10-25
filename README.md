@@ -73,7 +73,7 @@ Interactive docs: `GET /` redirects to `/docs`.
 | `GET` | `/v1/machine` | `Machine` from `shared/models/machine.py` |
 | `GET` | `/v1/metrics` | One snapshot of current gauges |
 
-`/v1/machine` fields: `machine_id`, `hostname`, `os` (lowercased `platform.system()`), `os_version`, `architecture`, `cores` (`0` when `psutil.cpu_count()` can't tell), `total_memory` and `total_disk` (bytes, disk of the root filesystem), `last_boot` (UTC ISO-8601), `observed_at` (epoch seconds when the agent answered). `machine_id` comes from `machineid.id()`. Only fields that rarely change are here; uptime is the `system.uptime` metric.
+`/v1/machine` fields: `machine_id`, `hostname`, `os` (lowercased `platform.system()`), `os_version`, `architecture`, `cores` (`0` when `psutil.cpu_count()` can't tell), `total_memory` and `total_disk` (bytes, disk of the root filesystem), `last_boot` (UTC ISO-8601), `last_seen_at` (epoch seconds when the agent answered). `machine_id` comes from `machineid.id()`. Only fields that rarely change are here; uptime is the `system.uptime` metric.
 
 `/v1/metrics` response:
 
@@ -243,7 +243,7 @@ The topic variables are the ones the producers read, so a renamed topic is set o
 
 Records are decoded as JSON into the sink's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
-`ClickHouseRepository.insert_batch` writes the sink's table over HTTP (`clickhouse-connect`), then `ClickHouseSinkBase` commits the offsets of its own consumer. A failed insert leaves them uncommitted and the whole batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `ingested_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
+`ClickHouseRepository.insert_batch` writes the sink's table over HTTP (`clickhouse-connect`), then `ClickHouseSinkBase` commits the offsets of its own consumer. A failed insert leaves them uncommitted and the whole batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `inserted_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 
 ```sql
 SELECT machine_id, name, count() FROM metrics FINAL GROUP BY machine_id, name
@@ -260,14 +260,15 @@ ClickHouse errors retry up to `CLICKHOUSE_MAX_RETRIES` times (default 5). Backof
 | Migration | Effect |
 | --- | --- |
 | 000001 | `metrics` and `evaluations` tables, `ReplacingMergeTree`, daily partitions, 24-hour TTL. `machines` table, `ReplacingMergeTree(observed_at)`, no TTL. |
+| 000002 | Renames `metrics.ingested_at` and `machines.ingested_at` to `inserted_at`, and `machines.observed_at` to `last_seen_at`. ClickHouse cannot rename a version column, so it rebuilds both tables and copies the rows; stop `clickhouse-writer` first. |
 
 Partitions are daily, not hourly: a replay with historical timestamps split into one part per hour it touched, and 38k NAB rows made 16k parts and ran ClickHouse out of memory.
 
-`metrics` holds only what devices report. Columns: `metric_id` (`UUID`), `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `ingested_at`. Sorting (and deduplication) key `(machine_id, name, timestamp, metric_id)`: queries filter by series and time, and `metric_id` makes each sample unique, including two series at the same instant that differ only in `attributes`. `ttl_only_drop_parts` drops whole expired daily parts instead of rewriting them, so a row lives up to about 48 hours.
+`metrics` holds only what devices report. Columns: `metric_id` (`UUID`), `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `inserted_at`. Sorting (and deduplication) key `(machine_id, name, timestamp, metric_id)`: queries filter by series and time, and `metric_id` makes each sample unique, including two series at the same instant that differ only in `attributes`. `ttl_only_drop_parts` drops whole expired daily parts instead of rewriting them, so a row lives up to about 48 hours.
 
 `evaluations` columns are the fields of the evaluation record: `metric_id` is `UUID`, `baseline` and `upper` are `Float64`, `lower` is `Nullable(Float64)`, `is_anomaly` is `Bool`. Sorting (and deduplication) key `(machine_id, metric_name, algorithm, timestamp, metric_id)`: one algorithm's results for a series over time are contiguous, and a replayed evaluation collapses on merge. Anomalous samples are `WHERE is_anomaly`.
 
-`machines` holds the latest `Machine` per `machine_id`; `ReplacingMergeTree(observed_at)` keeps the newest on merge, so read it with `FINAL`. It has no TTL: a machine that stops reporting keeps its row, and `observed_at` is when it was last seen.
+`machines` holds the latest `Machine` per `machine_id`; `ReplacingMergeTree(last_seen_at)` keeps the newest on merge, so read it with `FINAL`. It has no TTL: a machine that stops reporting keeps its row, and `last_seen_at` is when it was last seen.
 
 A sample with its evaluation, and a series with its hostname:
 
@@ -294,18 +295,20 @@ The TimescaleDB schema (Flyway `V1`–`V5`) was removed along with TimescaleDB; 
 
 ## Grafana
 
-`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Machine usage metrics*. It uses only the metrics the agent already reports. Variables:
+`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Metrics explorer* (uid `ad8rn6h`). It works for any metric in `metrics`, for example `system.cpu.utilization` or a replayed `nab.*` series. A link at the top opens *Pipeline performance*. Variables:
 
-- `host` (shown as *Machine*): the hostname from `machines`, or the machine id for a machine the collector hasn't described yet.
+- `host` (shown as *Machine*): the hostname from `machines`, or the machine id for a machine the collector hasn't described yet. A replayed NAB series shows its file name.
 - `machine_id`: hidden, the id of the selected host; every panel filters on it. Two machines with the same hostname would both map to the first id, so give them different hostnames.
-- `metric_name` (*Explorer metric*): the metrics a detector has scored for that machine.
+- `metric_name` (*Metric*): every metric that machine has reported.
 
 Panels:
 
-- **Machine**: hostname, OS, architecture, cores, memory, disk, last boot, and last seen, from `machines`. **Uptime** from `system.uptime`.
-- **CPU** and **Memory** gauges (memory is `system.memory.usage / system.memory.limit`), **Memory used**, and **Anomalies**: anomalous evaluations of every metric and algorithm in the time range.
-- **CPU usage** and **Memory usage** (with the limit dashed): the series with every algorithm's anomalies as points, one colour per algorithm (query `B`, split by the `algorithm` column). Where two algorithms flag the same sample, their points overlap; the tooltip lists both.
-- **Detector explorer** (`${metric_name}`): the series, every algorithm's anomalies, and every algorithm's `baseline`, `lower`, and `upper` as dashed lines; then a table of the last 200 anomalies with their values.
+- **Selected series**: *Summary* (latest, min, mean, p95, max, sample count, average interval), *Anomalies by algorithm*, the series with every algorithm's anomalies as points and every algorithm's `baseline`, `lower`, and `upper` as dashed lines, *Anomalies over time*, and *Value distribution*.
+- **All series in the time range**: one row for every machine and metric, with the sample count, the latest value, the anomaly count, and the algorithms that flagged it. The series with most anomalies come first.
+- **Ingestion into ClickHouse**: the rows and parts in the tables (a part count in the thousands means the partition key is too fine), *Metric rows ingested /s*, and *Ingest delay*. The delay leaves out rows older than one hour at the insert, because a replay shifts the timestamps. It is not the end-to-end time of a replay.
+- **Machine**: hardware and uptime from `machines`, then a table of the last 200 anomalies with their values.
+
+A replay moves each series to end now, and the series span about a month. Set the time range to 30 days to see all of it.
 
 ## Tests
 

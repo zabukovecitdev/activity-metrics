@@ -90,7 +90,7 @@ async def test_machine_info_is_published_on_first_scrape():
     machine = machines.published[0]
     assert machine.machine_id == machineid.id()
     assert machine.hostname
-    assert isinstance(machine.observed_at, float)
+    assert isinstance(machine.last_seen_at, float)
 
 
 async def test_machine_info_is_refreshed_only_after_the_interval():

@@ -12,7 +12,7 @@ class ClickHouseMachinesSink(ClickHouseSinkBase):
     table = "machines"
     columns = [
         "machine_id", "hostname", "os", "os_version", "architecture", "cores", "total_memory", "total_disk",
-        "last_boot", "observed_at",
+        "last_boot", "last_seen_at",
     ]
     record_type = Machine
 
@@ -24,5 +24,5 @@ class ClickHouseMachinesSink(ClickHouseSinkBase):
         return [
             record.machine_id, record.hostname, record.os, record.os_version, record.architecture, record.cores,
             record.total_memory, record.total_disk,
-            record.last_boot.astimezone(timezone.utc), RowValues.utc(record.observed_at),
+            record.last_boot.astimezone(timezone.utc), RowValues.utc(record.last_seen_at),
         ]

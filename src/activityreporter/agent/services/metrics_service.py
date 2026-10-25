@@ -45,5 +45,5 @@ class MetricsService:
             total_memory=psutil.virtual_memory().total,
             total_disk=psutil.disk_usage(os.path.abspath(os.sep)).total,
             last_boot=datetime.fromtimestamp(psutil.boot_time(), timezone.utc),
-            observed_at=time.time(),
+            last_seen_at=time.time(),
         )

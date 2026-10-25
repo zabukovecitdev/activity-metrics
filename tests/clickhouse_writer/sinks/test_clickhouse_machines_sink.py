@@ -11,7 +11,7 @@ def test_machine_row_converts_both_times_to_utc():
     row = row_of(ClickHouseMachinesSink, build_machine(1.5))
 
     assert row["last_boot"] == datetime(2026, 10, 1, 6, 30, tzinfo=timezone.utc)
-    assert row["observed_at"] == datetime.fromtimestamp(1.5, timezone.utc)
+    assert row["last_seen_at"] == datetime.fromtimestamp(1.5, timezone.utc)
     assert (row["cores"], row["total_memory"]) == (16, 34_359_738_368)
 
 

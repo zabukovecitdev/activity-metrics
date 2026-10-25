@@ -73,7 +73,7 @@ check "job 'Anomaly Detection' is RUNNING" "docker compose logs jobmanager; Web 
 
 echo "ClickHouse"
 check "metrics has rows from the last 10 minutes" "docker compose logs clickhouse-writer" positive recent_rows metrics timestamp
-check "machines has a row seen in the last 10 minutes" "collector refreshes machine info every 5 minutes" positive recent_rows machines observed_at
+check "machines has a row seen in the last 10 minutes" "collector refreshes machine info every 5 minutes" positive recent_rows machines last_seen_at
 check "evaluations has rows from the last 10 minutes" "see the Flink job and the evaluations topic above" positive recent_rows evaluations timestamp
 check "every evaluation links to a stored sample" "an evaluation's metric_id is not in metrics" evaluations_link_to_samples
 

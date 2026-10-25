@@ -50,7 +50,7 @@ def build_machine(timestamp: float = 1.0) -> Machine:
         total_memory=34_359_738_368,
         total_disk=1_000_204_886_016,
         last_boot=datetime.fromisoformat("2026-10-01T06:30:00+00:00"),
-        observed_at=timestamp,
+        last_seen_at=timestamp,
     )
 
 
