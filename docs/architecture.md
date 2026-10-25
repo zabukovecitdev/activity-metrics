@@ -32,7 +32,7 @@ Grafana                       pick a host, see its series and anomalies
 - **`evaluations`**: one row per sample *per algorithm*, anomalous or not, with only what the dashboard draws: `baseline`, `lower`, `upper`, `is_anomaly`. It's linked to its sample by `metric_id`, and the value stays in `metrics`. A new algorithm is a new `algorithm` value, not a schema change.
 - **`machines`**: the latest description of each machine, joined to the other two on `machine_id`.
 
-`metrics` and `evaluations` keep 24 hours; `machines` keeps everything. All three are `ReplacingMergeTree`, so a replayed batch collapses to one row per key on merge.
+`metrics` and `evaluations` keep 24 hours; `machines` keeps everything. All three are `ReplacingMergeTree`, so a replayed batch collapses to one row per key on merge. On that merge, `metrics` keeps the row with the greatest `inserted_at` (the insert-time default), `machines` keeps the greatest `last_seen_at` (when the agent described itself), and `evaluations` keeps the last row inserted, because it has no version column.
 
 ## Anomaly detection
 
