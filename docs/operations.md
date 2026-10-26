@@ -11,6 +11,12 @@ Setup, configuration, and failure modes for the agent, collector, Flink job, Cli
 | `9094` | Kafka listener advertised as `localhost:9094` (`PLAINTEXT_HOST`). Containers on the Compose network use `kafka:9092`. |
 | `8123`, `9000` | ClickHouse HTTP and native protocol. |
 | `8081` | Flink Web UI. |
+| `8000` | Collector `/metrics`. |
+| `8001` | ClickHouse writer `/metrics`. The process listens on `8000`; Compose publishes that as `8001`. |
+| `9090` | Prometheus. |
+| `3000` | Grafana. |
+
+Flink's Prometheus reporter listens on port `9249` in the jobmanager and the taskmanager. Compose does not publish it. Prometheus scrapes `jobmanager:9249` and `taskmanager:9249` on the Compose network.
 
 The `agent` Compose service is in the `dev` profile, so `make up` doesn't start it; `docker compose --profile dev up -d` does. It does not publish port `8080`. The collector scrapes the agents in `collector.toml`, mounted read-only at `/app/collector.toml` and read once at startup; after editing it, `docker compose restart collector`. The default entry, `http://host.docker.internal:8080`, is an agent run on the host with `make agent`. Docker Desktop resolves `host.docker.internal` by itself; on Docker Engine the collector's `extra_hosts: host.docker.internal:host-gateway` does it. The Compose agent is on the same network as the collector, so add `http://agent:8080` to scrape it instead.
 
@@ -133,7 +139,7 @@ Task slots on the taskmanager: 2, matching the job parallelism.
 
 ## Packaging
 
-The wheel contains `src/activityreporter`. Console scripts:
+Console scripts, from `[project.scripts]`:
 
 | Script | Entry |
 | --- | --- |
@@ -141,7 +147,58 @@ The wheel contains `src/activityreporter`. Console scripts:
 | `collector` | `activityreporter.collector.main:cli` |
 | `clickhouse-writer` | `activityreporter.clickhouse_writer.main:cli` |
 
-The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent` (`dev` profile only), `collector`, and `clickhouse-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
+The root `Dockerfile` builds one image, `activityreporter:latest`, from `python:3.14-slim`. It copies `uv` 0.11.28 and the files `pyproject.toml`, `uv.lock`, `README.md`, and `src`, then runs:
+
+```bash
+UV_PYTHON_DOWNLOADS=never uv sync --frozen --no-default-groups --no-editable --no-cache
+```
+
+`--frozen` installs the versions in `uv.lock`. `--no-default-groups` skips `dev` and `experiments` (`[tool.uv] default-groups`). `--no-editable` installs the project so those console scripts land in `/app/.venv/bin`, which the image puts on `PATH`. `UV_PYTHON_DOWNLOADS=never` uses the image's Python 3.14. `README.md` is in that copy because `readme` in `pyproject.toml` names it. Compose runs this image for `agent` (`dev` profile only), `collector`, and `clickhouse-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
+
+## Process metrics
+
+`Metrics` in `shared/observability/metrics.py` is the registry both processes export. Importing the class registers every family. The collector reaches it through `Collector` and `KafkaRecordsProducer`; the writer reaches it through `ClickHouseSinkBase`. The agent does not export metrics. Each of the other two calls `start_http_server(8000)` (`METRICS_PORT` in that app's `main.py`). On the host those are ports `8000` and `8001`. A labelled sample appears only after that process has called `.labels()` for it. Before that, `/metrics` has the `# HELP` and `# TYPE` lines and no sample for the family. `prometheus_client` 0.26.0, the version in `uv.lock`, also emits a `_created` gauge beside each labelled series.
+
+| Name | Labels | When it moves |
+| --- | --- | --- |
+| `activityreporter_collector_scrapes_total` | `outcome`: `ok`, `fetch_error`, `publish_error` | One metrics scrape. `fetch_error` is a transport error, a non-2xx, or a body that fails `MetricsResponse`. `publish_error` is a `KafkaError` from `publish`. `ok` is a publish that returned. A machine fetch leaves this counter alone. |
+| `activityreporter_collector_invalid_responses_total` | `kind`: `metrics` or `machine` | A 200 body that fails validation, counted before the dead-letter send. |
+| `activityreporter_collector_messages_published_total` | `topic` | After every send in that `publish` call has succeeded, by the number of records. A dead-letter send adds 1 to the `<topic>_dlq` series after that send succeeds. |
+| `activityreporter_writer_messages_consumed_total` | `table` | Every poll, by `len(records)`, malformed records included. An empty poll calls `inc(0)` and still creates the series at 0. |
+| `activityreporter_writer_malformed_records_total` | `table` | `_parse` caught `TypeError` or `ValueError`. |
+| `activityreporter_writer_rows_written_total` | `table` | After `insert_batch` and the offset commit have both returned. |
+| `activityreporter_writer_write_seconds` | `table` | Histogram around that same insert and commit. Retry sleeps inside `insert_batch` are part of the observation. The timer records on an exception too; the row counter above stays where it was. |
+
+`table` is `metrics`, `evaluations`, or `machines`. Histogram buckets are 5 ms, 10 ms, 25 ms, 50 ms, 75 ms, 100 ms, 250 ms, 500 ms, 750 ms, 1 s, 2.5 s, 5 s, 7.5 s, 10 s, and `+Inf`, plus `_bucket`, `_sum`, and `_count`.
+
+Both `main.py` files hardcode port 8000. Compose can publish them on two host ports because they are different containers. Two processes on the host cannot: the second `start_http_server(8000)` fails to bind.
+
+Prometheus is `prom/prometheus:v3.5.0` on port `9090`. `docker/prometheus/prometheus.yml` scrapes every 15 seconds:
+
+| Job | Targets |
+| --- | --- |
+| `collector` | `collector:8000` |
+| `clickhouse-writer` | `clickhouse-writer:8000` |
+| `flink` | `jobmanager:9249`, `taskmanager:9249` |
+
+The Prometheus service waits until the collector and the writer have started. It does not wait for Flink. Grafana's Prometheus datasource is uid `prometheus`, URL `http://prometheus:9090`. ClickHouse stays the default datasource.
+
+The jobmanager and the taskmanager set `metrics.reporter.prom.factory.class` to `org.apache.flink.metrics.prometheus.PrometheusReporterFactory` and `metrics.reporter.prom.port` to `9249`. `AnomalyDetectionFunction` adds its own counters on the operator: `evaluations_emitted` once per evaluation it yields, and, under a group named `algorithm`, `scores` and `score_micros`. `scores` increments once per `Detector.evaluate` that actually ran. A detector still short of `min_points` is skipped, so warm-up does not count. `score_micros` adds `round(seconds * 1_000_000)`. The pipeline dashboard reads the reporter names `flink_taskmanager_job_task_operator_evaluations_emitted`, `flink_taskmanager_job_task_operator_algorithm_scores`, and `flink_taskmanager_job_task_operator_algorithm_score_micros` (label `algorithm`). Mean time per call is `rate(score_micros) / rate(scores)`. PyFlink's counters are not a histogram.
+
+`docker/grafana/dashboards/pipeline-performance.json` is uid `pipeline-performance`, refresh 10 seconds, default range the last 30 minutes, timezone `browser`. The Metrics explorer link opens it and keeps the current time range (`keepTime`).
+
+| Panel | What it shows |
+| --- | --- |
+| Collector, Flink, ClickHouse writer | `min(up{job="..."})`. 1 is UP. Flink's job has two targets, so one failed scrape makes the stat DOWN. A missing series is filled with 0. |
+| Errors in range | Over the dashboard range: dead-letter publishes (`topic` matching `.*_dlq`), malformed writer records, and scrapes whose `outcome` is anything other than `ok`. |
+| Collector: published to Kafka /s | `rate` of publishes, `*_dlq` topics left out, summed by topic. |
+| Flink: evaluations emitted /s | `rate` of `evaluations_emitted`. |
+| ClickHouse: rows written /s | `rate` of `rows_written_total` by table. |
+| Flink: source lag | `max(flink_taskmanager_job_task_operator_pendingRecords)`. Records in `raw_metrics` the detector has not read yet. Growing means Flink is behind. |
+| Flink: backpressure | `max(flink_taskmanager_job_task_backPressuredTimeMsPerSecond)`, milliseconds per second the busiest task was blocked. 1000 is fully blocked. |
+| Flink: checkpoint duration | `max(flink_jobmanager_job_lastCheckpointDuration)`, milliseconds, the last checkpoint. The job checkpoints every second. |
+| Flink: detector time per call | The microsecond ratio above, per algorithm. |
+| ClickHouse: write time p50 / p95 | `histogram_quantile` 0.5 and 0.95 of `activityreporter_writer_write_seconds_bucket`, seconds, per table. One observation is one batch. |
 
 ## Mutation testing
 
@@ -151,7 +208,7 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 
 ## Smoke test
 
-`make smoke` runs `scripts/smoke-test.sh` against the running stack. It checks that the containers are up and `migrate` exited 0, that `raw_metrics`, `machines`, and `evaluations` have messages, that the Flink job `Anomaly Detection` is `RUNNING` (`/jobs/overview` on port 8081), that `metrics`, `machines`, and `evaluations` have rows from the last 10 minutes and every evaluation's `metric_id` is in `metrics`, and that Grafana, its ClickHouse datasource, and the dashboard respond. Each failure prints a hint.
+`make smoke` runs `scripts/smoke-test.sh` against the running stack. It checks that the containers are up and `migrate` exited 0, that `raw_metrics`, `machines`, and `evaluations` have messages, that the Flink job `Anomaly Detection` is `RUNNING` (`/jobs/overview` on port 8081), that `metrics`, `machines`, and `evaluations` have rows from the last 10 minutes and every evaluation's `metric_id` is in `metrics`, and that Grafana, its ClickHouse datasource, and dashboard uid `ad8rn6h` respond. The containers it requires are kafka, clickhouse, collector, clickhouse-writer, jobmanager, taskmanager, and grafana. Prometheus and dashboard uid `pipeline-performance` are outside that list. Each failure prints a hint.
 
 It needs an agent the collector can reach (`make agent` on the host) and, for the evaluation checks, a few minutes of samples: `WAIT=300 make smoke` retries failed checks for up to 300 seconds. Grafana is called as `admin:admin`; set `GRAFANA_AUTH` if you changed it.
 
@@ -182,3 +239,7 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 **Flink jobmanager keeps restarting.** In Application Mode the jobmanager exits when the job can't start, for example on a Python error in `main` or an import error in `./src`. `docker compose logs jobmanager` shows the traceback. A job that starts and then fails is restarted by Flink first, and shows up under *Exceptions* in the Web UI.
 
 **`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL.
+
+**Pipeline performance is empty, or a State stat stays DOWN.** Prometheus is at http://localhost:9090. From the host, the collector is http://localhost:8000/metrics and the writer is http://localhost:8001/metrics. Flink's reporter is only on the Compose network (`jobmanager:9249`, `taskmanager:9249`). The Flink stat is the minimum of both targets, so one of them failing the scrape shows DOWN. Right after `make up`, Prometheus may already be up while Flink is not: it waits on the collector and the writer, not on the jobmanager. A family with a `# TYPE` line and no sample has not been labelled on that process yet. `make smoke` can pass while this dashboard is empty.
+
+**A local collector or writer fails at startup because port 8000 is taken.** Each calls `start_http_server(8000)`. The port is the constant `METRICS_PORT` in that `main.py`. The second process raises `OSError` (`Address already in use`). The Compose collector already publishes host port `8000`, so `make collector` while the stack is up hits the same error. The writer container is on host port `8001`.
