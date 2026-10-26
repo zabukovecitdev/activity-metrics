@@ -31,7 +31,8 @@ dev = [
     "pytest (>=9.1.1,<10.0.0)",
     "pytest-asyncio (>=1.4.0,<2.0.0)",
 ]
-# The notebook and Streamlit app in experiments/. Installed by `uv sync`, never by the image's `pip install .`.
+# The notebook and Streamlit app in experiments/. `uv sync` on the host installs this group.
+# The image runs `uv sync --frozen --no-default-groups`, so the group stays out of the image.
 experiments = [
     "ipykernel>=7.4.0",
     "ipympl>=0.10.0",

@@ -313,6 +313,8 @@ Panels:
 - **Ingestion into ClickHouse**: the rows and parts in the tables (a part count in the thousands means the partition key is too fine), *Metric rows ingested /s*, and *Ingest delay*. The delay leaves out rows older than one hour at the insert, because a replay shifts the timestamps. It is not the end-to-end time of a replay.
 - **Machine**: hardware and uptime from `machines`, then a table of the last 200 anomalies with their values.
 
+`docker/grafana/dashboards/pipeline-performance.json` is *Pipeline performance* (uid `pipeline-performance`). The link on Metrics explorer opens it and keeps the time range. Opened on its own, it shows the last 30 minutes and refreshes every 10 seconds. Its datasource is Prometheus (uid `prometheus`). The rows are **State** (scrape up or down, and error counts over the range), **Throughput** (records published to Kafka, evaluations emitted, rows written), and **Latency and saturation** (source lag, backpressure, checkpoint duration, detector time per call, write p50 and p95). The series names and when each counter moves are in [docs/operations.md](docs/operations.md).
+
 A replay moves each series to end now, and the series span about a month. Set the time range to 30 days to see all of it.
 
 ## Tests
