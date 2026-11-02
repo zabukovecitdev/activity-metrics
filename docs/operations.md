@@ -31,7 +31,15 @@ Process commands from the `Makefile`:
 
 ## Environment
 
-Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are noted when they differ.
+Defaults are the pydantic-settings classes in `shared/settings/`. Compose overrides are noted when they differ.
+
+### Agent
+
+| Variable | Default | Compose |
+| --- | --- | --- |
+| `PORT` | `8080` | unset |
+
+`AgentSettings` (`shared/settings/agent_settings.py`) has no env prefix, so the field `port` is the variable `PORT` (case-insensitive). The process binds `0.0.0.0` on that port when `cli` starts the server. A value that is not an integer raises `ValidationError` (`loc` is `port`, type `int_parsing`) and the process exits; `cli` only swallows `KeyboardInterrupt`. Compose does not publish `8080`. `make agent` listens on the host. The dev-profile container is still port `8080` on the Compose network (`http://agent:8080`).
 
 ### Collector
 
@@ -78,10 +86,33 @@ One process runs a sink per topic, each on its own thread; the variables below a
 | `CLICKHOUSE_DB` | `metrics` | `metrics` |
 | `CLICKHOUSE_USER` | `user` | `user` |
 | `CLICKHOUSE_PASSWORD` | `password` | `password` |
+| `CLICKHOUSE_MAX_RETRIES` | `5` | unset |
+| `CLICKHOUSE_BACKOFF_BASE_SECONDS` | `1.0` | unset |
 
 `CLICKHOUSE_PORT` is the HTTP port. From the host, ClickHouse is `localhost:8123` (HTTP) and `localhost:9000` (native) with the same database, user, and password. Inside Compose the writer waits until the `migrate` container exits successfully.
 
+`CLICKHOUSE_MAX_RETRIES` must be greater than 0 (`gt=0`). `CLICKHOUSE_BACKOFF_BASE_SECONDS` may be 0 (`ge=0`), which retries with no sleep. The delay is that base times `2^(attempt-1)`. The README has the sequence for the default base of 1 second.
+
 The topic names are set once, in the `x-topics` block of `docker-compose.yml`, and merged into every service that produces or consumes them. Services built from the root `Dockerfile` share the `x-app` block (`build`, `image`, `restart`).
+
+## Grafana
+
+Grafana is `grafana/grafana:13.2.3` at http://localhost:3000. Compose sets no admin user or password. A fresh `grafana_data` volume accepts Grafana's default `admin` / `admin`. `make smoke` calls it as `GRAFANA_AUTH` (default `admin:admin`).
+
+Dashboards are file-provisioned. `docker/grafana/provisioning/dashboards/dashboards.yml` names the provider `activityreporter`, sets `allowUiUpdates: true`, and does not set `updateIntervalSeconds`. `docker-compose.yml` mounts `docker/grafana/dashboards` read-only at `/var/lib/grafana/dashboards`. A save in the UI cannot change that JSON. It is stored in the `grafana_data` volume. Edit the JSON in git, then `docker compose restart grafana`, to make the provisioned copy what the UI shows.
+
+*Metrics explorer* (`docker/grafana/dashboards/machine-usage-metrics.json`, uid `ad8rn6h`) opens on the last 30 minutes (`now-30m`), refreshes every 5 seconds, and uses the browser timezone. The time picker does not apply to every query in that file:
+
+| What | Time predicate |
+| --- | --- |
+| Selected series (summary, chart, anomalies, distribution) | `$__timeFilter(timestamp)` |
+| All series in the time range | `$__timeFilter(timestamp)` |
+| Recent anomalies | `$__timeFilter(timestamp)` |
+| *Metric rows ingested /s* and *Ingest delay (live data only)* | `$__timeFilter(inserted_at)`, the insert time, not the sample's `timestamp` |
+| *Stored* (row and part counts) | none; `count()` over the whole table |
+| *Machine* (hardware, *Last boot*, *Last seen*) | none; `machines FINAL` for the selected id |
+
+The *Machine*, *Metric*, and hidden machine-id variables also have no time predicate. Their `refresh` is `1`, which Grafana runs on dashboard load, so changing the time range does not rebuild those lists. A machine or metric still appears after its samples have left the selected window. `allowCustomValue` is false, so a hostname that is not in that query cannot be typed in. The hidden *Unit* variable has `refresh` `2` (on time-range change) but the query is `any(unit)` with no time predicate, so the range does not change the unit.
 
 ## Migrations
 

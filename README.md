@@ -118,6 +118,8 @@ agents = [
 
 It adds `/v1/metrics` and `/v1/machine` to each. The file is read once, at startup: after editing it, `docker compose restart collector`. The collector refuses to start, naming the problem, when the file is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs.
 
+Entries that become the same `/v1/metrics` URL are scraped once. `http://host:8080`, `http://host:8080/`, and `http://host:8080/v1/metrics` are one endpoint, because the path is replaced with `/v1/metrics`.
+
 ## Collector contract
 
 Each round GETs every agent's `/v1/metrics`, then sleeps `COLLECTOR_SCRAPE_INTERVAL_SECONDS` (default 1) before the next round. Compose does not set it. The sleep is a gap after the round, so the cadence is slower than the setting by however long the scrapes took. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
@@ -155,7 +157,7 @@ Kafka record shape:
 
 ### Machine info
 
-On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. A response missing a field, or with an empty `machine_id`, is logged as `Malformed machine info from ...`.
+On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. A transport or HTTP error is logged as `Failed to fetch machine from <url>`. A 200 body that fails `Machine` validation is logged as `Invalid machine from <url>` and dead-lettered on `machines_dlq`, the same way as a bad metrics body. `Machine` requires non-empty `machine_id`, `hostname`, `os`, `os_version`, and `architecture`; non-negative `cores`, `total_memory`, and `total_disk`; a `last_boot` with a UTC offset; and `last_seen_at`. A Kafka send error is logged as `Failed to publish machine info from <endpoint> to Kafka`.
 
 ## Anomaly detection
 
