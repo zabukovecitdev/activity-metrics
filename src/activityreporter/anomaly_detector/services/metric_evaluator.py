@@ -15,7 +15,10 @@ class MetricEvaluator:
         # Percentage points.
         "system.cpu.utilization": [MAD(min_deviation=10.0), EWMA(min_deviation=10.0)],
         # Memory in use sits near one level and drifts, so only a change of 2% of it counts.
-        "system.memory.usage": [MAD(min_relative=0.02), EWMA(min_deviation=0.0, min_relative=0.02)],
+        "system.memory.usage": [
+            MAD(min_relative=0.02),
+            EWMA(min_deviation=0.0, min_relative=0.02),
+        ],
     }
     # A replayed NAB series is named NAB_PREFIX + its file name. NAB values range from 0.1 to millions,
     # so no floor in the values' units fits them all, and these detectors have none.
@@ -54,15 +57,17 @@ class MetricEvaluator:
             result = detector.evaluate(window)
             if observe:
                 observe(detector.name, time.perf_counter() - started)
-            evaluations.append(Evaluation(
-                metric_id=metric["metric_id"],
-                machine_id=metric["machine_id"],
-                metric_name=metric["name"],
-                timestamp=metric["timestamp"],
-                algorithm=detector.name,
-                baseline=result.baseline,
-                lower=result.lower,
-                upper=result.upper,
-                is_anomaly=result.is_anomaly,
-            ))
+            evaluations.append(
+                Evaluation(
+                    metric_id=metric["metric_id"],
+                    machine_id=metric["machine_id"],
+                    metric_name=metric["name"],
+                    timestamp=metric["timestamp"],
+                    algorithm=detector.name,
+                    baseline=result.baseline,
+                    lower=result.lower,
+                    upper=result.upper,
+                    is_anomaly=result.is_anomaly,
+                )
+            )
         return evaluations

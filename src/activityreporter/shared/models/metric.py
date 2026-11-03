@@ -7,9 +7,11 @@ class Metric(BaseModel):
     """One metric sample, as the collector publishes it on the raw metrics topic.
 
     `metric_id` (a UUIDv7 string) identifies the sample from the moment the
-    collector accepts it. Unknown fields are ignored, so a producer may add one
+    collector accepts it, and `pipeline_start` (epoch seconds) is when that was.
+    Unknown fields are ignored, so a producer may add one
     before every consumer knows it.
     """
+
     timestamp: float
     name: str = Field(min_length=1)
     type: str = Field(min_length=1)
@@ -18,6 +20,8 @@ class Metric(BaseModel):
     machine_id: str = Field(min_length=1)
     metric_id: str
     attributes: dict[str, str] | None = None
+    # None for records published before the collector set it.
+    pipeline_start: float | None = None
 
     @field_validator("metric_id")
     @classmethod

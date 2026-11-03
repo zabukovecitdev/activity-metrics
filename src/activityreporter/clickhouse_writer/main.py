@@ -5,13 +5,25 @@ from contextlib import ExitStack
 
 from prometheus_client import start_http_server
 
-from activityreporter.clickhouse_writer.consumers.kafka_records_consumer import KafkaRecordsConsumer
-from activityreporter.clickhouse_writer.repositories.clickhouse_repository import ClickHouseRepository
-from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import ClickHouseEvaluationsSink
-from activityreporter.clickhouse_writer.sinks.clickhouse_machines_sink import ClickHouseMachinesSink
-from activityreporter.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
+from activityreporter.clickhouse_writer.consumers.kafka_records_consumer import (
+    KafkaRecordsConsumer,
+)
+from activityreporter.clickhouse_writer.repositories.clickhouse_repository import (
+    ClickHouseRepository,
+)
+from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import (
+    ClickHouseEvaluationsSink,
+)
+from activityreporter.clickhouse_writer.sinks.clickhouse_machines_sink import (
+    ClickHouseMachinesSink,
+)
+from activityreporter.clickhouse_writer.sinks.clickhouse_metrics_sink import (
+    ClickHouseMetricsSink,
+)
 from activityreporter.shared.settings.clickhouse_settings import ClickHouseSettings
-from activityreporter.shared.settings.clickhouse_sink_settings import ClickHouseSinkSettings
+from activityreporter.shared.settings.clickhouse_sink_settings import (
+    ClickHouseSinkSettings,
+)
 from activityreporter.shared.settings.kafka_settings import KafkaSettings
 
 METRICS_PORT = 8000
@@ -19,9 +31,22 @@ SINKS = [ClickHouseMetricsSink, ClickHouseEvaluationsSink, ClickHouseMachinesSin
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    """Starts one sink for each topic and the Prometheus metrics server.
+
+    Runs the sinks until one fails or the process gets SIGTERM.
+
+    Raises:
+        Any exception that a sink raised.
+    """
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     start_http_server(METRICS_PORT)
-    kafka, clickhouse, clickhouse_sink_settings = KafkaSettings(), ClickHouseSettings(), ClickHouseSinkSettings()
+    kafka, clickhouse, clickhouse_sink_settings = (
+        KafkaSettings(),
+        ClickHouseSettings(),
+        ClickHouseSinkSettings(),
+    )
     with ExitStack() as stack:
         # A Kafka consumer and a ClickHouse client are not thread safe, so each sink gets its own pair.
         sinks = [
@@ -57,6 +82,7 @@ def main() -> None:
 
 
 def cli() -> None:
+    """Runs `main` and ends without an error on Ctrl+C."""
     try:
         main()
     except KeyboardInterrupt:

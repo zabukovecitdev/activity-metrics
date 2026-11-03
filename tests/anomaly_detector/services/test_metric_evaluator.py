@@ -25,7 +25,10 @@ MEMORY = [492_711_936.0, 492_720_128.0, 492_703_744.0, 492_711_936.0] * 5
 
 
 def by_algorithm(metric: dict, window: list[float]) -> dict[str, Evaluation]:
-    return {e.algorithm: e for e in MetricEvaluator.evaluate(metric, window + [metric["value"]])}
+    return {
+        e.algorithm: e
+        for e in MetricEvaluator.evaluate(metric, window + [metric["value"]])
+    }
 
 
 def test_every_detector_evaluates_every_sample_once_warm():
@@ -38,8 +41,16 @@ def test_every_detector_evaluates_every_sample_once_warm():
 def test_evaluation_is_keyed_by_the_metric_sample():
     evaluation = by_algorithm(build_metric(90.0), BASELINE)["mad"]
 
-    assert (evaluation.metric_id, evaluation.machine_id, evaluation.metric_name, evaluation.timestamp) == (
-        "01a0e974-dc94-74df-ae87-e0e6064b18ef", "server-42", "system.cpu.utilization", 1790595000.25,
+    assert (
+        evaluation.metric_id,
+        evaluation.machine_id,
+        evaluation.metric_name,
+        evaluation.timestamp,
+    ) == (
+        "01a0e974-dc94-74df-ae87-e0e6064b18ef",
+        "server-42",
+        "system.cpu.utilization",
+        1790595000.25,
     )
 
 
@@ -72,9 +83,12 @@ def test_ewma_has_no_lower_band():
 
 
 def test_detectors_are_skipped_until_they_have_enough_values():
-    window = BASELINE[:11]
+    window = BASELINE[:-1]
 
-    assert [e.algorithm for e in MetricEvaluator.evaluate(build_metric(window[-1]), window)] == ["ewma"]
+    assert MetricEvaluator.evaluate(build_metric(window[-1]), window) == []
+    assert {
+        e.algorithm for e in MetricEvaluator.evaluate(build_metric(BASELINE[-1]), BASELINE)
+    } == {"ewma", "mad"}
     assert MetricEvaluator.evaluate(build_metric(1.0), [1.0]) == []
 
 
@@ -95,13 +109,17 @@ def test_cpu_rise_of_more_than_ten_points_on_an_idle_machine_is_an_anomaly():
 def test_memory_moving_a_few_pages_is_not_an_anomaly():
     # What the pipeline run flagged before the floor: 32 KB on ~470 MB in use, down and up.
     for value in (492_679_168.0, 492_744_704.0):
-        evaluations = by_algorithm(build_metric(value, name="system.memory.usage", unit="By"), MEMORY)
+        evaluations = by_algorithm(
+            build_metric(value, name="system.memory.usage", unit="By"), MEMORY
+        )
         assert not evaluations["mad"].is_anomaly
         assert not evaluations["ewma"].is_anomaly
 
 
 def test_memory_jumping_more_than_two_percent_is_an_anomaly():
-    evaluations = by_algorithm(build_metric(560_000_000.0, name="system.memory.usage", unit="By"), MEMORY)
+    evaluations = by_algorithm(
+        build_metric(560_000_000.0, name="system.memory.usage", unit="By"), MEMORY
+    )
 
     assert evaluations["mad"].is_anomaly
     assert evaluations["ewma"].is_anomaly
@@ -131,7 +149,9 @@ def test_nab_series_are_scored_without_floors():
 
 
 def test_flat_nab_series_is_scored_without_an_error():
-    evaluations = MetricEvaluator.evaluate(build_metric(5.0, name="nab.art_flatline"), [5.0] * 30)
+    evaluations = MetricEvaluator.evaluate(
+        build_metric(5.0, name="nab.art_flatline"), [5.0] * 30
+    )
 
     assert sorted(e.algorithm for e in evaluations) == ["ewma", "mad"]
     assert not any(e.is_anomaly for e in evaluations)
@@ -140,7 +160,11 @@ def test_flat_nab_series_is_scored_without_an_error():
 def test_observe_gets_each_detectors_name_and_a_duration():
     seen: list[tuple[str, float]] = []
 
-    MetricEvaluator.evaluate(build_metric(11.0), BASELINE + [11.0], observe=lambda name, seconds: seen.append((name, seconds)))
+    MetricEvaluator.evaluate(
+        build_metric(11.0),
+        BASELINE + [11.0],
+        observe=lambda name, seconds: seen.append((name, seconds)),
+    )
 
     assert sorted(name for name, _ in seen) == ["ewma", "mad"]
     assert all(seconds >= 0 for _, seconds in seen)

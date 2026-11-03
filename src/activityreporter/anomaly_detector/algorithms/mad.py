@@ -1,11 +1,12 @@
 import numpy as np
 
+from activityreporter.anomaly_detector.algorithms.detector import WINDOW_POINTS
 from activityreporter.anomaly_detector.models.result import Result
 
 
 class MAD:
     name = "mad"
-    min_points = 20
+    min_points = WINDOW_POINTS
     SIGMA = 1.4826
     # Iglewicz & Hoaglin: when over half the values equal the median, MAD is 0
     # and the mean absolute deviation, scaled to match it, stands in.
@@ -30,10 +31,17 @@ class MAD:
         spread_scale = self.SIGMA * float(np.median(deviations))
         if spread_scale == 0:
             spread_scale = self.MEAN_SIGMA * float(np.mean(deviations))
-        floor = max(self.min_deviation, self.min_relative * abs(median)) / self.THRESHOLD
+        floor = (
+            max(self.min_deviation, self.min_relative * abs(median)) / self.THRESHOLD
+        )
         scale = max(spread_scale, floor)
         margin = self.THRESHOLD * scale
         # A scale of 0 means every value is the same and there is no floor: nothing stands out.
         is_anomaly = scale > 0 and float(deviations[-1]) / scale >= self.THRESHOLD
 
-        return Result(baseline=median, lower=median - margin, upper=median + margin, is_anomaly=is_anomaly)
+        return Result(
+            baseline=median,
+            lower=median - margin,
+            upper=median + margin,
+            is_anomaly=is_anomaly,
+        )

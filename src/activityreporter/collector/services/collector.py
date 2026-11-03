@@ -30,6 +30,15 @@ class Collector:
         machines: KafkaRecordsProducer,
         settings: CollectorSettings,
     ):
+        """Stores the agents to scrape and the producers that send the data.
+
+        Args:
+            endpoints: The metrics URL of each agent.
+            agent_metrics: The client that fetches data from the agents.
+            raw_metrics: The producer for metric records.
+            machines: The producer for machine records.
+            settings: The scrape and refresh intervals.
+        """
         self._endpoints = set(endpoints)
         self._agent_metrics = agent_metrics
         self._raw_metrics = raw_metrics
@@ -38,6 +47,7 @@ class Collector:
         self._machine_refreshed_at: dict[str, float] = {}
 
     async def run(self) -> None:
+        """Scrapes all agents, then waits for the scrape interval. Repeats until the task is cancelled."""
         while True:
             await self.collect()
             await asyncio.sleep(self._settings.scrape_interval_seconds)
@@ -46,8 +56,15 @@ class Collector:
         await asyncio.gather(*(self._scrape(endpoint) for endpoint in self._endpoints))
 
     async def _scrape(self, endpoint: str) -> None:
+        """Refreshes the machine info of one agent, then fetches and publishes its metrics.
+
+        Args:
+            endpoint: The metrics URL of the agent.
+        """
         await self._refresh_machine(endpoint)
-        metrics = await self._receive("metrics", endpoint, MetricsParser.parse, self._raw_metrics)
+        metrics = await self._receive(
+            "metrics", endpoint, MetricsParser.parse, self._raw_metrics
+        )
         if metrics is None:
             Metrics.SCRAPES.labels("fetch_error").inc()
             return
@@ -61,12 +78,25 @@ class Collector:
             Metrics.SCRAPES.labels("ok").inc()
 
     async def _refresh_machine(self, endpoint: str) -> None:
+        """Fetches and publishes the machine info of one agent, at most once per refresh interval.
+
+        A failed publish is retried on the next scrape.
+
+        Args:
+            endpoint: The metrics URL of the agent.
+        """
         now = time.monotonic()
-        if now - self._machine_refreshed_at.get(endpoint, -math.inf) < self._settings.machine_refresh_seconds:
+        if (
+            now - self._machine_refreshed_at.get(endpoint, -math.inf)
+            < self._settings.machine_refresh_seconds
+        ):
             return
 
         machine = await self._receive(
-            "machine", AgentUrls.machine_url(endpoint), Machine.model_validate_json, self._machines
+            "machine",
+            AgentUrls.machine_url(endpoint),
+            Machine.model_validate_json,
+            self._machines,
         )
         if machine is None:
             return
@@ -74,12 +104,20 @@ class Collector:
         try:
             await asyncio.to_thread(self._machines.publish, [machine])
         except KafkaError:
-            logger.exception("Failed to publish machine info from %s to Kafka", endpoint)
+            logger.exception(
+                "Failed to publish machine info from %s to Kafka", endpoint
+            )
             return
         # Only after a successful publish, so a failure is retried on the next scrape.
         self._machine_refreshed_at[endpoint] = now
 
-    async def _receive[T](self, kind: str, url: str, parse: Callable[[str], T], producer: KafkaRecordsProducer) -> T | None:
+    async def _receive[T](
+        self,
+        kind: str,
+        url: str,
+        parse: Callable[[str], T],
+        producer: KafkaRecordsProducer,
+    ) -> T | None:
         """`parse` applied to the body at `url`, or None once the failure is logged.
 
         The one place agent responses are validated: an invalid one is counted and sent to `producer`'s dead letter

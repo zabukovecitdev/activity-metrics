@@ -31,7 +31,9 @@ def test_band_is_symmetric_around_the_median():
 
     assert result.baseline == 50.0
     assert result.lower is not None
-    assert result.baseline - result.lower == pytest.approx(result.upper - result.baseline)
+    assert result.baseline - result.lower == pytest.approx(
+        result.upper - result.baseline
+    )
     assert not result.is_anomaly
 
 
@@ -40,7 +42,9 @@ def test_band_is_threshold_modified_z_scores_wide():
     result = MAD().evaluate([1, 3, 5, 7, 9])
 
     assert result.baseline == 5.0
-    assert result.upper - result.baseline == pytest.approx(MAD.THRESHOLD * MAD.SIGMA * 2)
+    assert result.upper - result.baseline == pytest.approx(
+        MAD.THRESHOLD * MAD.SIGMA * 2
+    )
     assert not result.is_anomaly
 
 
@@ -48,7 +52,9 @@ def test_mad_of_zero_falls_back_to_scaled_mean_absolute_deviation():
     result = MAD().evaluate([5.0] * 19 + [6.0])
 
     assert result.baseline == 5.0
-    assert result.upper - result.baseline == pytest.approx(MAD.THRESHOLD * MAD.MEAN_SIGMA * 0.05)
+    assert result.upper - result.baseline == pytest.approx(
+        MAD.THRESHOLD * MAD.MEAN_SIGMA * 0.05
+    )
     assert result.is_anomaly
 
 
@@ -79,17 +85,25 @@ def test_min_deviation_is_the_smallest_deviation_that_reaches_the_threshold():
 def test_min_relative_floors_the_band_at_a_fraction_of_the_median():
     values = [1000.0, 1001.0, 999.0] * 7
 
-    assert margin(values + [1015.0], MAD(min_relative=0.02)) == pytest.approx(0.02 * 1000.0)
+    assert margin(values + [1015.0], MAD(min_relative=0.02)) == pytest.approx(
+        0.02 * 1000.0
+    )
     assert not MAD(min_relative=0.02).evaluate(values + [1015.0]).is_anomaly
     assert MAD().evaluate(values + [1015.0]).is_anomaly
 
 
 def test_floor_does_not_narrow_a_wider_spread():
-    assert margin([1, 3, 5, 7, 9], MAD(min_deviation=0.1)) == pytest.approx(MAD.THRESHOLD * MAD.SIGMA * 2)
+    assert margin([1, 3, 5, 7, 9], MAD(min_deviation=0.1)) == pytest.approx(
+        MAD.THRESHOLD * MAD.SIGMA * 2
+    )
 
 
 def test_floor_gives_equal_values_a_band():
     result = MAD(min_deviation=7.0).evaluate([5.0] * 25)
 
-    assert (result.lower, result.baseline, result.upper) == (pytest.approx(-2.0), 5.0, pytest.approx(12.0))
+    assert (result.lower, result.baseline, result.upper) == (
+        pytest.approx(-2.0),
+        5.0,
+        pytest.approx(12.0),
+    )
     assert not result.is_anomaly

@@ -21,6 +21,12 @@ class AgentsFileLoader:
             raise ValueError(f"{path}: agents must be a non-empty list of URLs")
         for i, agent in enumerate(agents):
             parsed = urlparse(agent) if isinstance(agent, str) else None
-            if parsed is None or parsed.scheme not in ("http", "https") or not parsed.netloc:
-                raise ValueError(f"{path}: agents[{i}] {agent!r} must start with http:// or https://")
+            if (
+                parsed is None
+                or parsed.scheme not in ("http", "https")
+                or not parsed.netloc
+            ):
+                raise ValueError(
+                    f"{path}: agents[{i}] {agent!r} must start with http:// or https://"
+                )
         return agents

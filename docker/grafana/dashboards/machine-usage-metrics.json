@@ -657,7 +657,7 @@
           "format": 0,
           "pluginVersion": "4.21.3",
           "queryType": "timeseries",
-          "rawSql": "SELECT $__timeInterval(inserted_at) AS time, count() / $__interval_s AS `rows/s`\nFROM metrics\nWHERE $__timeFilter(inserted_at)\nGROUP BY time\nORDER BY time",
+          "rawSql": "SELECT $__timeInterval(pipeline_end) AS time, count() / $__interval_s AS `rows/s`\nFROM metrics\nWHERE $__timeFilter(pipeline_end)\nGROUP BY time\nORDER BY time",
           "refId": "A"
         }
       ]
@@ -715,7 +715,65 @@
           "format": 0,
           "pluginVersion": "4.21.3",
           "queryType": "timeseries",
-          "rawSql": "SELECT $__timeInterval(inserted_at) AS time,\n       quantile(0.5)(delay) AS p50,\n       quantile(0.95)(delay) AS p95\nFROM\n(\n    SELECT inserted_at,\n           (toUnixTimestamp64Milli(inserted_at) - toUnixTimestamp64Milli(timestamp)) / 1000 AS delay\n    FROM metrics\n    WHERE $__timeFilter(inserted_at)\n)\nWHERE delay < 3600\nGROUP BY time\nORDER BY time",
+          "rawSql": "SELECT $__timeInterval(pipeline_end) AS time,\n       quantile(0.5)(delay) AS p50,\n       quantile(0.95)(delay) AS p95\nFROM\n(\n    SELECT pipeline_end,\n           (toUnixTimestamp64Milli(pipeline_end) - toUnixTimestamp64Milli(timestamp)) / 1000 AS delay\n    FROM metrics\n    WHERE $__timeFilter(pipeline_end)\n)\nWHERE delay < 3600\nGROUP BY time\nORDER BY time",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "id": 16,
+      "title": "Pipeline latency (collector to ClickHouse)",
+      "description": "pipeline_end - pipeline_start: time from the collector accepting a sample to ClickHouse inserting it. Rows from before migration 000004 have no pipeline_start and are skipped.",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.2.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "pluginVersion": "4.21.3",
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(pipeline_end) AS time,\n       quantile(0.5)(latency) AS p50,\n       quantile(0.95)(latency) AS p95,\n       max(latency) AS max\nFROM\n(\n    SELECT pipeline_end,\n           (toUnixTimestamp64Milli(pipeline_end) - toUnixTimestamp64Milli(assumeNotNull(pipeline_start))) / 1000 AS latency\n    FROM metrics\n    WHERE $__timeFilter(pipeline_end) AND pipeline_start IS NOT NULL\n)\nGROUP BY time\nORDER BY time",
           "refId": "A"
         }
       ]
@@ -727,7 +785,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 48,
+        "y": 56,
         "w": 24,
         "h": 1
       },
@@ -743,7 +801,7 @@
       "type": "table",
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 57,
         "w": 24,
         "h": 5
       },
@@ -789,7 +847,7 @@
       "type": "table",
       "gridPos": {
         "x": 0,
-        "y": 54,
+        "y": 62,
         "w": 24,
         "h": 9
       },

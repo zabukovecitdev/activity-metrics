@@ -12,9 +12,19 @@ SEND_TIMEOUT_SECONDS = 10
 
 
 class KafkaRecordsProducer:
-    """JSON records to one Kafka topic, keyed by machine id, and invalid input to `<topic>_dlq`."""
+    """Sends records as JSON to a Kafka topic.
+
+    The producer uses the machine id as the key for each record.
+    The producer sends input that is not valid to the `<topic>_dlq` topic.
+    """
 
     def __init__(self, bootstrap_servers: str, topic: str):
+        """Creates a Kafka producer for the topic and its dead letter topic.
+
+        Args:
+            bootstrap_servers: The address of the Kafka broker, for example `localhost:9092`.
+            topic: The name of the topic for valid records.
+        """
         self._topic = topic
         self._dlq_topic = f"{topic}_dlq"
         self._producer = KafkaProducer(
@@ -26,15 +36,37 @@ class KafkaRecordsProducer:
         )
 
     def publish(self, records: Iterable[Metric | Machine]) -> None:
-        queued = [self._producer.send(self._topic, value=r, key=r.machine_id) for r in records]
+        """Sends the records to the topic and waits until Kafka accepts all of them.
+
+        Args:
+            records: The metrics or machines to send.
+
+        Raises:
+            kafka.errors.KafkaError: Kafka did not accept a record in the time limit.
+        """
+        queued = [
+            self._producer.send(self._topic, value=r, key=r.machine_id) for r in records
+        ]
         for future in queued:
             future.get(timeout=SEND_TIMEOUT_SECONDS)
         Metrics.MESSAGES_PUBLISHED.labels(self._topic).inc(len(queued))
 
     def dead_letter(self, url: str, body: str, error: str) -> None:
+        """Sends input that is not valid to the dead letter topic.
+
+        Args:
+            url: The agent URL that gave the input.
+            body: The raw response body.
+            error: The text of the validation error.
+
+        Raises:
+            kafka.errors.KafkaError: Kafka did not accept the record in the time limit.
+        """
         # Keyed by the agent URL: an invalid body may have no machine id to key it by.
         record = {"url": url, "error": error, "body": body}
-        self._producer.send(self._dlq_topic, value=record, key=url).get(timeout=SEND_TIMEOUT_SECONDS)
+        self._producer.send(self._dlq_topic, value=record, key=url).get(
+            timeout=SEND_TIMEOUT_SECONDS
+        )
         Metrics.MESSAGES_PUBLISHED.labels(self._dlq_topic).inc()
 
     def close(self) -> None:

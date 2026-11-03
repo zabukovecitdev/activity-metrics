@@ -27,7 +27,7 @@ def test_does_not_flag_a_drop():
 
 def test_raises_until_warmed_up():
     with pytest.raises(ValueError):
-        EWMA().evaluate(STEADY[:EWMA.min_points - 1])
+        EWMA().evaluate(STEADY[: EWMA.min_points - 1])
 
 
 def test_default_floor_flags_a_tiny_rise_in_bytes():
@@ -51,9 +51,13 @@ def test_flat_series_without_a_floor_flags_only_a_rise():
 
 
 def test_upper_band_is_at_least_the_floor_above_the_average():
-    result = EWMA(min_deviation=0.0, min_relative=0.02).evaluate(STEADY_MEMORY + [1_000_000_000.0])
+    result = EWMA(min_deviation=0.0, min_relative=0.02).evaluate(
+        STEADY_MEMORY + [1_000_000_000.0]
+    )
 
-    assert result.upper - result.baseline == pytest.approx(0.02 * result.baseline, rel=1e-3)
+    assert result.upper - result.baseline == pytest.approx(
+        0.02 * result.baseline, rel=1e-3
+    )
 
 
 def test_average_is_seeded_with_the_first_value():
@@ -73,11 +77,11 @@ def test_reading_exactly_at_the_threshold_is_not_an_anomaly():
     assert not EWMA(min_deviation=0.5).evaluate([5.0] * 30 + [5.5]).is_anomaly
 
 
-def test_an_anomaly_after_warmup_only_nudges_the_average():
-    # The spike at the first scored index (10) is damped: 5.0 + 0.1 * 0.1 * 1.0, then four updates decay it.
-    result = EWMA(min_deviation=0.5).evaluate([5.0] * 10 + [6.0] + [5.0] * 5)
+def test_an_anomaly_only_nudges_the_average():
+    # The spike at the first scored index (10) is damped: 5.0 + 0.1 * 0.1 * 1.0, then eight updates decay it.
+    result = EWMA(min_deviation=0.5).evaluate([5.0] * 10 + [6.0] + [5.0] * 9)
 
-    assert result.baseline == pytest.approx(5.0 + 0.01 * 0.9**4)
+    assert result.baseline == pytest.approx(5.0 + 0.01 * 0.9**8)
 
 
 def test_a_reading_exactly_at_the_threshold_is_not_damped():

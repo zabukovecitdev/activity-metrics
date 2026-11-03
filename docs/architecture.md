@@ -21,7 +21,7 @@ Grafana                       pick a host, see its series and anomalies
 | **agent** | FastAPI app on every machine. `/v1/metrics` returns CPU, memory, and uptime; `/v1/machine` returns hostname, OS, cores, memory, and disk. | Each machine only has to answer HTTP. It knows nothing about Kafka or the database. |
 | **collector** | Scrapes every agent, then waits 1 s (`COLLECTOR_SCRAPE_INTERVAL_SECONDS`), fetches machine info every 5 min, and publishes both to Kafka. Gives each sample a `metric_id` (UUIDv7). | One place decides when and what to collect. `metric_id` follows the sample everywhere after this. |
 | **Kafka** | Topics `raw_metrics`, `machines`, `evaluations`. | Decouples collecting from scoring from storing: each can be down or replayed without losing data. *Learning goal.* |
-| **Flink job** | Keeps the last 360 values of each series (`machine_id`, `name`), in arrival order, with no time cutoff, and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. A count stays full at any sample rate. *Learning goal*: a plain Kafka consumer would do at this scale. |
+| **Flink job** | Keeps the last 20 values of each series (`machine_id`, `name`), in arrival order, with no time cutoff, and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. A count stays full at any sample rate. *Learning goal*: a plain Kafka consumer would do at this scale. |
 | **clickhouse-writer** | One process, one sink per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `ClickHouseSinkBase` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its sink's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. |
 | **ClickHouse** | Tables `metrics`, `evaluations`, `machines`. Schema in `db/migrations`. | Fast time-range queries for Grafana, and a good fit for append-only data. |
 | **Grafana** | Dashboards `machine-usage-metrics.json` (metrics explorer) and `pipeline-performance.json`, provisioned on start. | Charts without writing a frontend. |
@@ -32,16 +32,16 @@ Grafana                       pick a host, see its series and anomalies
 - **`evaluations`**: one row per sample *per algorithm*, anomalous or not, with only what the dashboard draws: `baseline`, `lower`, `upper`, `is_anomaly`. It's linked to its sample by `metric_id`, and the value stays in `metrics`. A new algorithm is a new `algorithm` value, not a schema change.
 - **`machines`**: the latest description of each machine, joined to the other two on `machine_id`.
 
-`metrics` and `evaluations` keep 24 hours; `machines` keeps everything. All three are `ReplacingMergeTree`, so a replayed batch collapses to one row per key on merge.
+No table has a TTL, so all three keep everything. All three are `ReplacingMergeTree`, so a replayed batch collapses to one row per key on merge.
 
 ## Anomaly detection
 
 Two algorithms score CPU, memory usage, and any series whose name starts with `nab.`:
 
-- **MAD**: how far the value is from the median of the last 360 values, in units of the typical spread. Flags both directions. Needs 20 samples.
-- **EWMA**: how far the value rises above a moving average of those same values. Flags only rises. Needs 11 samples. With both floors at 0 and a flat history, any rise is flagged and the upper band sits on the average. The detector does not divide by a scale of 0.
+- **MAD**: how far the value is from the median of the last 20 values, in units of the typical spread. Flags both directions. Needs 20 samples.
+- **EWMA**: how far the value rises above a moving average of those same values. Flags only rises. Needs a full window of 20 samples. With both floors at 0 and a flat history, any rise is flagged and the upper band sits on the average. The detector does not divide by a scale of 0.
 
-The 360 values are the samples the job has seen. A pause leaves them in place until newer samples push them out. They cover a little over six minutes at the collector's default 1-second gap, one hour at a steady 10-second cadence, and 30 hours of 5-minute data. An hour of 5-minute data is 12 values, which is why MAD used to score none of a NAB replay.
+The 20 values are the samples the job has seen. A pause leaves them in place until newer samples push them out. They cover 20 seconds at the collector's default 1-second gap, about 3 minutes at a steady 10-second cadence, and 100 minutes of 5-minute data. Both detectors need all 20, so each scores only from the 20th sample on, and every later sample is scored against a full window.
 
 On its own, each algorithm flags tiny steps in a series that barely moves, so CPU and memory have a minimum deviation (`MetricEvaluator.DETECTORS` in `anomaly_detector/services/metric_evaluator.py`):
 
@@ -67,8 +67,8 @@ Details are in [README](../README.md) and [operations](operations.md).
 
 On purpose, until there's a reason:
 
-- **End-to-end exactly-once.** Flink checkpoints its window state and source offsets every second to a local volume, in `EXACTLY_ONCE` mode, which covers Flink's own state only. The Kafka sink is `AT_LEAST_ONCE`: it flushes to Kafka on every checkpoint, so a failure can repeat evaluations but not lose them. Repeats collapse in ClickHouse (`ReplacingMergeTree`). Exactly-once would need a transactional sink and `read_committed` consumers; not worth it while ClickHouse deduplicates anyway.
+- **End-to-end exactly-once.** Flink checkpoints its window state and source offsets every 10 seconds to a local volume, in `EXACTLY_ONCE` mode, which covers Flink's own state only. The Kafka sink is `AT_LEAST_ONCE`: it flushes to Kafka on every checkpoint, so a failure can repeat evaluations but not lose them. Repeats collapse in ClickHouse (`ReplacingMergeTree`). Exactly-once would need a transactional sink and `read_committed` consumers; not worth it while ClickHouse deduplicates anyway.
 - **Alerting.** Anomalies are only visible on the dashboard.
 - **Anomaly episodes.** Each anomalous sample is its own row; consecutive ones aren't grouped into one event.
-- **Long-term storage and downsampling.** Everything older than 24 hours is gone.
+- **Downsampling.** Rows are kept at full resolution forever, so disk use grows without limit.
 - **Authentication** on the agent, and secrets outside `docker-compose.yml`.

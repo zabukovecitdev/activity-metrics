@@ -13,16 +13,21 @@ app.include_router(v1_router.router)
 
 @app.get("/", include_in_schema=False)
 async def docs_redirect():
-    return RedirectResponse(url='/docs')
+    return RedirectResponse(url="/docs")
 
 
 async def main() -> None:
+    """Starts the agent web server on all network interfaces.
+
+    Uses the port from `AgentSettings`. Runs until the server stops.
+    """
     config = uvicorn.Config(app, host="0.0.0.0", port=AgentSettings().port)
     server = uvicorn.Server(config)
     await server.serve()
 
 
 def cli() -> None:
+    """Runs `main` and ends without an error on Ctrl+C."""
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
