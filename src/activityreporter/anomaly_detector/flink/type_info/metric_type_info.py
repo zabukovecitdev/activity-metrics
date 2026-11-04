@@ -12,6 +12,7 @@ METRIC_FIELD_TYPES = {
     "machine_id": Types.STRING(),
     "metric_id": Types.STRING(),
     "attributes": Types.MAP(Types.STRING(), Types.STRING()),
+    "pipeline_start": Types.DOUBLE(),
 }
 
 METRIC_TYPE_INFO = RowTypeInfo.build(Metric, METRIC_FIELD_TYPES)

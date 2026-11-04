@@ -122,6 +122,7 @@ services:
       CLICKHOUSE_DB: metrics
       CLICKHOUSE_USER: user
       CLICKHOUSE_PASSWORD: password
+      WRITER_BATCH_SIZE: "5000"
     depends_on:
       kafka:
         condition: service_started

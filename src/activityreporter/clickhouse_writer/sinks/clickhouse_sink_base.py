@@ -35,8 +35,18 @@ class ClickHouseSinkBase(ABC):
     record_type: ClassVar[type[BaseModel]]
 
     def __init__(
-        self, consumer: KafkaRecordsConsumer, repository: ClickHouseRepository, settings: ClickHouseSinkSettings
+        self,
+        consumer: KafkaRecordsConsumer,
+        repository: ClickHouseRepository,
+        settings: ClickHouseSinkSettings,
     ):
+        """Stores the consumer, the repository and the batch settings.
+
+        Args:
+            consumer: The Kafka consumer for the topic.
+            repository: The ClickHouse repository to write to.
+            settings: The batch size and the batch timeout.
+        """
         self._consumer = consumer
         self._repository = repository
         self._batch_size = settings.batch_size
@@ -60,12 +70,18 @@ class ClickHouseSinkBase(ABC):
         self._running = False
 
     def run(self) -> None:
+        """Reads records and writes them in batches until `stop` is called.
+
+        A batch is written when it reaches the batch size or when the batch timeout passes.
+        Rows that are left when the loop ends are written before `run` returns.
+        """
         rows: list[list] = []
         last_flush = time.monotonic()
         while self._running:
             rows.extend(self._poll())
             if rows and (
-                len(rows) >= self._batch_size or time.monotonic() - last_flush >= self._batch_timeout_seconds
+                len(rows) >= self._batch_size
+                or time.monotonic() - last_flush >= self._batch_timeout_seconds
             ):
                 self._flush(rows)
                 rows = []
@@ -75,28 +91,54 @@ class ClickHouseSinkBase(ABC):
             self._flush(rows)
 
     def _poll(self) -> list[list]:
+        """Reads a batch of records from Kafka and converts them to rows.
+
+        Returns:
+            The rows of the valid records. Invalid records are skipped.
+        """
         records = self._consumer.poll(max_records=self._batch_size)
         Metrics.MESSAGES_CONSUMED.labels(self.table).inc(len(records))
         parsed = (self._parse(record) for record in records)
         return [row for row in parsed if row is not None]
 
     def _parse(self, record) -> list | None:
+        """Converts one Kafka record to a row.
+
+        Args:
+            record: The Kafka record. Its value is the JSON of `record_type`.
+
+        Returns:
+            The row, or None when the record is not valid. An invalid record is logged and counted.
+        """
         # Converting here, not at insert time, keeps a bad record from failing every retry of its batch.
         # Unknown fields are ignored: a producer may add one before every consumer is deployed with it.
         try:
             return self.to_row(self.record_type.model_validate_json(record.value))
         except (TypeError, ValueError) as e:
             logger.error(
-                "Skipping malformed record %s[%s]@%s: %r", record.topic, record.partition, record.offset, e
+                "Skipping malformed record %s[%s]@%s: %r",
+                record.topic,
+                record.partition,
+                record.offset,
+                e,
             )
             # We should probably send the record to a dead letter topic, but we don't have one yet. For now, just count it.
             Metrics.MALFORMED.labels(self.table).inc()
             return None
 
     def _flush(self, rows: list[list]) -> None:
+        """Writes the rows to ClickHouse, then commits the Kafka offsets.
+
+        Args:
+            rows: The rows to write.
+        """
         # A crash before the commit replays the batch, and ReplacingMergeTree collapses the duplicates.
         with Metrics.WRITE_SECONDS.labels(self.table).time():
             self._repository.insert_batch(self.table, self.columns, rows)
             self._consumer.commit()
         Metrics.ROWS_WRITTEN.labels(self.table).inc(len(rows))
-        logger.info("Wrote %d %s rows to ClickHouse and committed offsets", len(rows), self.table)
+        logger.info(
+            "Wrote %d %s rows to ClickHouse and committed offsets",
+            len(rows),
+            self.table,
+        )

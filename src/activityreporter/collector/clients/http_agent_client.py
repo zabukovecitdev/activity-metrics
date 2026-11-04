@@ -2,17 +2,36 @@ from typing import Self
 
 import httpx
 
-CONNECT_TIMEOUT_SECONDS = 2
-READ_TIMEOUT_SECONDS = 2
-MAX_CONNECTIONS = 200
+from activityreporter.shared.settings.http_agent_client_settings import (
+    HttpAgentClientSettings,
+)
 
 
 class HttpAgentClient:
-    def __init__(self, client: httpx.AsyncClient | None = None):
-        self._client = client or httpx.AsyncClient(
-            timeout=httpx.Timeout(READ_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
-            limits=httpx.Limits(max_connections=MAX_CONNECTIONS, max_keepalive_connections=MAX_CONNECTIONS),
-        )
+    def __init__(
+        self,
+        client: httpx.AsyncClient | None = None,
+        settings: HttpAgentClientSettings | None = None,
+    ):
+        """Creates the HTTP client.
+
+        Args:
+            client: The HTTP client to use. When it is None, a client is built from `settings`.
+            settings: The timeouts and connection limit. When it is None, the values come from the environment.
+        """
+        if client is None:
+            settings = settings or HttpAgentClientSettings()
+            client = httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    settings.read_timeout_seconds,
+                    connect=settings.connect_timeout_seconds,
+                ),
+                limits=httpx.Limits(
+                    max_connections=settings.max_connections,
+                    max_keepalive_connections=settings.max_connections,
+                ),
+            )
+        self._client = client
 
     async def fetch(self, url: str) -> str:
         """The raw body at `url`, unparsed, so an invalid one can be dead-lettered as it was received."""

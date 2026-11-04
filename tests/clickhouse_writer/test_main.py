@@ -10,9 +10,14 @@ def test_main_runs_every_sink_and_stops_them_all_when_one_fails():
     running += [MagicMock() for _ in main.SINKS[1:]]
     sink_types = [MagicMock(return_value=sink) for sink in running]
 
-    with patch.object(main, "SINKS", sink_types), patch.object(main, "start_http_server") as start_server, \
-         patch.object(main, "KafkaRecordsConsumer"), patch.object(main, "ClickHouseRepository"), \
-         patch.object(main.signal, "signal"), pytest.raises(RuntimeError, match="db is down"):
+    with (
+        patch.object(main, "SINKS", sink_types),
+        patch.object(main, "start_http_server") as start_server,
+        patch.object(main, "KafkaRecordsConsumer"),
+        patch.object(main, "ClickHouseRepository"),
+        patch.object(main.signal, "signal"),
+        pytest.raises(RuntimeError, match="db is down"),
+    ):
         main.main()
 
     start_server.assert_called_once_with(main.METRICS_PORT)

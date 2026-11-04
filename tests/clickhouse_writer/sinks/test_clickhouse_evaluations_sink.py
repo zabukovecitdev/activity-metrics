@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 import pytest
 from pydantic_core import to_jsonable_python
 
-from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import ClickHouseEvaluationsSink
+from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import (
+    ClickHouseEvaluationsSink,
+)
 from tests.support.builders import METRIC_ID, build_evaluation, parse_record, row_of
 
 
@@ -26,9 +28,19 @@ def test_evaluation_values_are_stored_exactly_as_sent():
     evaluation = build_evaluation()
     evaluation.baseline = 11.280148426792852
 
-    assert row_of(ClickHouseEvaluationsSink, evaluation)["baseline"] == 11.280148426792852
+    assert (
+        row_of(ClickHouseEvaluationsSink, evaluation)["baseline"] == 11.280148426792852
+    )
 
 
-@pytest.mark.parametrize("overrides", [{"machine_id": ""}, {"algorithm": ""}, {"baseline": "n/a"}])
+@pytest.mark.parametrize(
+    "overrides", [{"machine_id": ""}, {"algorithm": ""}, {"baseline": "n/a"}]
+)
 def test_parse_skips_invalid_evaluations(overrides):
-    assert parse_record(ClickHouseEvaluationsSink, {**to_jsonable_python(build_evaluation()), **overrides}) is None
+    assert (
+        parse_record(
+            ClickHouseEvaluationsSink,
+            {**to_jsonable_python(build_evaluation()), **overrides},
+        )
+        is None
+    )

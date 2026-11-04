@@ -6,7 +6,17 @@ from kafka import KafkaConsumer
 class KafkaRecordsConsumer:
     """One consumer on one topic."""
 
-    def __init__(self, topic: str, bootstrap_servers: str, group_id: str, poll_timeout_ms: int):
+    def __init__(
+        self, topic: str, bootstrap_servers: str, group_id: str, poll_timeout_ms: int
+    ):
+        """Creates a Kafka consumer for one topic.
+
+        Args:
+            topic: The Kafka topic to read.
+            bootstrap_servers: The address of the Kafka broker.
+            group_id: The consumer group. Consumers in one group share the partitions.
+            poll_timeout_ms: The time to wait for records in each poll, in milliseconds.
+        """
         self._poll_timeout_ms = poll_timeout_ms
         self._consumer = KafkaConsumer(
             topic,
@@ -18,7 +28,9 @@ class KafkaRecordsConsumer:
         )
 
     def poll(self, max_records: int) -> list:
-        polled = self._consumer.poll(timeout_ms=self._poll_timeout_ms, max_records=max_records)
+        polled = self._consumer.poll(
+            timeout_ms=self._poll_timeout_ms, max_records=max_records
+        )
         return [record for records in polled.values() for record in records]
 
     def commit(self) -> None:

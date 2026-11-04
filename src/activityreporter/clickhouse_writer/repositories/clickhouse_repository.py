@@ -17,6 +17,7 @@ class ClickHouseRepository:
         self._client: Client | None = None
 
     def connect(self) -> None:
+        """Opens a connection to ClickHouse with the settings from `ClickHouseSettings`."""
         self._client = clickhouse_connect.get_client(
             host=self._settings.host,
             port=self._settings.port,
@@ -26,6 +27,18 @@ class ClickHouseRepository:
         )
 
     def insert_batch(self, table: str, columns: list[str], rows: list[list]) -> None:
+        """Writes rows to a table. Retries with exponential backoff when ClickHouse fails.
+
+        Does nothing when `rows` is empty.
+
+        Args:
+            table: The name of the target table.
+            columns: The column names, in the order of each row.
+            rows: The rows to write.
+
+        Raises:
+            ClickHouseError: The write still fails after the last attempt.
+        """
         if not rows:
             return
 

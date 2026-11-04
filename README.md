@@ -14,7 +14,7 @@ One package, `src/activityreporter/`, split by application. Each application kee
 src/activityreporter/
   shared/              code used by more than one application
     models/              Metric, Machine, Evaluation, MetricObservation, MetricsResponse
-    settings/            KafkaSettings, ClickHouseSettings, ClickHouseSinkSettings, CollectorSettings, AgentSettings
+    settings/            KafkaSettings, ClickHouseSettings, ClickHouseSinkSettings, CollectorSettings, AgentSettings, HttpClientSettings, HttpAgentClientSettings
     observability/       Prometheus counters
   agent/               runs on every machine, serves /v1/metrics and /v1/machine
     api/                 FastAPI routes
@@ -34,7 +34,6 @@ src/activityreporter/
       sources/             KafkaMetricsSource
       sinks/               KafkaEvaluationsSink
       type_info/           RowTypeInfo, METRIC_TYPE_INFO, EVALUATION_TYPE_INFO
-      watermarks/          EventTimeWatermarks, EpochSecondsTimestampAssigner
   clickhouse_writer/   one sink per topic, Kafka topic → ClickHouse table
     consumers/           KafkaRecordsConsumer
     repositories/        ClickHouseRepository
@@ -165,7 +164,7 @@ On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHI
 - Sink topic: `KAFKA_EVALUATIONS_TOPIC` (default `evaluations`). Every scored sample produces one evaluation per detector, anomalous or not, so the baseline and bands can be drawn next to the raw series.
 - Event time is `timestamp * 1000` milliseconds. Out-of-orderness bound is 5 seconds. Kafka record timestamps are not used.
 - Parallelism is 2. The stream is keyed by `(machine_id, name)` so each series keeps its own state. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`.
-- State is the last 360 values for that key (`WINDOW_POINTS` in `anomaly_detector/flink/processors/anomaly_detection_function.py`). The list state `recent_values` holds plain doubles. Each record appends its value, and the oldest value drops once 360 are kept. Event time still drives the 5-second watermark. The list keeps a value until newer ones push it out, including across a gap. The value just appended is the one scored, in arrival order. 360 values is one hour at a steady 10-second cadence. The collector's default gap is 1 second, so a live series holds a little over six minutes. A 5-minute series holds 30 hours in the same 360 slots. An hour of that data is 12 values, fewer than `mad` needs, which is why the window is a count.
+- State is the last 20 values for that key (`WINDOW_POINTS` in `anomaly_detector/flink/processors/anomaly_detection_function.py`). The list state `recent_values` holds plain doubles. Each record appends its value, and the oldest value drops once 20 are kept. The job emits no watermarks and uses no event time. The list keeps a value until newer ones push it out, including across a gap. The value just appended is the one scored, in arrival order. 20 values is about 3 minutes at a steady 10-second cadence. The collector's default gap is 1 second, so a live series holds 20 seconds. A 5-minute series holds 100 minutes in the same 20 slots. A time window of one hour would hold 12 values of that data, fewer than `mad` needs, which is why the window is a count. Every detector needs the full window (`min_points` equals `WINDOW_POINTS`), so the window has no spare room.
 
 Scoring rules (`MetricEvaluator` in `anomaly_detector/services/metric_evaluator.py`, called from `AnomalyDetectionFunction.process_element` in `anomaly_detector/flink/processors/`):
 
@@ -190,7 +189,7 @@ A detector (`Detector` in `anomaly_detector/algorithms/`) has a `name`, `min_poi
 | `baseline` | window median | exponentially weighted average |
 | `lower` / `upper` | median ∓ `THRESHOLD × scale` | `None` / average + `THRESHOLD × scale` (only rises are flagged) |
 | `is_anomaly` | modified z-score `>= 3.5` | score `> 1.0`. Score is `deviation ÷ scale`, or infinity for a rise when the scale is 0 |
-| `min_points` | 20 | 11 (`EWMA.WARMUP_READINGS + 1`); fewer raises `ValueError` |
+| `min_points` | 20 (`WINDOW_POINTS`) | 20 (`WINDOW_POINTS`); fewer raises `ValueError` |
 
 The score and threshold behind `is_anomaly` stay inside the detector; only the flag is published. A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
 
@@ -205,7 +204,7 @@ To add an algorithm, write a class with that shape and add it to the lists in `M
 To tune the floors, count what they let through, for example `SELECT metric_name, algorithm, toDate(timestamp) AS day, countIf(is_anomaly) FROM evaluations FINAL GROUP BY ALL`. At one sample every 10 seconds a series has 8,640 a day.
 - Returned numbers are Python `float`s; numpy scalars cannot be encoded by PyFlink's coders.
 
-`EWMA` (`anomaly_detector/algorithms/ewma.py`) walks the window with `alpha = 0.1`. The average is seeded with the first value and the variance starts at 0. Each value is scored against that average and variance from before it is folded in. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`. The constructor defaults are 10 and 0. CPU keeps `min_deviation=10` (percentage points). Memory sets `min_deviation=0` and `min_relative=0.02`, because 10 would mean 10 bytes. A reading is an anomaly only when its score is strictly greater than 1, so a value sitting on the upper band is kept. After the 10-reading warm-up, a flagged value updates the average with `alpha × 0.1` (`ANOMALY_DAMPING`), so a spike does not drag the baseline along. A reading exactly at the threshold is not flagged and uses the full `alpha`.
+`EWMA` (`anomaly_detector/algorithms/ewma.py`) walks the window with `alpha = 0.1`. The average is seeded with the first value and the variance starts at 0. Each value is scored against that average and variance from before it is folded in. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`. The constructor defaults are 10 and 0. CPU keeps `min_deviation=10` (percentage points). Memory sets `min_deviation=0` and `min_relative=0.02`, because 10 would mean 10 bytes. A reading is an anomaly only when its score is strictly greater than 1, so a value sitting on the upper band is kept. A flagged value updates the average with `alpha × 0.1` (`ANOMALY_DAMPING`), so a spike does not drag the baseline along. A reading exactly at the threshold is not flagged and uses the full `alpha`.
 
 A scale of 0 happens when the variance is still 0 and both floors are 0. A relative floor is also 0 when the average is 0, so a flat series of zeros with only `min_relative` set takes this path too. EWMA does not divide by that scale. A flat continuation scores 0 and is not flagged. Any rise scores infinity and is flagged, and `upper` equals the average (`THRESHOLD × 0`). A thirty-value window of `5.0` has `baseline` 5 and `upper` 5; appending `5.1` flags it, appending `4.9` does not. A drop scores 0. The infinity stays inside the detector: `Result` and the evaluation record carry `baseline`, `upper`, and `is_anomaly`. CPU's floor of 10 keeps its scale above 0. Memory's relative floor does too whenever the average is non-zero. A zero average with no variance is still a scale of 0. `NAB_DETECTORS` takes this path on a flat file. Dividing by the zero scale used to raise `ZeroDivisionError` and fail the Flink task. MAD never flags when its scale is 0, because a scale of 0 there means every value is equal, including the one being scored. EWMA can still see a rise: the current value is not in the variance yet.
 
@@ -248,7 +247,7 @@ The topic variables are the ones the producers read, so a renamed topic is set o
 
 Records are decoded as JSON into the sink's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
-`ClickHouseRepository.insert_batch` writes the sink's table over HTTP (`clickhouse-connect`), then `ClickHouseSinkBase` commits the offsets of its own consumer. A failed insert leaves them uncommitted and the whole batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `inserted_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
+`ClickHouseRepository.insert_batch` writes the sink's table over HTTP (`clickhouse-connect`), then `ClickHouseSinkBase` commits the offsets of its own consumer. A failed insert leaves them uncommitted and the whole batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest version (`pipeline_end` for `metrics`). Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 
 ```sql
 SELECT machine_id, name, count() FROM metrics FINAL GROUP BY machine_id, name
@@ -264,12 +263,14 @@ ClickHouse errors retry up to `CLICKHOUSE_MAX_RETRIES` times (default 5). Backof
 
 | Migration | Effect |
 | --- | --- |
-| 000001 | `metrics` and `evaluations` tables, `ReplacingMergeTree`, daily partitions, 24-hour TTL. `machines` table, `ReplacingMergeTree(observed_at)`, no TTL. |
+| 000001 | `metrics` and `evaluations` tables, `ReplacingMergeTree`, daily partitions, 24-hour TTL (removed by 000003). `machines` table, `ReplacingMergeTree(observed_at)`, no TTL. |
 | 000002 | Renames `metrics.ingested_at` and `machines.ingested_at` to `inserted_at`, and `machines.observed_at` to `last_seen_at`. ClickHouse cannot rename a version column, so it rebuilds both tables and copies the rows; stop `clickhouse-writer` first. |
+| 000003 | Removes the TTL from `metrics` and `evaluations`. Rows are kept forever. |
+| 000004 | Adds `metrics.pipeline_start` and renames `metrics.inserted_at` to `pipeline_end`. Rebuilds `metrics` and copies the rows (copied rows have a `NULL` start); stop `clickhouse-writer` first. |
 
 Partitions are daily, not hourly: a replay with historical timestamps split into one part per hour it touched, and 38k NAB rows made 16k parts and ran ClickHouse out of memory.
 
-`metrics` holds only what devices report. Columns: `metric_id` (`UUID`), `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `inserted_at`. Sorting (and deduplication) key `(machine_id, name, timestamp, metric_id)`: queries filter by series and time, and `metric_id` makes each sample unique, including two series at the same instant that differ only in `attributes`. `ttl_only_drop_parts` drops whole expired daily parts instead of rewriting them, so a row lives up to about 48 hours.
+`metrics` holds only what devices report. Columns: `metric_id` (`UUID`), `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `pipeline_start` (when the collector accepted the sample, `Nullable`), `pipeline_end` (when ClickHouse inserted it). `pipeline_end - pipeline_start` is the time a sample spends in the pipeline. Sorting (and deduplication) key `(machine_id, name, timestamp, metric_id)`: queries filter by series and time, and `metric_id` makes each sample unique, including two series at the same instant that differ only in `attributes`. The tables have no TTL, so rows are kept forever.
 
 `evaluations` columns are the fields of the evaluation record: `metric_id` is `UUID`, `baseline` and `upper` are `Float64`, `lower` is `Nullable(Float64)`, `is_anomaly` is `Bool`. Sorting (and deduplication) key `(machine_id, metric_name, algorithm, timestamp, metric_id)`: one algorithm's results for a series over time are contiguous, and a replayed evaluation collapses on merge. Anomalous samples are `WHERE is_anomaly`.
 

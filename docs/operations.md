@@ -42,6 +42,9 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` |
 | `COLLECTOR_SCRAPE_INTERVAL_SECONDS` | `1` | unset |
 | `COLLECTOR_MACHINE_REFRESH_SECONDS` | `300` | unset |
+| `AGENT_HTTP_CONNECT_TIMEOUT_SECONDS` | `2` | unset |
+| `AGENT_HTTP_READ_TIMEOUT_SECONDS` | `2` | unset |
+| `AGENT_HTTP_MAX_CONNECTIONS` | `200` | unset |
 
 `CollectorSettings` (`shared/settings/collector_settings.py`) reads those two with `env_prefix=COLLECTOR_` and `gt=0`. The scrape value is the sleep after a round finishes. The old names `SCRAPE_INTERVAL_SECONDS` and `MACHINE_REFRESH_SECONDS` are ignored. The agents to scrape are not an environment variable but `collector.toml`; see [Local stack](#local-stack) and the README.
 
@@ -110,7 +113,7 @@ The cluster exists for this one job. There is nothing to submit or cancel:
 
 - **Code change:** `docker compose restart jobmanager`. The job starts again from the new code.
 - **Job fails:** the `exponential-delay` restart strategy restarts it inside the cluster. If it fails for good, the jobmanager exits and Compose starts it again (`restart: unless-stopped`).
-- **State:** `anomaly_detector/main.py` calls `enable_checkpointing(1000)` in `EXACTLY_ONCE` mode, with a 500 ms minimum pause and a 60 s timeout. Compose sets `state.checkpoints.dir` to `file:///checkpoints` and retains files on cancellation (`RETAIN_ON_CANCELLATION`). The jobmanager command is `standalone-job` with no savepoint path, so `docker compose restart jobmanager` starts a new job: windows are empty and the Kafka source reads `raw_metrics` from `earliest` again. Replayed evaluations share a sorting key with the first copy and collapse in `ReplacingMergeTree`. A task failure while that job is still running restores its own checkpoint (`restart-strategy.type: exponential-delay`). The window list state is named `recent_values` and its type is a list of doubles (`WINDOW_POINTS`, 360). Checkpoints written before that change stored `(event time, value)` tuples under the same name. They remain on the volume. Resume a job only from a checkpoint written with the double list.
+- **State:** `anomaly_detector/main.py` calls `enable_checkpointing(10_000)` in `EXACTLY_ONCE` mode, with a 5 s minimum pause, a 60 s timeout, and three tolerated checkpoint failures. Compose sets `state.checkpoints.dir` to `file:///checkpoints` and retains files on cancellation (`RETAIN_ON_CANCELLATION`). The jobmanager command is `standalone-job` with no savepoint path, so `docker compose restart jobmanager` starts a new job: windows are empty and the Kafka source reads `raw_metrics` from `earliest` again. Replayed evaluations share a sorting key with the first copy and collapse in `ReplacingMergeTree`. A task failure while that job is still running restores its own checkpoint (`restart-strategy.type: exponential-delay`). The window list state is named `recent_values` and its type is a list of doubles (`WINDOW_POINTS`, 20). Checkpoints written before that change stored `(event time, value)` tuples under the same name. They remain on the volume. Resume a job only from a checkpoint written with the double list.
 
 The taskmanager still runs as its own service and registers with the jobmanager at `jobmanager:6123`.
 
@@ -169,7 +172,7 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **`Skipping malformed record` in a writer log.** The record is not valid JSON or lacks a required field. A metric or evaluation also needs a valid `metric_id`, an evaluation a non-empty `machine_id`, `metric_name`, and `algorithm`, and a machine a non-empty `machine_id` and a `last_boot` with a UTC offset. Records published before `metric_id` existed have none; they are skipped, not retried.
 
-**`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing until that series' window holds `min_points` values: 11 for `ewma` and 20 for `mad`. At the default 1-second gap that is about 11 and 20 seconds; at a steady 10-second cadence, about 2 and 3.5 minutes; a 5-minute NAB series needs about 100 minutes before `mad` emits. Only `system.cpu.utilization`, `system.memory.usage`, and names that start with `nab.` are scored. A `docker compose restart jobmanager` starts empty and rereads `raw_metrics` from `earliest`, so the warm-up runs again.
+**`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing until that series' window holds `min_points` values: 20 for both `ewma` and `mad`. At the default 1-second gap that is about 20 seconds; at a steady 10-second cadence, about 3.5 minutes; a 5-minute NAB series needs about 100 minutes before either emits. Only `system.cpu.utilization`, `system.memory.usage`, and names that start with `nab.` are scored. A `docker compose restart jobmanager` starts empty and rereads `raw_metrics` from `earliest`, so the warm-up runs again.
 
 **A flat `nab.` series flags every rise, with the upper band on the baseline.** Floorless EWMA (`EWMA(min_deviation=0.0)`) treats a scale of 0 as "any rise is an anomaly" and sets `upper` equal to `baseline`. On the detector explorer the dashed upper line sits on the average and the point is marked. A flat continuation and a drop are not anomalies. This used to raise `ZeroDivisionError` and restart the job. CPU and memory keep a positive floor, so a tiny step there stays inside the band.
 
@@ -181,4 +184,4 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **Flink jobmanager keeps restarting.** In Application Mode the jobmanager exits when the job can't start, for example on a Python error in `main` or an import error in `./src`. `docker compose logs jobmanager` shows the traceback. A job that starts and then fails is restarted by Flink first, and shows up under *Exceptions* in the Web UI.
 
-**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain, subject to the 24-hour TTL.
+**`make up` looks like it wiped the database.** It does not remove named volumes. It does recreate Kafka. ClickHouse rows in `metrics` remain.

@@ -1,3 +1,4 @@
+import time
 import uuid
 
 from activityreporter.shared.models.metric import Metric
@@ -10,12 +11,14 @@ class MetricsParser:
         """One Metric per observation in an agent's /v1/metrics body. Raises ValidationError if it isn't a MetricsResponse."""
         response = MetricsResponse.model_validate_json(body)
         timestamp = response.timestamp.timestamp()
+        pipeline_start = time.time()
         return [
             Metric(
                 **m.model_dump(),
                 timestamp=timestamp,
                 machine_id=response.machine_id,
                 metric_id=str(uuid.uuid7()),
+                pipeline_start=pipeline_start,
             )
             for m in response.metrics
         ]

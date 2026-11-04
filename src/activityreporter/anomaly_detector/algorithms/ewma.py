@@ -1,18 +1,15 @@
 import math
 
+from activityreporter.anomaly_detector.algorithms.detector import WINDOW_POINTS
 from activityreporter.anomaly_detector.models.result import Result
 
 
 class EWMA:
     name = "ewma"
     ALPHA = 0.1
-    # Don't flag anything until the variance has had time to build up.
-    WARMUP_READINGS = 10
-    min_points = WARMUP_READINGS + 1
+    min_points = WINDOW_POINTS
     THRESHOLD_MULTIPLIER = 3.0
-    # A reading must beat both the statistical threshold and this absolute jump, by default.
     MIN_DEVIATION = 10.0
-    # Anomalies still nudge the average slightly, so it can't get stuck.
     ANOMALY_DAMPING = 0.1
     THRESHOLD = 1.0
 
@@ -28,28 +25,36 @@ class EWMA:
         EWMA flags only rises above the average, so it has no lower band.
         """
         if len(window) < self.min_points:
-            raise ValueError(f"EWMA needs at least {self.min_points} values, got {len(window)}")
+            raise ValueError(
+                f"EWMA needs at least {self.min_points} values, got {len(window)}"
+            )
 
         average = float(window[0])
         variance = 0.0
-        for index, value in enumerate(window[1:], start=1):
-            # Compare against the previous average: the new one would already contain the spike.
+        # The state is built from every value except the last, which is only scored against it.
+        for value in window[1:-1]:
             deviation = value - average
-            floor = max(self.min_deviation, self.min_relative * abs(average))
-            scale = max(self.THRESHOLD_MULTIPLIER * math.sqrt(variance), floor)
-            # A scale of 0 means a flat series and no floor: only a rise stands out, and any rise does.
-            score = deviation / scale if scale > 0 else math.inf if deviation > 0 else 0.0
-            if index == len(window) - 1:
-                return Result(
-                    baseline=average,
-                    lower=None,
-                    upper=average + self.THRESHOLD * scale,
-                    is_anomaly=score > self.THRESHOLD,
-                )
-
-            is_anomaly = index >= self.WARMUP_READINGS and score > self.THRESHOLD
+            scale = self._scale(average, variance)
+            is_anomaly = self._score(deviation, scale) > self.THRESHOLD
             alpha = self.ALPHA * self.ANOMALY_DAMPING if is_anomaly else self.ALPHA
             average += alpha * deviation
             variance = (1 - alpha) * (variance + alpha * deviation**2)
 
-        raise AssertionError("unreachable: the loop returns on the last value")
+        scale = self._scale(average, variance)
+        return Result(
+            baseline=average,
+            lower=None,
+            upper=average + self.THRESHOLD * scale,
+            is_anomaly=self._score(window[-1] - average, scale) > self.THRESHOLD,
+        )
+
+    def _scale(self, average: float, variance: float) -> float:
+        floor = max(self.min_deviation, self.min_relative * abs(average))
+        return max(self.THRESHOLD_MULTIPLIER * math.sqrt(variance), floor)
+
+    @staticmethod
+    def _score(deviation: float, scale: float) -> float:
+        # A scale of 0 means a flat series and no floor: only a rise stands out, and any rise does.
+        if scale > 0:
+            return deviation / scale
+        return math.inf if deviation > 0 else 0.0
