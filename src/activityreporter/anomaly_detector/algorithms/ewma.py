@@ -31,26 +31,30 @@ class EWMA:
 
         average = float(window[0])
         variance = 0.0
-        for index, value in enumerate(window[1:], start=1):
-            # Compare against the previous average: the new one would already contain the spike.
+        # The state is built from every value except the last, which is only scored against it.
+        for value in window[1:-1]:
             deviation = value - average
-            floor = max(self.min_deviation, self.min_relative * abs(average))
-            scale = max(self.THRESHOLD_MULTIPLIER * math.sqrt(variance), floor)
-            # A scale of 0 means a flat series and no floor: only a rise stands out, and any rise does.
-            score = (
-                deviation / scale if scale > 0 else math.inf if deviation > 0 else 0.0
-            )
-            if index == len(window) - 1:
-                return Result(
-                    baseline=average,
-                    lower=None,
-                    upper=average + self.THRESHOLD * scale,
-                    is_anomaly=score > self.THRESHOLD,
-                )
-
-            is_anomaly = score > self.THRESHOLD
+            scale = self._scale(average, variance)
+            is_anomaly = self._score(deviation, scale) > self.THRESHOLD
             alpha = self.ALPHA * self.ANOMALY_DAMPING if is_anomaly else self.ALPHA
             average += alpha * deviation
             variance = (1 - alpha) * (variance + alpha * deviation**2)
 
-        raise AssertionError("unreachable: the loop returns on the last value")
+        scale = self._scale(average, variance)
+        return Result(
+            baseline=average,
+            lower=None,
+            upper=average + self.THRESHOLD * scale,
+            is_anomaly=self._score(window[-1] - average, scale) > self.THRESHOLD,
+        )
+
+    def _scale(self, average: float, variance: float) -> float:
+        floor = max(self.min_deviation, self.min_relative * abs(average))
+        return max(self.THRESHOLD_MULTIPLIER * math.sqrt(variance), floor)
+
+    @staticmethod
+    def _score(deviation: float, scale: float) -> float:
+        # A scale of 0 means a flat series and no floor: only a rise stands out, and any rise does.
+        if scale > 0:
+            return deviation / scale
+        return math.inf if deviation > 0 else 0.0

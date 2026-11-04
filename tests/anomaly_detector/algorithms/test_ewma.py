@@ -21,6 +21,19 @@ def test_flags_a_spike_above_the_upper_band():
     assert 95.0 > result.upper
 
 
+def test_scores_only_the_last_value_and_keeps_it_out_of_the_baseline():
+    result = EWMA().evaluate(STEADY + [95.0])
+    without_spike = EWMA().evaluate(STEADY + [50.0])
+
+    assert result.is_anomaly
+    assert result.baseline == without_spike.baseline
+    assert result.upper == without_spike.upper
+
+
+def test_a_spike_before_the_last_value_does_not_flag_the_last_value():
+    assert not EWMA().evaluate(STEADY + [95.0, 50.0]).is_anomaly
+
+
 def test_does_not_flag_a_drop():
     assert not EWMA().evaluate(STEADY + [0.0]).is_anomaly
 
