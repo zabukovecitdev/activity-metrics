@@ -4,7 +4,7 @@ Setup, configuration, and failure modes for the agent, collector, Flink job, Cli
 
 ## Local stack
 
-`make up` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. The named volume `clickhouse_data` is kept. Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place.
+`make up` runs `docker compose down --remove-orphans` and then `docker compose up -d --build`. The named volume `clickhouse_data` is kept. Kafka has no volume, so topics and consumer offsets are recreated. `make down` stops the project and leaves those volumes in place. The ClickHouse service sets `deploy.resources.limits.memory` to 2G, a 512M reservation, and `nofile` 262144.
 
 | Published port | Service |
 | --- | --- |
@@ -171,7 +171,11 @@ It needs an agent the collector can reach (`make agent` on the host) and, for th
 
 **`evaluations` stays empty.** Confirm the Flink job runs and that `evaluations` receives records (`kafka-console-consumer.sh --topic evaluations`). A detector emits nothing until that series' window holds `min_points` values: 11 for `ewma` and 20 for `mad`. At the default 1-second gap that is about 11 and 20 seconds; at a steady 10-second cadence, about 2 and 3.5 minutes; a 5-minute NAB series needs about 100 minutes before `mad` emits. Only `system.cpu.utilization`, `system.memory.usage`, and names that start with `nab.` are scored. A `docker compose restart jobmanager` starts empty and rereads `raw_metrics` from `earliest`, so the warm-up runs again.
 
-**A flat `nab.` series flags every rise, with the upper band on the baseline.** Floorless EWMA (`EWMA(min_deviation=0.0)`) treats a scale of 0 as "any rise is an anomaly" and sets `upper` equal to `baseline`. On the detector explorer the dashed upper line sits on the average and the point is marked. A flat continuation and a drop are not anomalies. This used to raise `ZeroDivisionError` and restart the job. CPU and memory keep a positive floor, so a tiny step there stays inside the band.
+**A writer flush is larger than `WRITER_BATCH_SIZE`, or the group offset never moves.** Each poll asks for at most that many records (`KafkaRecordsConsumer.poll(max_records=batch_size)`). Rows that parse are appended to whatever is already waiting, and the size check runs after that append, so one flush can hold `2 * batch_size - 1` good rows. A timeout flush (`WRITER_BATCH_TIMEOUT_SECONDS` since the previous flush) can be smaller. Malformed records are not rows: a poll that parses to nothing does not insert and does not commit. The running consumer has already moved past those records, so it will not read them again. The committed offset has not, so a restart logs `Skipping malformed record` for them again, until a later flush of a good row commits past that position.
+
+**`WRITER_BATCH_SIZE` of 0 or less crash-loops the writer.** `ClickHouseSinkSettings.batch_size` and `batch_timeout_seconds` have no lower bound. `poll_timeout_ms` does (`gt=0`). A batch size of 0 or less is passed to `poll` as `max_records`. kafka-python 3.0.11 raises `ValueError: max_records must be positive` on that call, before any fetch. The exception leaves the sink, `main` stops the other two, and the process exits. Compose restarts it (`restart: unless-stopped`). A batch timeout of 0 or less flushes any waiting good rows on every loop: the elapsed time is always at least 0.
+
+**A flat `nab.` series flags every rise, with the upper band on the baseline.** Floorless EWMA (`EWMA(min_deviation=0.0)`) treats a scale of 0 as "any rise is an anomaly" and sets `upper` equal to `baseline`. On the Metrics explorer the dashed upper line sits on the average and the point is marked. A flat continuation and a drop are not anomalies. This used to raise `ZeroDivisionError` and restart the job. CPU and memory keep a positive floor, so a tiny step there stays inside the band.
 
 **Bands drop to 0 in a custom Grafana query.** A `LEFT JOIN` from `metrics` to `evaluations` fills unmatched rows with `0` unless the query ends with `SETTINGS join_use_nulls = 1`.
 

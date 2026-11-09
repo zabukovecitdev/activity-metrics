@@ -777,7 +777,7 @@
           "refId": "A"
         }
       ],
-      "description": "Hardware and uptime of the selected machine. Replayed series have no machine record."
+      "description": "Hardware of the selected machine: host, OS, OS version, architecture, cores, memory, disk, last boot, and last seen. Uptime is the system.uptime series. Replayed series have no machine record."
     },
     {
       "datasource": {
