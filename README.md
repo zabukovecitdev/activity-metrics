@@ -300,7 +300,7 @@ The TimescaleDB schema (Flyway `V1`–`V5`) was removed along with TimescaleDB; 
 
 ## Grafana
 
-`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Metrics explorer* (uid `ad8rn6h`). It works for any metric in `metrics`, for example `system.cpu.utilization` or a replayed `nab.*` series. A link at the top opens *Pipeline performance*. Variables:
+`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Metrics explorer* (uid `ad8rn6h`). It works for any metric in `metrics`, for example `system.cpu.utilization` or a replayed `nab.*` series. A link at the top opens *Pipeline performance* (`pipeline-performance.json`, uid `pipeline-performance`), which reads Prometheus. The series, the ports, and how the panel rates relate are in [docs/operations.md](docs/operations.md#pipeline-metrics). Variables:
 
 - `host` (shown as *Machine*): the hostname from `machines`, or the machine id for a machine the collector hasn't described yet. A replayed NAB series shows its file name.
 - `machine_id`: hidden, the id of the selected host; every panel filters on it. Two machines with the same hostname would both map to the first id, so give them different hostnames.
