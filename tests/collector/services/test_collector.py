@@ -71,7 +71,7 @@ async def test_malformed_response_is_skipped():
 
 
 async def test_metric_keeps_the_timestamp_it_was_sampled_at():
-    with patch("activityreporter.agent.services.metrics_service.time.time", return_value=123.456):
+    with patch("activityreporter.agent.sample_metrics.metrics_sampler.time.time", return_value=123.456):
         published = await collect_with_transport(httpx.ASGITransport(app=app))
 
     assert {m.timestamp for m in published} == {123.456}
