@@ -43,7 +43,7 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | `COLLECTOR_SCRAPE_INTERVAL_SECONDS` | `1` | unset |
 | `COLLECTOR_MACHINE_REFRESH_SECONDS` | `300` | unset |
 
-`CollectorSettings` (`shared/settings/collector_settings.py`) reads those two with `env_prefix=COLLECTOR_` and `gt=0`. The scrape value is the sleep after a round finishes. The old names `SCRAPE_INTERVAL_SECONDS` and `MACHINE_REFRESH_SECONDS` are ignored. The agents to scrape are not an environment variable but `collector.toml`; see [Local stack](#local-stack) and the README.
+`CollectorSettings` (`collector/collector_settings.py`) reads those two with `env_prefix=COLLECTOR_` and `gt=0`. The scrape value is the sleep after a round finishes. The old names `SCRAPE_INTERVAL_SECONDS` and `MACHINE_REFRESH_SECONDS` are ignored. The agents to scrape are not an environment variable but `collector.toml`; see [Local stack](#local-stack) and the README.
 
 ### Anomaly detector
 
@@ -145,7 +145,7 @@ The root `Dockerfile` installs that wheel into one image, `activityreporter:late
 
 ## Mutation testing
 
-`make mutate` runs `uv run mutmut run`. `[tool.mutmut]` in `pyproject.toml` mutates `src/activityreporter/anomaly_detector/algorithms/` and `services/`, then runs `tests/anomaly_detector/`. mutmut copies only the paths it mutates, so `also_copy` lists the rest of what those tests import: the package and detector `__init__.py` files, `anomaly_detector/models`, `shared`, and `tests`. A new import from anywhere else fails the mutant run with `ImportError` until that path is added there.
+`make mutate` runs `uv run mutmut run`. `[tool.mutmut]` in `pyproject.toml` mutates `src/activityreporter/anomaly_detector/detectors/` and `score_samples/`, then runs `tests/anomaly_detector/`. mutmut copies only the paths it mutates, so `also_copy` lists the rest of what those tests import: the package and detector `__init__.py` files, `contracts`, and `tests`. A new import from anywhere else fails the mutant run with `ImportError` until that path is added there.
 
 `mutmut` is in the `dev` dependency group. The app image installs with `--no-default-groups`, so run this on the host after `uv sync`. The `mutants/` directory is gitignored. `pytest` is configured with `--ignore=mutants`, so `make test` does not collect a leftover tree. `uv run mutmut results` lists what survived; `uv run mutmut show <id>` prints one mutant. The Flink process function is outside `source_paths` because it imports PyFlink, which is not installed in this environment.
 
