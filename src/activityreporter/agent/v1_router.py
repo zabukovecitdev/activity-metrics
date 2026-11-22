@@ -1,11 +1,13 @@
 from fastapi import APIRouter
 
-from activityreporter.agent.services.metrics_service import MetricsService
+from activityreporter.agent.describe_machine.machine_describer import MachineDescriber
+from activityreporter.agent.sample_metrics.metrics_sampler import MetricsSampler
 from activityreporter.contracts.machine import Machine
 from activityreporter.contracts.metrics_response import MetricsResponse
 
 router = APIRouter(prefix="/v1")
-service = MetricsService()
+machine_describer = MachineDescriber()
+metrics_sampler = MetricsSampler()
 
 
 @router.get("/health", tags=["health"])
@@ -15,9 +17,9 @@ async def get_health() -> dict[str, str]:
 
 @router.get("/machine", tags=["machine"])
 async def get_machine() -> Machine:
-    return await service.describe_machine()
+    return await machine_describer.describe()
 
 
 @router.get("/metrics", tags=["metrics"])
 async def get_metrics() -> MetricsResponse:
-    return await service.collect_metrics()
+    return await metrics_sampler.sample()
