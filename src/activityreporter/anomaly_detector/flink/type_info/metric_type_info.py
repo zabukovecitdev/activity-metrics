@@ -1,7 +1,7 @@
 from pyflink.common.typeinfo import Types
 
 from activityreporter.anomaly_detector.flink.type_info.row_type_info import RowTypeInfo
-from activityreporter.shared.models.metric import Metric
+from activityreporter.contracts.metric import Metric
 
 METRIC_FIELD_TYPES = {
     "timestamp": Types.DOUBLE(),

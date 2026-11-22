@@ -3,7 +3,7 @@ from pyflink.datastream.connectors.kafka import KafkaRecordSerializationSchema, 
 from pyflink.datastream.formats.json import JsonRowSerializationSchema
 
 from activityreporter.anomaly_detector.flink.type_info.evaluation_type_info import EVALUATION_TYPE_INFO
-from activityreporter.shared.settings.kafka_settings import KafkaSettings
+from activityreporter.contracts.kafka_settings import KafkaSettings
 
 
 class KafkaEvaluationsSink:

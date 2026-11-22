@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 import machineid
 import psutil
 
-from activityreporter.shared.models.machine import Machine
-from activityreporter.shared.models.metric_observation import MetricObservation
-from activityreporter.shared.models.metrics_response import MetricsResponse
+from activityreporter.contracts.machine import Machine
+from activityreporter.contracts.metric_observation import MetricObservation
+from activityreporter.contracts.metrics_response import MetricsResponse
 
 
 class MetricsService:

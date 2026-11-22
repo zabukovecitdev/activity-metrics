@@ -1,7 +1,7 @@
 from pyflink.common.typeinfo import Types
 
 from activityreporter.anomaly_detector.flink.type_info.row_type_info import RowTypeInfo
-from activityreporter.shared.models.evaluation import Evaluation
+from activityreporter.contracts.evaluation import Evaluation
 
 EVALUATION_FIELD_TYPES = {
     "metric_id": Types.STRING(),

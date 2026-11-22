@@ -3,7 +3,7 @@ from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import KeyedProcessFunction, RuntimeContext
 from pyflink.datastream.state import ListStateDescriptor
 
-from activityreporter.anomaly_detector.services.metric_evaluator import MetricEvaluator
+from activityreporter.anomaly_detector.score_samples.metric_evaluator import MetricEvaluator
 
 # A count, not a time span, so the window holds enough values for every detector at any sample rate.
 # One hour at the 10-second scrape interval.

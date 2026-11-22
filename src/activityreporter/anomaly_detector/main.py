@@ -10,7 +10,7 @@ from activityreporter.anomaly_detector.flink.sinks.kafka_evaluations_sink import
 from activityreporter.anomaly_detector.flink.sources.kafka_metrics_source import KafkaMetricsSource
 from activityreporter.anomaly_detector.flink.type_info.evaluation_type_info import EVALUATION_TYPE_INFO
 from activityreporter.anomaly_detector.flink.watermarks.event_time_watermarks import EventTimeWatermarks
-from activityreporter.shared.settings.kafka_settings import KafkaSettings
+from activityreporter.contracts.kafka_settings import KafkaSettings
 
 PARALLELISM = 2
 

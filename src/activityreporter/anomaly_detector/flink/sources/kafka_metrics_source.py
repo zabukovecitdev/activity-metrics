@@ -2,7 +2,7 @@ from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSo
 from pyflink.datastream.formats.json import JsonRowDeserializationSchema
 
 from activityreporter.anomaly_detector.flink.type_info.metric_type_info import METRIC_TYPE_INFO
-from activityreporter.shared.settings.kafka_settings import KafkaSettings
+from activityreporter.contracts.kafka_settings import KafkaSettings
 
 KAFKA_CONSUMER_GROUP_ID = "anomaly-detector"
 

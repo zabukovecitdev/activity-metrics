@@ -4,8 +4,8 @@ import uvicorn
 from fastapi import FastAPI
 from starlette.responses import RedirectResponse
 
-from activityreporter.agent.api import v1_router
-from activityreporter.shared.settings.agent_settings import AgentSettings
+from activityreporter.agent import v1_router
+from activityreporter.agent.agent_settings import AgentSettings
 
 app = FastAPI()
 app.include_router(v1_router.router)

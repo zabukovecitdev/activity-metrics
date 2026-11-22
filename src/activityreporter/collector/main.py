@@ -5,13 +5,13 @@ import sys
 
 from prometheus_client import start_http_server
 
-from activityreporter.collector.clients.agent_urls import AgentUrls
-from activityreporter.collector.config.agents_file_loader import AgentsFileLoader
-from activityreporter.collector.clients.http_agent_client import HttpAgentClient
-from activityreporter.collector.producers.kafka_records_producer import KafkaRecordsProducer
-from activityreporter.collector.services.collector import Collector
-from activityreporter.shared.settings.collector_settings import CollectorSettings
-from activityreporter.shared.settings.kafka_settings import KafkaSettings
+from activityreporter.collector.read_agent_list.agent_urls import AgentUrls
+from activityreporter.collector.read_agent_list.agents_file_loader import AgentsFileLoader
+from activityreporter.collector.adapters.http_agent_client import HttpAgentClient
+from activityreporter.collector.adapters.kafka_records_producer import KafkaRecordsProducer
+from activityreporter.collector.scrape_agents.collector import Collector
+from activityreporter.collector.collector_settings import CollectorSettings
+from activityreporter.contracts.kafka_settings import KafkaSettings
 
 # Relative to the working directory: the repo root locally, /app in the container.
 AGENTS_FILE = "collector.toml"

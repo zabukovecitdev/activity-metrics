@@ -4,10 +4,10 @@ from unittest.mock import MagicMock
 
 from pydantic_core import to_jsonable_python
 
-from activityreporter.shared.models.evaluation import Evaluation
-from activityreporter.shared.models.machine import Machine
-from activityreporter.shared.models.metric import Metric
-from activityreporter.shared.settings.clickhouse_sink_settings import ClickHouseSinkSettings
+from activityreporter.contracts.evaluation import Evaluation
+from activityreporter.contracts.machine import Machine
+from activityreporter.contracts.metric import Metric
+from activityreporter.clickhouse_writer.clickhouse_sink_settings import ClickHouseSinkSettings
 
 METRIC_ID = "01a0e974-dc94-74df-ae87-e0e6064b18ef"
 
