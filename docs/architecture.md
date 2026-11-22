@@ -26,6 +26,18 @@ Grafana                       pick a host, see its series and anomalies
 | **ClickHouse** | Tables `metrics`, `evaluations`, `machines`. Schema in `db/migrations`. | Fast time-range queries for Grafana, and a good fit for append-only data. |
 | **Grafana** | Dashboards `machine-usage-metrics.json` (metrics explorer) and `pipeline-performance.json`, provisioned on start. | Charts without writing a frontend. |
 
+Each component's code is in `src/activityreporter/`, split into capability folders named as what they do (`adapters/` is I/O; `contracts/` is what crosses processes):
+
+| Component | Capability folders |
+| --- | --- |
+| agent | `sample_metrics/`, `describe_machine/`, `v1_router.py` |
+| collector | `read_agent_list/`, `scrape_agents/`, `split_snapshots/`, `adapters/` |
+| Flink job | `score_samples/`, `detectors/`, `flink/` (the only code that imports PyFlink) |
+| clickhouse-writer | `load_topics_into_tables/`, `adapters/` |
+| shared | `contracts/`: `Metric`, `Machine`, `Evaluation`, `MetricsResponse`, `KafkaSettings` |
+
+`make lint` enforces the boundaries. Every rule is listed in [behaviour](behaviour.md); the reasons are in [decisions](decisions/README.md).
+
 ## Data model
 
 - **`metrics`**: one row per sample, as the agent reported it.
@@ -43,7 +55,7 @@ Two algorithms score CPU, memory usage, and any series whose name starts with `n
 
 The 360 values are the samples the job has seen. A pause leaves them in place until newer samples push them out. They cover a little over six minutes at the collector's default 1-second gap, one hour at a steady 10-second cadence, and 30 hours of 5-minute data. An hour of 5-minute data is 12 values, which is why MAD used to score none of a NAB replay.
 
-On its own, each algorithm flags tiny steps in a series that barely moves, so CPU and memory have a minimum deviation (`MetricEvaluator.DETECTORS` in `anomaly_detector/services/metric_evaluator.py`):
+On its own, each algorithm flags tiny steps in a series that barely moves, so CPU and memory have a minimum deviation (`ScoringPolicy` in `anomaly_detector/score_samples/`):
 
 | Metric | Smallest deviation that can be flagged |
 | --- | --- |
@@ -53,7 +65,7 @@ On its own, each algorithm flags tiny steps in a series that barely moves, so CP
 
 NAB values run from about 0.1 to millions, so a floor in the values' units cannot fit every file. The prefix is case-sensitive and includes the dot.
 
-To add an algorithm: write a class in `anomaly_detector/algorithms/` that returns the shared result fields, and add it to the detector lists. The table and dashboard don't change.
+To add an algorithm: write a class in `anomaly_detector/detectors/` that returns the shared result fields, and add it to the detector lists. The table and dashboard don't change.
 
 ## Running it
 

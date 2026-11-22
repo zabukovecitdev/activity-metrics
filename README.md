@@ -8,39 +8,46 @@ agent ──HTTP──▶ collector ─┬─▶ Kafka raw_metrics ─┬──�
 
 ## Project layout
 
-One package, `src/activityreporter/`, split by application. Each application keeps `main.py` (wiring and process start, `cli()`, nothing else) at its root, and everything else lives in a directory named for its role, one class per file, the file named after the class (`KafkaRecordsProducer` in `producers/kafka_records_producer.py`). `__init__.py` files are empty: import from the full module path.
+Read the repo from the folder names. The top-level folders under each app are capabilities, named as what they do; `adapters/` is I/O; `contracts/` is what crosses a process boundary. To see every rule the system follows, read [docs/behaviour.md](docs/behaviour.md) (generated from the test names). To see why it is built this way, read [docs/decisions/](docs/decisions/README.md).
+
+One package, `src/activityreporter/`, split by application. Each application keeps `main.py` (wiring and process start, nothing else) at its root. One class per file, the file named after the class (`KafkaRecordsProducer` in `adapters/kafka_records_producer.py`). `__init__.py` files are empty: import from the full module path.
 
 ```
 src/activityreporter/
-  shared/              code used by more than one application
-    models/              Metric, Machine, Evaluation, MetricObservation, MetricsResponse
-    settings/            KafkaSettings, ClickHouseSettings, ClickHouseSinkSettings, CollectorSettings, AgentSettings
-    observability/       Prometheus counters
-  agent/               runs on every machine, serves /v1/metrics and /v1/machine
-    api/                 FastAPI routes
-    services/            MetricsService: reads the host
-  collector/           scrapes agents, publishes to raw_metrics and machines
-    clients/             HttpAgentClient, AgentUrls
-    config/              AgentsFileLoader: reads collector.toml
-    parsers/             MetricsParser
-    producers/           KafkaRecordsProducer
-    services/            Collector
-  anomaly_detector/    PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
-    algorithms/          Detector, MAD, EWMA
-    models/              Result
-    services/            MetricEvaluator (no PyFlink)
-    flink/               everything that imports PyFlink
-      processors/          AnomalyDetectionFunction
-      sources/             KafkaMetricsSource
-      sinks/               KafkaEvaluationsSink
-      type_info/           RowTypeInfo, METRIC_TYPE_INFO, EVALUATION_TYPE_INFO
-      watermarks/          EventTimeWatermarks, EpochSecondsTimestampAssigner
-  clickhouse_writer/   one sink per topic, Kafka topic → ClickHouse table
-    consumers/           KafkaRecordsConsumer
-    repositories/        ClickHouseRepository
-    sinks/           ClickHouseSinkBase, ClickHouseMetricsSink, ClickHouseEvaluationsSink, ClickHouseMachinesSink
-tests/                 mirrors src/activityreporter/; shared builders in tests/support/
+  contracts/                 what crosses a process boundary; depends on no app
+    kafka_settings.py          KafkaSettings: broker and topic names every stage agrees on
+    metrics_response.py        MetricsResponse (+ metric_observation.py MetricObservation): agent /v1/metrics body
+    machine.py                 Machine: agent /v1/machine body, machines topic, machines table
+    metric.py                  Metric: one sample on raw_metrics
+    evaluation.py              Evaluation: one sample scored by one algorithm, on evaluations
+  agent/                     runs on every machine, answers HTTP, knows nothing about Kafka
+    main.py, agent_settings.py, v1_router.py (routes)
+    sample_metrics/            MetricsSampler: CPU, memory, uptime gauges
+    describe_machine/          MachineDescriber: hostname, OS, cores, memory, disk
+  collector/                 scrapes agents, publishes to Kafka
+    main.py, collector_settings.py, collector_metrics.py (Prometheus counters)
+    read_agent_list/           AgentsFileLoader (collector.toml rules), AgentUrls
+    scrape_agents/             Collector: rounds, machine refresh every 5 min, dead-lettering invalid responses
+    split_snapshots/           MetricsParser: one response -> one Metric per sample, each with its own UUIDv7
+    adapters/                  HttpAgentClient, KafkaRecordsProducer (incl. <topic>_dlq)
+  anomaly_detector/          PyFlink job, raw_metrics -> evaluations (every scored sample, once per algorithm)
+    main.py                    job wiring
+    score_samples/             ScoringPolicy (which metrics, which detectors, which floors),
+                               SeriesWindow (last 360 values per series),
+                               MetricEvaluator (one evaluation per detector)
+    detectors/                 Detector protocol, Result, MAD, EWMA
+    flink/                     everything importing PyFlink: processors/, sources/, sinks/, type_info/, watermarks/
+  clickhouse_writer/         one sink per topic, Kafka topic -> ClickHouse table
+    main.py, clickhouse_settings.py, clickhouse_sink_settings.py, writer_metrics.py
+    load_topics_into_tables/   ClickHouseSinkBase (batch, write then commit, skip malformed),
+                               the metrics/evaluations/machines sinks, RowValues
+    adapters/                  KafkaRecordsConsumer, ClickHouseRepository (retries with backoff)
+tests/                       mirrors src/activityreporter/; test names are sentences of behaviour
+docs/behaviour.md            GENERATED from test names by `make docs`; a test fails when it is stale
+docs/decisions/              why things are the way they are
 ```
+
+Architecture is enforced by import-linter (`make lint`): the four apps share code only through `contracts/`; `contracts/` depends on no app; only `anomaly_detector/flink/` and `main.py` import `pyflink`; the business folders (`detectors/`, `score_samples/`, `split_snapshots/`, `read_agent_list/`) do not import `kafka`, `clickhouse_connect`, `httpx` or `pyflink`.
 
 ## Running
 
@@ -57,6 +64,8 @@ tests/                 mirrors src/activityreporter/; shared builders in tests/s
 | `make anomaly-detector` | runs the Flink job locally (creates `flink/.venv` with Python 3.11)  |
 | `make test`             | runs the tests                                                       |
 | `make mutate`           | mutation-tests the detectors (`uv run mutmut run`)                   |
+| `make lint`             | checks the architecture rules with import-linter                     |
+| `make docs`             | regenerates `docs/behaviour.md` from the test names                  |
 | `make smoke`            | checks a running stack end to end (`WAIT=300 make smoke` retries)    |
 
 In Docker, the Flink jobmanager runs in Application Mode: it starts the anomaly detection job itself, from
@@ -71,7 +80,7 @@ Interactive docs: `GET /` redirects to `/docs`.
 | Method | Path | Body |
 | --- | --- | --- |
 | `GET` | `/v1/health` | `{"status": "ok"}` |
-| `GET` | `/v1/machine` | `Machine` from `shared/models/machine.py` |
+| `GET` | `/v1/machine` | `Machine` from `contracts/machine.py` |
 | `GET` | `/v1/metrics` | One snapshot of current gauges |
 
 `/v1/machine` fields: `machine_id`, `hostname`, `os` (lowercased `platform.system()`), `os_version`, `architecture`, `cores` (`0` when `psutil.cpu_count()` can't tell), `total_memory` and `total_disk` (bytes, disk of the root filesystem), `last_boot` (UTC ISO-8601), `last_seen_at` (epoch seconds when the agent answered). `machine_id` comes from `machineid.id()`. Only fields that rarely change are here; uptime is the `system.uptime` metric.
@@ -132,7 +141,7 @@ Both responses, `/v1/metrics` and `/v1/machine`, are validated in one place, `Co
 
 One invalid metric sends the whole response there. A failure to publish to the dead letter topic is logged and the scrape carries on.
 
-Required JSON fields: `machine_id` (string), `timestamp` (ISO-8601), `metrics` (array of objects with `name`, `type`, `unit`, `value`). `attributes` is optional. The response is validated against `MetricsResponse` (`shared/models/metrics_response.py`): `machine_id` must be non-empty and `timestamp` must carry a UTC offset. The shared timestamp is converted to epoch seconds and copied onto every `Metric`. Each `Metric` gets its own `metric_id`, a UUIDv7 string from `uuid.uuid7()`: the sample's identity from here on, in Kafka, in `metrics`, and in its `evaluations`. The agent does not send one.
+Required JSON fields: `machine_id` (string), `timestamp` (ISO-8601), `metrics` (array of objects with `name`, `type`, `unit`, `value`). `attributes` is optional. The response is validated against `MetricsResponse` (`contracts/metrics_response.py`): `machine_id` must be non-empty and `timestamp` must carry a UTC offset. The shared timestamp is converted to epoch seconds and copied onto every `Metric`. Each `Metric` gets its own `metric_id`, a UUIDv7 string from `uuid.uuid7()`: the sample's identity from here on, in Kafka, in `metrics`, and in its `evaluations`. The agent does not send one.
 
 Each `Metric` is published to Kafka as JSON (`pydantic_core.to_json`), keyed by `machine_id`. Producer settings: `acks=all`, `retries=3`, send timeout 10 seconds. The producer is flushed and closed on the way out of `main`, including `SIGTERM` (installed as the default interrupt handler).
 
@@ -167,10 +176,10 @@ On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHI
 - Parallelism is 2. The stream is keyed by `(machine_id, name)` so each series keeps its own state. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`.
 - State is the last 360 values for that key (`WINDOW_POINTS` in `anomaly_detector/flink/processors/anomaly_detection_function.py`). The list state `recent_values` holds plain doubles. Each record appends its value, and the oldest value drops once 360 are kept. Event time still drives the 5-second watermark. The list keeps a value until newer ones push it out, including across a gap. The value just appended is the one scored, in arrival order. 360 values is one hour at a steady 10-second cadence. The collector's default gap is 1 second, so a live series holds a little over six minutes. A 5-minute series holds 30 hours in the same 360 slots. An hour of that data is 12 values, fewer than `mad` needs, which is why the window is a count.
 
-Scoring rules (`MetricEvaluator` in `anomaly_detector/services/metric_evaluator.py`, called from `AnomalyDetectionFunction.process_element` in `anomaly_detector/flink/processors/`):
+Scoring rules (`ScoringPolicy` and `MetricEvaluator` in `anomaly_detector/score_samples/`, called from `AnomalyDetectionFunction.process_element` in `anomaly_detector/flink/processors/`):
 
-- Only the metrics in `MetricEvaluator.DETECTORS`, and names that start with `nab.`, are scored. Every other series is dropped before any state is written. `system.memory.limit` and `system.uptime` barely move or only grow, so every small step would be flagged.
-- A `nab.` name uses `NAB_DETECTORS` (`MAD()` and `EWMA(min_deviation=0.0)`), both floors 0. The check is `str.startswith("nab.")` and it runs before the `DETECTORS` dict, so `nab.art_flatline` and `nab.` are scored and `nab` and `NAB.art_flatline` are not. NAB files span about 0.1 to millions, so one floor in the values' units cannot fit them. Publish those samples on `raw_metrics` under that name; the repo has no separate replay command.
+- Only the metrics in `ScoringPolicy`, and names that start with `nab.`, are scored. Every other series is dropped before any state is written. `system.memory.limit` and `system.uptime` barely move or only grow, so every small step would be flagged.
+- A `nab.` name uses `NAB_DETECTORS` (`MAD()` and `EWMA(min_deviation=0.0)`), both floors 0. The check is `str.startswith("nab.")` and it runs before the per-metric lookup, so `nab.art_flatline` and `nab.` are scored and `nab` and `NAB.art_flatline` are not. NAB files span about 0.1 to millions, so one floor in the values' units cannot fit them. Publish those samples on `raw_metrics` under that name; the repo has no separate replay command.
 - Each of the metric's detectors scores the latest value against the window once the window has `min_points` values. Until then that detector emits nothing for the series.
 
 | Metric | `mad` | `ewma` |
@@ -183,7 +192,7 @@ Everything outside `anomaly_detector/flink/` is free of PyFlink, so its tests ru
 
 ### Detectors
 
-A detector (`Detector` in `anomaly_detector/algorithms/`) has a `name`, `min_points`, and `evaluate(window) -> Result`. `Result` is what the dashboard draws, in the value's units:
+A detector (`Detector` in `anomaly_detector/detectors/`) has a `name`, `min_points`, and `evaluate(window) -> Result`. `Result` is what the dashboard draws, in the value's units:
 
 | Field | `mad` | `ewma` |
 | --- | --- | --- |
@@ -194,9 +203,9 @@ A detector (`Detector` in `anomaly_detector/algorithms/`) has a `name`, `min_poi
 
 The score and threshold behind `is_anomaly` stay inside the detector; only the flag is published. A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
 
-To add an algorithm, write a class with that shape and add it to the lists in `MetricEvaluator.DETECTORS`. To score another metric, add its entry there. Names that start with `nab.` skip that dict and always use `NAB_DETECTORS`. No schema, sink, or dashboard change is needed: its anomalies show up on every chart, labelled with its name.
+To add an algorithm, write a class with that shape and add it to the lists in `ScoringPolicy`. To score another metric, add its entry there. Names that start with `nab.` skip that lookup and always use `NAB_DETECTORS`. No schema, sink, or dashboard change is needed: its anomalies show up on every chart, labelled with its name.
 
-`MAD` (`anomaly_detector/algorithms/mad.py`):
+`MAD` (`anomaly_detector/detectors/mad.py`):
 
 - Modified z-score: `|last - median| / (1.4826 × median absolute deviation)`, threshold `3.5`.
 - When the median absolute deviation is 0 (over half the values equal the median), the scale is `1.253314 × mean absolute deviation` instead (Iglewicz & Hoaglin). When that is 0 too, every value is equal and the score is 0. The score is always finite, so it can be encoded as JSON.
@@ -205,11 +214,11 @@ To add an algorithm, write a class with that shape and add it to the lists in `M
 To tune the floors, count what they let through, for example `SELECT metric_name, algorithm, toDate(timestamp) AS day, countIf(is_anomaly) FROM evaluations FINAL GROUP BY ALL`. At one sample every 10 seconds a series has 8,640 a day.
 - Returned numbers are Python `float`s; numpy scalars cannot be encoded by PyFlink's coders.
 
-`EWMA` (`anomaly_detector/algorithms/ewma.py`) walks the window with `alpha = 0.1`. The average is seeded with the first value and the variance starts at 0. Each value is scored against that average and variance from before it is folded in. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`. The constructor defaults are 10 and 0. CPU keeps `min_deviation=10` (percentage points). Memory sets `min_deviation=0` and `min_relative=0.02`, because 10 would mean 10 bytes. A reading is an anomaly only when its score is strictly greater than 1, so a value sitting on the upper band is kept. After the 10-reading warm-up, a flagged value updates the average with `alpha × 0.1` (`ANOMALY_DAMPING`), so a spike does not drag the baseline along. A reading exactly at the threshold is not flagged and uses the full `alpha`.
+`EWMA` (`anomaly_detector/detectors/ewma.py`) walks the window with `alpha = 0.1`. The average is seeded with the first value and the variance starts at 0. Each value is scored against that average and variance from before it is folded in. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`. The constructor defaults are 10 and 0. CPU keeps `min_deviation=10` (percentage points). Memory sets `min_deviation=0` and `min_relative=0.02`, because 10 would mean 10 bytes. A reading is an anomaly only when its score is strictly greater than 1, so a value sitting on the upper band is kept. After the 10-reading warm-up, a flagged value updates the average with `alpha × 0.1` (`ANOMALY_DAMPING`), so a spike does not drag the baseline along. A reading exactly at the threshold is not flagged and uses the full `alpha`.
 
 A scale of 0 happens when the variance is still 0 and both floors are 0. A relative floor is also 0 when the average is 0, so a flat series of zeros with only `min_relative` set takes this path too. EWMA does not divide by that scale. A flat continuation scores 0 and is not flagged. Any rise scores infinity and is flagged, and `upper` equals the average (`THRESHOLD × 0`). A thirty-value window of `5.0` has `baseline` 5 and `upper` 5; appending `5.1` flags it, appending `4.9` does not. A drop scores 0. The infinity stays inside the detector: `Result` and the evaluation record carry `baseline`, `upper`, and `is_anomaly`. CPU's floor of 10 keeps its scale above 0. Memory's relative floor does too whenever the average is non-zero. A zero average with no variance is still a scale of 0. `NAB_DETECTORS` takes this path on a flat file. Dividing by the zero scale used to raise `ZeroDivisionError` and fail the Flink task. MAD never flags when its scale is 0, because a scale of 0 there means every value is equal, including the one being scored. EWMA can still see a rise: the current value is not in the variance yet.
 
-Input rows follow `Metric` (`shared/models/metric.py`) and output rows follow `Evaluation` (`shared/models/evaluation.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/flink/type_info/` must name the same fields as those models or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
+Input rows follow `Metric` (`contracts/metric.py`) and output rows follow `Evaluation` (`contracts/evaluation.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/flink/type_info/` must name the same fields as those models or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `contracts/` must not use newer syntax.
 
 ### Evaluation record
 
@@ -236,7 +245,7 @@ Job submission, the Kafka connector jar, and consumer-group rules are in [docs/o
 
 ## ClickHouse sinks
 
-`clickhouse-writer` is one process that runs one sink per topic on its own thread, each with its own Kafka consumer and ClickHouse client, so each topic has its own offsets and its own batches. `ClickHouseSinkBase` in `clickhouse_writer/sinks/clickhouse_sink_base.py` is the abstract base: it polls, converts, batches, writes and commits. A subclass in `clickhouse_writer/sinks/` names the table, its columns, the record model, the topic, and implements `to_row`. A record is converted by the sink of the topic it came from:
+`clickhouse-writer` is one process that runs one sink per topic on its own thread, each with its own Kafka consumer and ClickHouse client, so each topic has its own offsets and its own batches. `ClickHouseSinkBase` in `clickhouse_writer/load_topics_into_tables/clickhouse_sink_base.py` is the abstract base: it polls, converts, batches, writes and commits. A subclass in `clickhouse_writer/load_topics_into_tables/` names the table, its columns, the record model, the topic, and implements `to_row`. A record is converted by the sink of the topic it came from:
 
 | Sink | Topic variable | Default topic | Table | Group |
 | --- | --- | --- | --- | --- |
@@ -317,4 +326,4 @@ A replay moves each series to end now, and the series span about a month. Set th
 
 ## Tests
 
-Tests mirror the package directories (`tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/clickhouse_writer`) and import `activityreporter.*`. `make test` runs `uv run pytest`. `make mutate` mutation-tests the detectors; the configuration and the `also_copy` trap are in [docs/operations.md](docs/operations.md).
+Tests mirror the package directories (`tests/contracts`, `tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/clickhouse_writer`) and import `activityreporter.*`. Test names are sentences of behaviour; `make docs` collects them into [docs/behaviour.md](docs/behaviour.md), and a test fails when that file is stale. `make test` runs `uv run pytest`. `make mutate` mutation-tests the detectors; the configuration and the `also_copy` trap are in [docs/operations.md](docs/operations.md).
