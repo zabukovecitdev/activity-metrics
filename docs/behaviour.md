@@ -16,6 +16,8 @@ This catalogue is generated from the test names by `make docs`; do not edit it b
 
 ### detectors
 
+#### ewma
+
 - Ewma has an upper band only ([test_ewma.py:9](../tests/anomaly_detector/detectors/test_ewma.py#L9))
 - Ewma flags a spike above the upper band ([test_ewma.py:17](../tests/anomaly_detector/detectors/test_ewma.py#L17))
 - Ewma does not flag a drop ([test_ewma.py:24](../tests/anomaly_detector/detectors/test_ewma.py#L24))
@@ -29,6 +31,9 @@ This catalogue is generated from the test names by `make docs`; do not edit it b
 - Reading exactly at the floor is not an anomaly ([test_ewma.py:72](../tests/anomaly_detector/detectors/test_ewma.py#L72))
 - An anomaly after warmup only nudges the average ([test_ewma.py:76](../tests/anomaly_detector/detectors/test_ewma.py#L76))
 - A reading exactly at the threshold is not damped ([test_ewma.py:83](../tests/anomaly_detector/detectors/test_ewma.py#L83))
+
+#### mad
+
 - Value close to the median is not an anomaly ([test_mad.py:13](../tests/anomaly_detector/detectors/test_mad.py#L13))
 - Clear outlier is an anomaly ([test_mad.py:17](../tests/anomaly_detector/detectors/test_mad.py#L17))
 - Moderate deviation below the threshold is not an anomaly ([test_mad.py:21](../tests/anomaly_detector/detectors/test_mad.py#L21))
@@ -46,6 +51,8 @@ This catalogue is generated from the test names by `make docs`; do not edit it b
 
 ### score samples
 
+#### metric evaluator
+
 - Every detector evaluates every sample once warm ([test_metric_evaluator.py:31](../tests/anomaly_detector/score_samples/test_metric_evaluator.py#L31))
 - Evaluation is keyed by the metric sample ([test_metric_evaluator.py:38](../tests/anomaly_detector/score_samples/test_metric_evaluator.py#L38))
 - Mad flags a spike and reports its band ([test_metric_evaluator.py:46](../tests/anomaly_detector/score_samples/test_metric_evaluator.py#L46))
@@ -59,10 +66,16 @@ This catalogue is generated from the test names by `make docs`; do not edit it b
 - Nab series are evaluated without floors ([test_metric_evaluator.py:110](../tests/anomaly_detector/score_samples/test_metric_evaluator.py#L110))
 - Flat nab series is scored without an error ([test_metric_evaluator.py:119](../tests/anomaly_detector/score_samples/test_metric_evaluator.py#L119))
 - Each detectors name and duration is reported to the observer ([test_metric_evaluator.py:126](../tests/anomaly_detector/score_samples/test_metric_evaluator.py#L126))
+
+#### scoring policy
+
 - Only metrics with detectors are scored ([test_scoring_policy.py:11](../tests/anomaly_detector/score_samples/test_scoring_policy.py#L11))
 - Cpu and memory are each scored by mad and ewma ([test_scoring_policy.py:16](../tests/anomaly_detector/score_samples/test_scoring_policy.py#L16))
 - Unscored metric has no detectors ([test_scoring_policy.py:21](../tests/anomaly_detector/score_samples/test_scoring_policy.py#L21))
 - Nab series are scored by detectors without floors ([test_scoring_policy.py:25](../tests/anomaly_detector/score_samples/test_scoring_policy.py#L25))
+
+#### series window
+
 - First value starts a window of one ([test_series_window.py:4](../tests/anomaly_detector/score_samples/test_series_window.py#L4))
 - Newest value is last ([test_series_window.py:8](../tests/anomaly_detector/score_samples/test_series_window.py#L8))
 - Window below the limit keeps every value ([test_series_window.py:12](../tests/anomaly_detector/score_samples/test_series_window.py#L12))
@@ -76,22 +89,38 @@ This catalogue is generated from the test names by `make docs`; do not edit it b
 
 ### adapters
 
+#### clickhouse repository
+
 - Insert batch inserts rows once into the sink table ([test_clickhouse_repository.py:19](../tests/clickhouse_writer/adapters/test_clickhouse_repository.py#L19))
 - Insert batch skips empty batch ([test_clickhouse_repository.py:28](../tests/clickhouse_writer/adapters/test_clickhouse_repository.py#L28))
 - Insert batch retries with backoff then succeeds ([test_clickhouse_repository.py:36](../tests/clickhouse_writer/adapters/test_clickhouse_repository.py#L36))
 - Insert batch raises after exhausting retries ([test_clickhouse_repository.py:47](../tests/clickhouse_writer/adapters/test_clickhouse_repository.py#L47))
+
+#### kafka records consumer
+
 - Consumer subscribes to its topic in its group ([test_kafka_records_consumer.py:8](../tests/clickhouse_writer/adapters/test_kafka_records_consumer.py#L8))
 - Poll returns the records of every partition ([test_kafka_records_consumer.py:16](../tests/clickhouse_writer/adapters/test_kafka_records_consumer.py#L16))
 
 ### load topics into tables
 
+#### clickhouse evaluations sink
+
 - Evaluation row matches columns and keeps a missing band as null ([test_clickhouse_evaluations_sink.py:11](../tests/clickhouse_writer/load_topics_into_tables/test_clickhouse_evaluations_sink.py#L11))
 - Evaluation values are stored exactly as sent ([test_clickhouse_evaluations_sink.py:25](../tests/clickhouse_writer/load_topics_into_tables/test_clickhouse_evaluations_sink.py#L25))
 - Parse skips invalid evaluations ([test_clickhouse_evaluations_sink.py:33](../tests/clickhouse_writer/load_topics_into_tables/test_clickhouse_evaluations_sink.py#L33))
+
+#### clickhouse machines sink
+
 - Machine row converts both times to utc ([test_clickhouse_machines_sink.py:10](../tests/clickhouse_writer/load_topics_into_tables/test_clickhouse_machines_sink.py#L10))
 - Parse skips invalid machines ([test_clickhouse_machines_sink.py:23](../tests/clickhouse_writer/load_topics_into_tables/test_clickhouse_machines_sink.py#L23))
+
+#### clickhouse metrics sink
+
 - Metric row matches columns ([test_clickhouse_metrics_sink.py:8](../tests/clickhouse_writer/load_topics_into_tables/test_clickhouse_metrics_sink.py#L8))
 - Missing attributes are stored as an empty map ([test_clickhouse_metrics_sink.py:21](../tests/clickhouse_writer/load_topics_into_tables/test_clickhouse_metrics_sink.py#L21))
+
+#### clickhouse sink base
+
 - Clickhouse sink base is abstract ([test_clickhouse_sink_base.py:25](../tests/clickhouse_writer/load_topics_into_tables/test_clickhouse_sink_base.py#L25))
 - Columns are the record fields ([test_clickhouse_sink_base.py:31](../tests/clickhouse_writer/load_topics_into_tables/test_clickhouse_sink_base.py#L31))
 - Each sink has its own group ([test_clickhouse_sink_base.py:35](../tests/clickhouse_writer/load_topics_into_tables/test_clickhouse_sink_base.py#L35))
@@ -111,7 +140,12 @@ This catalogue is generated from the test names by `make docs`; do not edit it b
 
 ### read agent list
 
+#### agent urls
+
 - Metrics url is under the agent url ([test_agent_urls.py:4](../tests/collector/read_agent_list/test_agent_urls.py#L4))
+
+#### agents file loader
+
 - Agents are read in order ([test_agents_file_loader.py:14](../tests/collector/read_agent_list/test_agents_file_loader.py#L14))
 - The repo default is valid ([test_agents_file_loader.py:19](../tests/collector/read_agent_list/test_agents_file_loader.py#L19))
 - Missing file raises os error ([test_agents_file_loader.py:23](../tests/collector/read_agent_list/test_agents_file_loader.py#L23))
@@ -145,7 +179,12 @@ This catalogue is generated from the test names by `make docs`; do not edit it b
 
 ## whole system
 
+#### behaviour catalogue
+
 - Behaviour catalogue is up to date ([test_behaviour_catalogue.py:14](../tests/test_behaviour_catalogue.py#L14))
 - A test name becomes a sentence ([test_behaviour_catalogue.py:20](../tests/test_behaviour_catalogue.py#L20))
 - Tests are grouped by app and capability ([test_behaviour_catalogue.py:26](../tests/test_behaviour_catalogue.py#L26))
+
+#### metrics schema
+
 - Runtime entrypoints import ([test_metrics_schema.py:1](../tests/test_metrics_schema.py#L1))

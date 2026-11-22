@@ -45,15 +45,17 @@ def section_of(relative: Path) -> tuple[str, str]:
     return parts[0], capability
 
 
-def collect(tests_dir: Path) -> dict[tuple[str, str], list[str]]:
-    sections: dict[tuple[str, str], list[str]] = {}
+def collect(tests_dir: Path) -> dict[tuple[str, str], dict[str, list[str]]]:
+    """Bullets per test file (named without `test_`), per (application, capability)."""
+    sections: dict[tuple[str, str], dict[str, list[str]]] = {}
     paths = [p for p in tests_dir.rglob("test_*.py") if "support" not in p.relative_to(tests_dir).parts]
     for path in sorted(paths, key=lambda p: p.relative_to(tests_dir).parts):
         relative = path.relative_to(tests_dir)
         link = f"../{tests_dir.name}/{relative.as_posix()}"
+        subject = path.stem.removeprefix("test_").replace("_", " ")
+        files = sections.setdefault(section_of(relative), {})
         for name, line in tests_in(path):
-            bullet = f"- {sentence(name)} ([{path.name}:{line}]({link}#L{line}))"
-            sections.setdefault(section_of(relative), []).append(bullet)
+            files.setdefault(subject, []).append(f"- {sentence(name)} ([{path.name}:{line}]({link}#L{line}))")
     return sections
 
 
@@ -63,13 +65,23 @@ def render(tests_dir: Path) -> str:
     lines = ["# Behaviour catalogue", "", INTRO]
     for app in apps:
         lines += ["", f"## {app}"]
-        for (section_app, capability), bullets in sorted(sections.items()):
+        for (section_app, capability), files in sorted(sections.items()):
             if section_app != app:
                 continue
             if capability:
                 lines += ["", f"### {capability}"]
-            lines += [""] + bullets
+            lines += _file_blocks(files)
     return "\n".join(lines) + "\n"
+
+
+def _file_blocks(files: dict[str, list[str]]) -> list[str]:
+    """The bullets of each file; under a `####` heading per file when the section has more than one."""
+    if len(files) == 1:
+        return [""] + next(iter(files.values()))
+    lines: list[str] = []
+    for subject, bullets in files.items():
+        lines += ["", f"#### {subject}", ""] + bullets
+    return lines
 
 
 def main(argv: list[str]) -> int:
