@@ -4,8 +4,13 @@ This catalogue is generated from the test names by `make docs`; do not edit it b
 
 ## agent
 
-- Collect metrics returns metrics built from system stats ([test_metrics_service.py:9](../tests/agent/test_metrics_service.py#L9))
-- Describe machine reports static info and when it was observed ([test_metrics_service.py:28](../tests/agent/test_metrics_service.py#L28))
+### describe machine
+
+- Description reports static info and when it was observed ([test_machine_describer.py:9](../tests/agent/describe_machine/test_machine_describer.py#L9))
+
+### sample metrics
+
+- Metrics are built from system stats ([test_metrics_sampler.py:9](../tests/agent/sample_metrics/test_metrics_sampler.py#L9))
 
 ## anomaly_detector
 
