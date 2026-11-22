@@ -22,7 +22,7 @@ def test_moderate_deviation_below_the_threshold_is_not_an_anomaly():
     assert not MAD().evaluate([1, 2, 3, 4, 5, 6, 7, 8, 13]).is_anomaly
 
 
-def test_flags_drops_too():
+def test_flags_a_drop_as_well_as_a_spike():
     assert MAD().evaluate(STEADY + [0.0]).is_anomaly
 
 
@@ -35,7 +35,7 @@ def test_band_is_symmetric_around_the_median():
     assert not result.is_anomaly
 
 
-def test_band_is_threshold_modified_z_scores_wide():
+def test_band_spans_the_threshold_in_modified_z_scores():
     # median 5, absolute deviations median 2
     result = MAD().evaluate([1, 3, 5, 7, 9])
 

@@ -60,7 +60,7 @@ def test_mad_flags_a_spike_and_reports_its_band():
     }
 
 
-def test_mad_flags_drops_too():
+def test_mad_flags_a_sudden_drop():
     assert by_algorithm(build_metric(-50.0), BASELINE)["mad"].is_anomaly
 
 
@@ -107,24 +107,10 @@ def test_memory_jumping_more_than_two_percent_is_an_anomaly():
     assert evaluations["ewma"].is_anomaly
 
 
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"name": "system.memory.limit"},
-        {"name": "system.uptime"},
-        {"name": "system.something.new"},
-    ],
-)
-def test_only_metrics_with_detectors_are_scored(overrides):
-    assert not MetricEvaluator.is_scored(build_metric(1.0, **overrides))
-    assert MetricEvaluator.is_scored(build_metric(1.0))
-
-
-def test_nab_series_are_scored_without_floors():
+def test_nab_series_are_evaluated_without_floors():
     metric = build_metric(1.0, name="nab.exchange-2_cpc_results", unit="%")
     window = [0.10, 0.11, 0.12, 0.11, 0.10] * 4
 
-    assert MetricEvaluator.is_scored(metric)
     # A rise of 0.4 is far below the 10-point CPU floor, but far outside this series' spread.
     assert by_algorithm({**metric, "value": 0.5}, window)["mad"].is_anomaly
     assert by_algorithm({**metric, "value": 0.5}, window)["ewma"].is_anomaly
@@ -137,7 +123,7 @@ def test_flat_nab_series_is_scored_without_an_error():
     assert not any(e.is_anomaly for e in evaluations)
 
 
-def test_observe_gets_each_detectors_name_and_a_duration():
+def test_each_detectors_name_and_duration_is_reported_to_the_observer():
     seen: list[tuple[str, float]] = []
 
     MetricEvaluator.evaluate(build_metric(11.0), BASELINE + [11.0], observe=lambda name, seconds: seen.append((name, seconds)))

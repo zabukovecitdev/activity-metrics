@@ -6,7 +6,7 @@ STEADY = [50.0, 52.0, 48.0, 51.0, 49.0] * 6
 STEADY_MEMORY = [1_000_000_000.0, 1_000_004_096.0, 999_995_904.0] * 10
 
 
-def test_has_an_upper_band_only():
+def test_ewma_has_an_upper_band_only():
     result = EWMA().evaluate(STEADY + [50.0])
 
     assert result.lower is None
@@ -14,23 +14,23 @@ def test_has_an_upper_band_only():
     assert not result.is_anomaly
 
 
-def test_flags_a_spike_above_the_upper_band():
+def test_ewma_flags_a_spike_above_the_upper_band():
     result = EWMA().evaluate(STEADY + [95.0])
 
     assert result.is_anomaly
     assert 95.0 > result.upper
 
 
-def test_does_not_flag_a_drop():
+def test_ewma_does_not_flag_a_drop():
     assert not EWMA().evaluate(STEADY + [0.0]).is_anomaly
 
 
-def test_raises_until_warmed_up():
+def test_ewma_refuses_to_score_until_it_has_enough_values():
     with pytest.raises(ValueError):
         EWMA().evaluate(STEADY[:EWMA.min_points - 1])
 
 
-def test_default_floor_flags_a_tiny_rise_in_bytes():
+def test_default_floor_does_not_hide_a_tiny_rise_in_bytes():
     assert EWMA().evaluate(STEADY_MEMORY + [1_000_040_960.0]).is_anomaly
 
 
@@ -69,7 +69,7 @@ def test_flat_series_with_a_small_floor_ignores_a_rise_below_it():
     assert ewma.evaluate([5.0] * 30 + [5.6]).is_anomaly
 
 
-def test_reading_exactly_at_the_threshold_is_not_an_anomaly():
+def test_reading_exactly_at_the_floor_is_not_an_anomaly():
     assert not EWMA(min_deviation=0.5).evaluate([5.0] * 30 + [5.5]).is_anomaly
 
 
