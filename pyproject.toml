@@ -27,6 +27,7 @@ clickhouse-writer = "activityreporter.clickhouse_writer.main:cli"
 
 [dependency-groups]
 dev = [
+    "import-linter>=2.17",
     "mutmut>=3.8.0",
     "pytest (>=9.1.1,<10.0.0)",
     "pytest-asyncio (>=1.4.0,<2.0.0)",
@@ -66,3 +67,49 @@ executionEnvironments = [
     { root = "src/activityreporter/anomaly_detector", extraPaths = ["src"], reportMissingImports = "none" },
     { root = "src" },
 ]
+
+[tool.importlinter]
+root_package = "activityreporter"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "The four applications only share code through contracts"
+type = "independence"
+modules = [
+    "activityreporter.agent",
+    "activityreporter.collector",
+    "activityreporter.anomaly_detector",
+    "activityreporter.clickhouse_writer",
+]
+
+[[tool.importlinter.contracts]]
+name = "Contracts depend on no application"
+type = "forbidden"
+source_modules = ["activityreporter.contracts"]
+forbidden_modules = [
+    "activityreporter.agent",
+    "activityreporter.collector",
+    "activityreporter.anomaly_detector",
+    "activityreporter.clickhouse_writer",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only the Flink glue imports pyflink"
+type = "forbidden"
+source_modules = [
+    "activityreporter.anomaly_detector.score_samples",
+    "activityreporter.anomaly_detector.detectors",
+    "activityreporter.contracts",
+]
+forbidden_modules = ["pyflink"]
+
+[[tool.importlinter.contracts]]
+name = "Business code does not talk to infrastructure libraries directly"
+type = "forbidden"
+source_modules = [
+    "activityreporter.anomaly_detector.detectors",
+    "activityreporter.anomaly_detector.score_samples",
+    "activityreporter.collector.split_snapshots",
+    "activityreporter.collector.read_agent_list",
+]
+forbidden_modules = ["kafka", "clickhouse_connect", "httpx", "pyflink"]
