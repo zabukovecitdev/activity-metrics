@@ -4,10 +4,8 @@ from pyflink.datastream.functions import KeyedProcessFunction, RuntimeContext
 from pyflink.datastream.state import ListStateDescriptor
 
 from activityreporter.anomaly_detector.score_samples.metric_evaluator import MetricEvaluator
-
-# A count, not a time span, so the window holds enough values for every detector at any sample rate.
-# One hour at the 10-second scrape interval.
-WINDOW_POINTS = 360
+from activityreporter.anomaly_detector.score_samples.scoring_policy import ScoringPolicy
+from activityreporter.anomaly_detector.score_samples.series_window import SeriesWindow
 
 
 class AnomalyDetectionFunction(KeyedProcessFunction):
@@ -23,10 +21,10 @@ class AnomalyDetectionFunction(KeyedProcessFunction):
         )
 
     def process_element(self, value, ctx: 'KeyedProcessFunction.Context'):
-        if not MetricEvaluator.is_scored(value):
+        if not ScoringPolicy.is_scored(value):
             return
 
-        window = [*self.recent_values.get(), value["value"]][-WINDOW_POINTS:]
+        window = SeriesWindow.append(self.recent_values.get(), value["value"])
         self.recent_values.update(window)
 
         for evaluation in MetricEvaluator.evaluate(value, window, observe=self._observe):
