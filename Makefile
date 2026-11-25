@@ -22,7 +22,7 @@ anomaly-detector: $(FLINK_PYTHON) $(KAFKA_CONNECTOR_JAR)
 	PYTHONPATH=src KAFKA_CONNECTOR_JAR=$(abspath $(KAFKA_CONNECTOR_JAR)) $(FLINK_PYTHON) -m activity_metrics.anomaly_detector.main
 
 $(FLINK_PYTHON):
-	python3.11 -m venv flink/.venv
+	python3.10 -m venv flink/.venv
 	flink/.venv/bin/pip install apache-flink==1.19.1 pydantic-settings
 
 $(KAFKA_CONNECTOR_JAR):

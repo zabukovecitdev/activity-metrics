@@ -27,7 +27,7 @@ Process commands from the `Makefile`:
 | `mutate` | `uv run mutmut run` | dev dependency; see [Mutation testing](#mutation-testing) |
 | `anomaly-detector` | `flink/.venv/bin/python -m activity_metrics.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
-`anomaly-detector` creates `flink/.venv` with Python 3.11 and `apache-flink==1.19.1`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
+`anomaly-detector` creates `flink/.venv` with Python 3.10, the version in the Flink image, and `apache-flink==1.19.1`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
 
 ## Environment
 

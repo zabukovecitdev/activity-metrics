@@ -43,7 +43,7 @@ default 1-second gap.
 | `make agent`              | runs the agent locally                                                   |
 | `make collector`          | runs the collector locally                                               |
 | `make clickhouse-writer`  | runs the ClickHouse writers locally                                      |
-| `make anomaly-detector`   | runs the Flink job locally (creates `flink/.venv` with Python 3.11)      |
+| `make anomaly-detector`   | runs the Flink job locally (creates `flink/.venv` with Python 3.10)      |
 | `make venv`               | opens a subshell with the project's virtual environment active          |
 | `make test`               | runs the tests                                                           |
 | `make lint`               | runs `ruff check` and `ruff format --check`                              |

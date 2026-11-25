@@ -35,5 +35,6 @@ PyFlink 1.19 supports CPython 3.8 to 3.11, and the upstream image `flink:1.19.1-
   shared models can meet a different pydantic version in the job than in the tests.
 - The process function, the source, the sink and the type information under `anomaly_detector/flink/` have no tests.
   `make smoke` against a running stack is the only check. CI runs it in `.github/workflows/smoke.yml`.
-- `make anomaly-detector` builds its local venv with `python3.11`, not the 3.10 of the image.
+- `make anomaly-detector` builds its local venv with `python3.10`, the version of the image, so it needs a `python3.10`
+  on `PATH`.
 - Moving the job to a newer Python means a newer PyFlink, which means a newer Flink image and Kafka connector.
