@@ -293,4 +293,4 @@ A replay moves each series to end now, and the series span about a month. Set th
 
 ## Tests
 
-Tests mirror the package directories (`tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/clickhouse_writer`) and import `activity_metrics.*`. `make test` runs `uv run pytest`. `make check` also runs ruff, pyright and complexipy, as CI does (`.github/workflows/ci.yml`). `make mutate` mutation-tests the detectors; the configuration and the `also_copy` trap are in [operations](operations.md).
+Tests mirror the package directories (`tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/clickhouse_writer`) and import `activity_metrics.*`. `make test` runs `uv run pytest`. `make check` also runs ruff, pyright and complexipy, as CI does (`.github/workflows/ci.yml`). `make smoke` checks a running stack end to end; CI runs it in `.github/workflows/smoke.yml`. `make mutate` mutation-tests the detectors; the configuration and the `also_copy` trap are in [operations](operations.md).

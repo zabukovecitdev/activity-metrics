@@ -157,6 +157,8 @@ Upgrade note: the project used to be called `activityreporter`. The Prometheus m
 
 It needs an agent the collector can reach (`make agent` on the host) and, for the evaluation checks, a few minutes of samples: `WAIT=300 make smoke` retries failed checks for up to 300 seconds. Grafana is called as `admin:admin`; set `GRAFANA_AUTH` if you changed it.
 
+CI runs the same check on every pull request and every push to `master`, in `.github/workflows/smoke.yml`. The `smoke` job starts an agent on the runner with `uv run agent`, starts the stack with `docker compose up -d --build`, waits for the `migrate` container, runs `make migrate`, and then `WAIT=300 make smoke`. On failure it prints `docker compose ps -a`, the last 200 log lines of every service, and the agent's log.
+
 ## Troubleshooting
 
 **Collector exits with `Cannot load agents: ...`.** `collector.toml` is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs; the message names which. Compose restarts the collector, so the line repeats in `docker compose logs collector` until the file is fixed. If the message says `collector.toml` is a directory, Docker created it for the mount because the file was missing: delete it and restore the file from git. On start the collector logs `Agents from collector.toml: [...]`.

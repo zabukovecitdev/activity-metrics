@@ -1,6 +1,7 @@
 # activity-metrics
 
 [![CI](https://github.com/zabukovecitdev/activity-metrics/actions/workflows/ci.yml/badge.svg)](https://github.com/zabukovecitdev/activity-metrics/actions/workflows/ci.yml)
+[![Smoke test](https://github.com/zabukovecitdev/activity-metrics/actions/workflows/smoke.yml/badge.svg)](https://github.com/zabukovecitdev/activity-metrics/actions/workflows/smoke.yml)
 
 activity-metrics collects CPU and memory metrics from a few machines, scores every sample for anomalies with two
 detectors (MAD and EWMA), and charts the samples, the detectors' baselines and bands, and the anomalies in Grafana. It
