@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic_core import to_jsonable_python
 
-from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import ClickHouseEvaluationsSink
+from activity_metrics.clickhouse_writer.sinks.clickhouse_evaluations_sink import ClickHouseEvaluationsSink
 from tests.support.builders import METRIC_ID, build_evaluation, parse_record, row_of
 
 

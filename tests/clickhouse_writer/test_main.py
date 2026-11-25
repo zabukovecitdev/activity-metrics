@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from activityreporter.clickhouse_writer import main
+from activity_metrics.clickhouse_writer import main
 
 
 def test_main_runs_every_sink_and_stops_them_all_when_one_fails():

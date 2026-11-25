@@ -1,4 +1,4 @@
-# ActivityReporter
+# activity-metrics
 
 ```
 agent ──HTTP──▶ collector ─┬─▶ Kafka raw_metrics ─┬───────────────────────────────────────────────────┐
@@ -8,10 +8,10 @@ agent ──HTTP──▶ collector ─┬─▶ Kafka raw_metrics ─┬──�
 
 ## Project layout
 
-One package, `src/activityreporter/`, split by application. Each application keeps `main.py` (wiring and process start, `cli()`, nothing else) at its root, and everything else lives in a directory named for its role, one class per file, the file named after the class (`KafkaRecordsProducer` in `producers/kafka_records_producer.py`). `__init__.py` files are empty: import from the full module path.
+One package, `src/activity_metrics/`, split by application. Each application keeps `main.py` (wiring and process start, `cli()`, nothing else) at its root, and everything else lives in a directory named for its role, one class per file, the file named after the class (`KafkaRecordsProducer` in `producers/kafka_records_producer.py`). `__init__.py` files are empty: import from the full module path.
 
 ```
-src/activityreporter/
+src/activity_metrics/
   shared/              code used by more than one application
     models/              Metric, Machine, Evaluation, MetricObservation, MetricsResponse
     settings/            KafkaSettings, ClickHouseSettings, ClickHouseSinkSettings, CollectorSettings, AgentSettings
@@ -39,7 +39,7 @@ src/activityreporter/
     consumers/           KafkaRecordsConsumer
     repositories/        ClickHouseRepository
     sinks/           ClickHouseSinkBase, ClickHouseMetricsSink, ClickHouseEvaluationsSink, ClickHouseMachinesSink
-tests/                 mirrors src/activityreporter/; shared builders in tests/support/
+tests/                 mirrors src/activity_metrics/; shared builders in tests/support/
 ```
 
 ## Running
@@ -124,7 +124,7 @@ Each round GETs every agent's `/v1/metrics`, then sleeps `COLLECTOR_SCRAPE_INTER
 
 A non-2xx response or a transport error is logged and skipped. One bad agent does not cancel the other scrapes in that round.
 
-Both responses, `/v1/metrics` and `/v1/machine`, are validated in one place, `Collector._receive`: the body is parsed with `model_validate_json`, so invalid JSON and a wrong shape fail the same way. An invalid response is logged, counted in `activityreporter_collector_invalid_responses_total{kind="metrics"|"machine"}`, and published as received to the dead letter topic of the topic it was meant for, `raw_metrics_dlq` or `machines_dlq`, keyed by the agent URL:
+Both responses, `/v1/metrics` and `/v1/machine`, are validated in one place, `Collector._receive`: the body is parsed with `model_validate_json`, so invalid JSON and a wrong shape fail the same way. An invalid response is logged, counted in `activity_metrics_collector_invalid_responses_total{kind="metrics"|"machine"}`, and published as received to the dead letter topic of the topic it was meant for, `raw_metrics_dlq` or `machines_dlq`, keyed by the agent URL:
 
 ```json
 {"url": "http://192.168.1.20:8080/v1/metrics", "error": "1 validation error for MetricsResponse ...", "body": "<the response body>"}
@@ -317,4 +317,4 @@ A replay moves each series to end now, and the series span about a month. Set th
 
 ## Tests
 
-Tests mirror the package directories (`tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/clickhouse_writer`) and import `activityreporter.*`. `make test` runs `uv run pytest`. `make mutate` mutation-tests the detectors; the configuration and the `also_copy` trap are in [docs/operations.md](docs/operations.md).
+Tests mirror the package directories (`tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/clickhouse_writer`) and import `activity_metrics.*`. `make test` runs `uv run pytest`. `make mutate` mutation-tests the detectors; the configuration and the `also_copy` trap are in [docs/operations.md](docs/operations.md).

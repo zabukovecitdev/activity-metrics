@@ -1,7 +1,7 @@
 # Settings every service built from the root Dockerfile shares.
 x-app: &app
   build: .
-  image: activityreporter:latest
+  image: activity-metrics:latest
   restart: unless-stopped
 
 # Topic names, the same for whoever produces or consumes them.
@@ -133,13 +133,13 @@ services:
   jobmanager:
     build:
       context: ./docker/flink
-    image: activityreporter-flink:1.19.1
+    image: activity-metrics-flink:1.19.1
     container_name: flink-jobmanager
     restart: unless-stopped
     command:
       - standalone-job
       - -pym
-      - activityreporter.anomaly_detector.main
+      - activity_metrics.anomaly_detector.main
       - -pyfs
       - /opt/flink/src
     ports:
@@ -166,7 +166,7 @@ services:
   taskmanager:
     build:
       context: ./docker/flink
-    image: activityreporter-flink:1.19.1
+    image: activity-metrics-flink:1.19.1
     container_name: flink-taskmanager
     restart: unless-stopped
     command: taskmanager

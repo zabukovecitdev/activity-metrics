@@ -7,12 +7,12 @@ import machineid
 from kafka.errors import KafkaError
 from prometheus_client import REGISTRY
 
-from activityreporter.agent.main import app
-from activityreporter.collector.clients.agent_urls import AgentUrls
-from activityreporter.collector.clients.http_agent_client import HttpAgentClient
-from activityreporter.collector.producers.kafka_records_producer import KafkaRecordsProducer
-from activityreporter.collector.services.collector import Collector
-from activityreporter.shared.settings.collector_settings import CollectorSettings
+from activity_metrics.agent.main import app
+from activity_metrics.collector.clients.agent_urls import AgentUrls
+from activity_metrics.collector.clients.http_agent_client import HttpAgentClient
+from activity_metrics.collector.producers.kafka_records_producer import KafkaRecordsProducer
+from activity_metrics.collector.services.collector import Collector
+from activity_metrics.shared.settings.collector_settings import CollectorSettings
 
 ENDPOINT = "http://agent:8080/v1/metrics"
 
@@ -71,7 +71,7 @@ async def test_malformed_response_is_skipped():
 
 
 async def test_metric_keeps_the_timestamp_it_was_sampled_at():
-    with patch("activityreporter.agent.services.metrics_service.time.time", return_value=123.456):
+    with patch("activity_metrics.agent.services.metrics_service.time.time", return_value=123.456):
         published = await collect_with_transport(httpx.ASGITransport(app=app))
 
     assert {m.timestamp for m in published} == {123.456}
@@ -98,7 +98,7 @@ async def test_machine_info_is_refreshed_only_after_the_interval():
     clock = [1000.0]
     async with HttpAgentClient(httpx.AsyncClient(transport=httpx.ASGITransport(app=app))) as agent:
         collector = build_collector(agent, machines=machines)
-        with patch("activityreporter.collector.services.collector.time.monotonic", side_effect=lambda: clock[0]):
+        with patch("activity_metrics.collector.services.collector.time.monotonic", side_effect=lambda: clock[0]):
             await collector.collect()
             clock[0] += CollectorSettings().machine_refresh_seconds - 1
             await collector.collect()
@@ -136,7 +136,7 @@ async def test_agent_without_machine_endpoint_still_has_its_metrics_collected():
 
 
 def invalid_count(kind: str) -> float:
-    return REGISTRY.get_sample_value("activityreporter_collector_invalid_responses_total", {"kind": kind}) or 0.0
+    return REGISTRY.get_sample_value("activity_metrics_collector_invalid_responses_total", {"kind": kind}) or 0.0
 
 
 async def collect_from(handler) -> tuple[RecordingProducer, RecordingProducer]:

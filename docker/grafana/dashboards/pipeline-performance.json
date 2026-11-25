@@ -239,7 +239,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "sum(increase(activityreporter_collector_messages_published_total{topic=~\".*_dlq\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(activity_metrics_collector_messages_published_total{topic=~\".*_dlq\"}[$__range])) or vector(0)",
           "legendFormat": "dead-lettered",
           "instant": true
         },
@@ -249,7 +249,7 @@
             "uid": "prometheus"
           },
           "refId": "B",
-          "expr": "sum(increase(activityreporter_writer_malformed_records_total[$__range])) or vector(0)",
+          "expr": "sum(increase(activity_metrics_writer_malformed_records_total[$__range])) or vector(0)",
           "legendFormat": "malformed",
           "instant": true
         },
@@ -259,7 +259,7 @@
             "uid": "prometheus"
           },
           "refId": "C",
-          "expr": "sum(increase(activityreporter_collector_scrapes_total{outcome!=\"ok\"}[$__range])) or vector(0)",
+          "expr": "sum(increase(activity_metrics_collector_scrapes_total{outcome!=\"ok\"}[$__range])) or vector(0)",
           "legendFormat": "failed scrapes",
           "instant": true
         }
@@ -325,7 +325,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "sum by (topic)(rate(activityreporter_collector_messages_published_total{topic!~\".*_dlq\"}[$__rate_interval]))",
+          "expr": "sum by (topic)(rate(activity_metrics_collector_messages_published_total{topic!~\".*_dlq\"}[$__rate_interval]))",
           "legendFormat": "{{topic}}"
         }
       ],
@@ -409,7 +409,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "sum by (table)(rate(activityreporter_writer_rows_written_total[$__rate_interval]))",
+          "expr": "sum by (table)(rate(activity_metrics_writer_rows_written_total[$__rate_interval]))",
           "legendFormat": "{{table}}"
         }
       ],
@@ -632,7 +632,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le, table)(rate(activityreporter_writer_write_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le, table)(rate(activity_metrics_writer_write_seconds_bucket[$__rate_interval])))",
           "legendFormat": "p50 {{table}}"
         },
         {
@@ -641,7 +641,7 @@
             "uid": "prometheus"
           },
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le, table)(rate(activityreporter_writer_write_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, table)(rate(activity_metrics_writer_write_seconds_bucket[$__rate_interval])))",
           "legendFormat": "p95 {{table}}"
         }
       ],

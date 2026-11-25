@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic_core import to_jsonable_python
 
-from activityreporter.clickhouse_writer.sinks.clickhouse_machines_sink import ClickHouseMachinesSink
+from activity_metrics.clickhouse_writer.sinks.clickhouse_machines_sink import ClickHouseMachinesSink
 from tests.support.builders import build_machine, parse_record, row_of
 
 

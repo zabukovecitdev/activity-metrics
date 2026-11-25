@@ -1,6 +1,6 @@
 import pytest
 
-from activityreporter.anomaly_detector.algorithms.mad import MAD
+from activity_metrics.anomaly_detector.algorithms.mad import MAD
 
 STEADY = [50.0, 52.0, 48.0, 51.0, 49.0] * 6
 

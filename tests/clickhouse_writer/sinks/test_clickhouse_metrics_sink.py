@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from activityreporter.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
+from activity_metrics.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
 from tests.support.builders import METRIC_ID, build_metric, row_of
 
 

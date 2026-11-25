@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "activityreporter"
+name = "activity-metrics"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

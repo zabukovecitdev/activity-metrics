@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from activityreporter.collector.parsers.metrics_parser import MetricsParser
+from activity_metrics.collector.parsers.metrics_parser import MetricsParser
 
 
 METRICS_PAYLOAD = {

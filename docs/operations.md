@@ -20,12 +20,12 @@ Process commands from the `Makefile`:
 
 | Target | Command | Entry module in `pyproject.toml` |
 | --- | --- | --- |
-| `agent` | `uv run agent` | `activityreporter.agent.main:cli` |
-| `collector` | `uv run collector` | `activityreporter.collector.main:cli` |
-| `clickhouse-writer` | `uv run clickhouse-writer` | `activityreporter.clickhouse_writer.main:cli` |
+| `agent` | `uv run agent` | `activity_metrics.agent.main:cli` |
+| `collector` | `uv run collector` | `activity_metrics.collector.main:cli` |
+| `clickhouse-writer` | `uv run clickhouse-writer` | `activity_metrics.clickhouse_writer.main:cli` |
 | `test` | `uv run pytest` | |
 | `mutate` | `uv run mutmut run` | dev dependency; see [Mutation testing](#mutation-testing) |
-| `anomaly-detector` | `flink/.venv/bin/python -m activityreporter.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
+| `anomaly-detector` | `flink/.venv/bin/python -m activity_metrics.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
 `anomaly-detector` creates `flink/.venv` with Python 3.11 and `apache-flink==1.19.1`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
 
@@ -104,7 +104,7 @@ make migrate
 
 ## Flink job
 
-The `jobmanager` service runs Flink in [Application Mode](https://nightlies.apache.org/flink/flink-docs-release-1.19/docs/deployment/overview/#application-mode): its command is `standalone-job -pym activityreporter.anomaly_detector.main -pyfs /opt/flink/src`, so the jobmanager starts the job's Python `main` itself, with `./src` mounted read-only at `/opt/flink/src`. `-pyfs` ships those files to the taskmanager with the job, so only the jobmanager mounts them. The Kafka variables are set on the jobmanager, because that is where `main` builds the source and sink.
+The `jobmanager` service runs Flink in [Application Mode](https://nightlies.apache.org/flink/flink-docs-release-1.19/docs/deployment/overview/#application-mode): its command is `standalone-job -pym activity_metrics.anomaly_detector.main -pyfs /opt/flink/src`, so the jobmanager starts the job's Python `main` itself, with `./src` mounted read-only at `/opt/flink/src`. `-pyfs` ships those files to the taskmanager with the job, so only the jobmanager mounts them. The Kafka variables are set on the jobmanager, because that is where `main` builds the source and sink.
 
 The cluster exists for this one job. There is nothing to submit or cancel:
 
@@ -133,19 +133,21 @@ Task slots on the taskmanager: 2, matching the job parallelism.
 
 ## Packaging
 
-The wheel contains `src/activityreporter`. Console scripts:
+The wheel contains `src/activity_metrics`. Console scripts:
 
 | Script | Entry |
 | --- | --- |
-| `agent` | `activityreporter.agent.main:cli` |
-| `collector` | `activityreporter.collector.main:cli` |
-| `clickhouse-writer` | `activityreporter.clickhouse_writer.main:cli` |
+| `agent` | `activity_metrics.agent.main:cli` |
+| `collector` | `activity_metrics.collector.main:cli` |
+| `clickhouse-writer` | `activity_metrics.clickhouse_writer.main:cli` |
 
-The root `Dockerfile` installs that wheel into one image, `activityreporter:latest`. Compose runs it for `agent` (`dev` profile only), `collector`, and `clickhouse-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead.
+The root `Dockerfile` installs that wheel into one image, `activity-metrics:latest`. Compose runs it for `agent` (`dev` profile only), `collector`, and `clickhouse-writer`, each with its console script as `command`. The anomaly detector runs in the Flink image instead, `activity-metrics-flink:1.19.1`.
+
+Upgrade note: the project used to be called `activityreporter`. The Prometheus metrics are now `activity_metrics_*` instead of `activityreporter_*`, and the images are `activity-metrics` and `activity-metrics-flink` instead of `activityreporter` and `activityreporter-flink`. Prometheus keeps the old series under their old names until they expire, and `docker image rm` removes the old images. The ClickHouse database and tables keep their names.
 
 ## Mutation testing
 
-`make mutate` runs `uv run mutmut run`. `[tool.mutmut]` in `pyproject.toml` mutates `src/activityreporter/anomaly_detector/algorithms/` and `services/`, then runs `tests/anomaly_detector/`. mutmut copies only the paths it mutates, so `also_copy` lists the rest of what those tests import: the package and detector `__init__.py` files, `anomaly_detector/models`, `shared`, and `tests`. A new import from anywhere else fails the mutant run with `ImportError` until that path is added there.
+`make mutate` runs `uv run mutmut run`. `[tool.mutmut]` in `pyproject.toml` mutates `src/activity_metrics/anomaly_detector/algorithms/` and `services/`, then runs `tests/anomaly_detector/`. mutmut copies only the paths it mutates, so `also_copy` lists the rest of what those tests import: the package and detector `__init__.py` files, `anomaly_detector/models`, `shared`, and `tests`. A new import from anywhere else fails the mutant run with `ImportError` until that path is added there.
 
 `mutmut` is in the `dev` dependency group. The app image installs with `--no-default-groups`, so run this on the host after `uv sync`. The `mutants/` directory is gitignored. `pytest` is configured with `--ignore=mutants`, so `make test` does not collect a leftover tree. `uv run mutmut results` lists what survived; `uv run mutmut show <id>` prints one mutant. The Flink process function is outside `source_paths` because it imports PyFlink, which is not installed in this environment.
 

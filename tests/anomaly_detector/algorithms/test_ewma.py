@@ -1,6 +1,6 @@
 import pytest
 
-from activityreporter.anomaly_detector.algorithms.ewma import EWMA
+from activity_metrics.anomaly_detector.algorithms.ewma import EWMA
 
 STEADY = [50.0, 52.0, 48.0, 51.0, 49.0] * 6
 STEADY_MEMORY = [1_000_000_000.0, 1_000_004_096.0, 999_995_904.0] * 10

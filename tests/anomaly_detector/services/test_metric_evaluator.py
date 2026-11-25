@@ -1,8 +1,8 @@
 import pytest
 
-from activityreporter.anomaly_detector.algorithms.mad import MAD
-from activityreporter.anomaly_detector.services.metric_evaluator import MetricEvaluator
-from activityreporter.shared.models.evaluation import Evaluation
+from activity_metrics.anomaly_detector.algorithms.mad import MAD
+from activity_metrics.anomaly_detector.services.metric_evaluator import MetricEvaluator
+from activity_metrics.shared.models.evaluation import Evaluation
 
 
 def build_metric(value: float, **overrides) -> dict:
