@@ -4,13 +4,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic_core import to_jsonable_python
 
-from activityreporter.clickhouse_writer.main import SINKS
-from activityreporter.clickhouse_writer.sinks.clickhouse_evaluations_sink import ClickHouseEvaluationsSink
-from activityreporter.clickhouse_writer.sinks.clickhouse_machines_sink import ClickHouseMachinesSink
-from activityreporter.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
-from activityreporter.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
-from activityreporter.shared.settings.clickhouse_sink_settings import ClickHouseSinkSettings
-from activityreporter.shared.settings.kafka_settings import KafkaSettings
+from activity_metrics.clickhouse_writer.main import SINKS
+from activity_metrics.clickhouse_writer.sinks.clickhouse_evaluations_sink import ClickHouseEvaluationsSink
+from activity_metrics.clickhouse_writer.sinks.clickhouse_machines_sink import ClickHouseMachinesSink
+from activity_metrics.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
+from activity_metrics.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
+from activity_metrics.shared.settings.clickhouse_sink_settings import ClickHouseSinkSettings
+from activity_metrics.shared.settings.kafka_settings import KafkaSettings
 from tests.support.builders import build_evaluation, build_machine, build_metric, kafka_record, parse_record
 
 
@@ -109,7 +109,7 @@ def test_run_flushes_on_timeout_before_batch_is_full():
     sink, records, store = build_sink(batch_size=100, batch_timeout_seconds=5.0)
     records.poll.side_effect = [[machine_record("h1")], LoopBreak]
 
-    with patch("activityreporter.clickhouse_writer.sinks.clickhouse_sink_base.time.monotonic", side_effect=[0.0, 10.0, 10.0]), \
+    with patch("activity_metrics.clickhouse_writer.sinks.clickhouse_sink_base.time.monotonic", side_effect=[0.0, 10.0, 10.0]), \
          pytest.raises(LoopBreak):
         sink.run()
 

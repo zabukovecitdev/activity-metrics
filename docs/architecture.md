@@ -1,6 +1,6 @@
 # Architecture
 
-ActivityReporter collects CPU and memory metrics from my machines, scores every sample for anomalies, and shows both in Grafana. It is also where I learn Kafka, Flink, and ClickHouse, so some parts are bigger than a few home machines need. That is a deliberate choice, noted below where it applies.
+activity-metrics collects CPU and memory metrics from my machines, scores every sample for anomalies, and shows both in Grafana. It is also where I learn Kafka, Flink, and ClickHouse, so some parts are bigger than a few home machines need. That is a deliberate choice, noted below where it applies.
 
 ```
 agent (on each machine)       serves /v1/metrics and /v1/machine

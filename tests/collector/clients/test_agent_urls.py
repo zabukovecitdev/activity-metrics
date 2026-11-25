@@ -1,4 +1,4 @@
-from activityreporter.collector.clients.agent_urls import AgentUrls
+from activity_metrics.collector.clients.agent_urls import AgentUrls
 
 
 def test_metrics_url_is_under_the_agent_url():

@@ -3,14 +3,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from clickhouse_connect.driver.exceptions import OperationalError
 
-from activityreporter.clickhouse_writer.repositories.clickhouse_repository import ClickHouseRepository
-from activityreporter.shared.settings.clickhouse_settings import ClickHouseSettings
+from activity_metrics.clickhouse_writer.repositories.clickhouse_repository import ClickHouseRepository
+from activity_metrics.shared.settings.clickhouse_settings import ClickHouseSettings
 
 COLUMNS = ["a"]
 
 
 def insert_with(client: MagicMock, rows: list, **settings) -> None:
-    with patch("activityreporter.clickhouse_writer.repositories.clickhouse_repository.clickhouse_connect.get_client", return_value=client):
+    with patch("activity_metrics.clickhouse_writer.repositories.clickhouse_repository.clickhouse_connect.get_client", return_value=client):
         repository = ClickHouseRepository(ClickHouseSettings(**settings))
         repository.connect()
         repository.insert_batch("metrics", COLUMNS, rows)
@@ -37,7 +37,7 @@ def test_insert_batch_retries_with_backoff_then_succeeds():
     client = MagicMock()
     client.insert.side_effect = [OperationalError("boom"), None]
 
-    with patch("activityreporter.clickhouse_writer.repositories.clickhouse_repository.time.sleep") as sleep:
+    with patch("activity_metrics.clickhouse_writer.repositories.clickhouse_repository.time.sleep") as sleep:
         insert_with(client, [["row"]], max_retries=3, backoff_base_seconds=1.0)
 
     assert client.insert.call_count == 2
@@ -48,7 +48,7 @@ def test_insert_batch_raises_after_exhausting_retries():
     client = MagicMock()
     client.insert.side_effect = OperationalError("boom")
 
-    with patch("activityreporter.clickhouse_writer.repositories.clickhouse_repository.time.sleep") as sleep, \
+    with patch("activity_metrics.clickhouse_writer.repositories.clickhouse_repository.time.sleep") as sleep, \
          pytest.raises(OperationalError):
         insert_with(client, [["row"]], max_retries=3, backoff_base_seconds=0.5)
 

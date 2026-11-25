@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic_core import to_jsonable_python
 
-from activityreporter.shared.models.machine import Machine
+from activity_metrics.shared.models.machine import Machine
 from tests.support.builders import build_machine
 
 
