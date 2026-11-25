@@ -17,6 +17,12 @@ class ClickHouseMetricsSink(ClickHouseSinkBase):
 
     def to_row(self, record: Metric) -> list:
         return [
-            RowValues.metric_uuid(record.metric_id), record.machine_id, record.name, RowValues.utc(record.timestamp), record.type,
-            record.unit, record.value, record.attributes or {},
+            RowValues.metric_uuid(record.metric_id),
+            record.machine_id,
+            record.name,
+            RowValues.utc(record.timestamp),
+            record.type,
+            record.unit,
+            record.value,
+            record.attributes or {},
         ]

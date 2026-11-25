@@ -11,6 +11,7 @@ class Evaluation(BaseModel):
     metrics table, which holds its value. `lower` is None for an algorithm
     without a lower band.
     """
+
     metric_id: str
     machine_id: str = Field(min_length=1)
     metric_name: str = Field(min_length=1)

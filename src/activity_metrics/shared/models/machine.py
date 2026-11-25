@@ -9,6 +9,7 @@ class Machine(BaseModel):
     seconds of when the agent described the machine. Unknown fields are
     ignored, so a producer may add one before every consumer knows it.
     """
+
     machine_id: str = Field(min_length=1)
     hostname: str = Field(min_length=1)
     os: str = Field(min_length=1)

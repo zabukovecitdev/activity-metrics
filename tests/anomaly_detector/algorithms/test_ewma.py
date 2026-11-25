@@ -27,7 +27,7 @@ def test_does_not_flag_a_drop():
 
 def test_raises_until_warmed_up():
     with pytest.raises(ValueError):
-        EWMA().evaluate(STEADY[:EWMA.min_points - 1])
+        EWMA().evaluate(STEADY[: EWMA.min_points - 1])
 
 
 def test_default_floor_flags_a_tiny_rise_in_bytes():

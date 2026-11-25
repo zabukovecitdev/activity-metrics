@@ -35,9 +35,9 @@ def main() -> None:
     env.get_checkpoint_config().set_checkpoint_timeout(60000)
 
     raw_metrics = env.from_source(KafkaMetricsSource.build(kafka), EventTimeWatermarks.build(), "Kafka Source")
-    evaluations = raw_metrics \
-        .key_by(lambda m: (m["machine_id"], m["name"]), key_type=Types.TUPLE([Types.STRING(), Types.STRING()])) \
-        .process(AnomalyDetectionFunction(), output_type=EVALUATION_TYPE_INFO)
+    evaluations = raw_metrics.key_by(
+        lambda m: (m["machine_id"], m["name"]), key_type=Types.TUPLE([Types.STRING(), Types.STRING()])
+    ).process(AnomalyDetectionFunction(), output_type=EVALUATION_TYPE_INFO)
 
     evaluations.sink_to(KafkaEvaluationsSink.build(kafka))
 

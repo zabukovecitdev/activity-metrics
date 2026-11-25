@@ -60,6 +60,11 @@ source_paths = ["src/activity_metrics/anomaly_detector/algorithms/", "src/activi
 pytest_add_cli_args_test_selection = ["tests/anomaly_detector/"]
 also_copy = ["src/activity_metrics/__init__.py", "src/activity_metrics/anomaly_detector/__init__.py", "src/activity_metrics/anomaly_detector/models", "src/activity_metrics/shared", "tests"]
 
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+extend-exclude = ["mutants"]
+
 # pyflink only exists in the Flink image (its pemja dependency needs a JDK and doesn't build here).
 [tool.pyright]
 executionEnvironments = [

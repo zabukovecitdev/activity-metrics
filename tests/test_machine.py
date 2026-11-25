@@ -8,7 +8,8 @@ from tests.support.builders import build_machine
 
 
 @pytest.mark.parametrize(
-    "overrides", [{"machine_id": ""}, {"cores": -1}, {"last_boot": "2026-10-01T06:30:00"}, {"hostname": None}],
+    "overrides",
+    [{"machine_id": ""}, {"cores": -1}, {"last_boot": "2026-10-01T06:30:00"}, {"hostname": None}],
 )
 def test_malformed_machine_raises_a_value_error(overrides):
     with pytest.raises(ValueError):

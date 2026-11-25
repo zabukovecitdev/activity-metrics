@@ -54,15 +54,17 @@ class MetricEvaluator:
             result = detector.evaluate(window)
             if observe:
                 observe(detector.name, time.perf_counter() - started)
-            evaluations.append(Evaluation(
-                metric_id=metric["metric_id"],
-                machine_id=metric["machine_id"],
-                metric_name=metric["name"],
-                timestamp=metric["timestamp"],
-                algorithm=detector.name,
-                baseline=result.baseline,
-                lower=result.lower,
-                upper=result.upper,
-                is_anomaly=result.is_anomaly,
-            ))
+            evaluations.append(
+                Evaluation(
+                    metric_id=metric["metric_id"],
+                    machine_id=metric["machine_id"],
+                    metric_name=metric["name"],
+                    timestamp=metric["timestamp"],
+                    algorithm=detector.name,
+                    baseline=result.baseline,
+                    lower=result.lower,
+                    upper=result.upper,
+                    is_anomaly=result.is_anomaly,
+                )
+            )
         return evaluations

@@ -10,7 +10,10 @@ COLUMNS = ["a"]
 
 
 def insert_with(client: MagicMock, rows: list, **settings) -> None:
-    with patch("activity_metrics.clickhouse_writer.repositories.clickhouse_repository.clickhouse_connect.get_client", return_value=client):
+    with patch(
+        "activity_metrics.clickhouse_writer.repositories.clickhouse_repository.clickhouse_connect.get_client",
+        return_value=client,
+    ):
         repository = ClickHouseRepository(ClickHouseSettings(**settings))
         repository.connect()
         repository.insert_batch("metrics", COLUMNS, rows)
@@ -48,8 +51,10 @@ def test_insert_batch_raises_after_exhausting_retries():
     client = MagicMock()
     client.insert.side_effect = OperationalError("boom")
 
-    with patch("activity_metrics.clickhouse_writer.repositories.clickhouse_repository.time.sleep") as sleep, \
-         pytest.raises(OperationalError):
+    with (
+        patch("activity_metrics.clickhouse_writer.repositories.clickhouse_repository.time.sleep") as sleep,
+        pytest.raises(OperationalError),
+    ):
         insert_with(client, [["row"]], max_retries=3, backoff_base_seconds=0.5)
 
     assert client.insert.call_count == 3
