@@ -31,11 +31,14 @@ jobs:
 
       - name: Start the stack
         run: docker compose up -d --build
-      # The migrate service applies the migrations on start. Wait for it, so `make migrate` does not race it.
-      - name: Apply the migrations
+      # `up` already ran the migrate service: clickhouse-writer starts only after it completed successfully.
+      - name: Check the migrations
         run: |
-          timeout 300 docker compose wait migrate
-          make migrate
+          docker compose logs --no-color migrate
+          test "$(docker inspect --format '{{.State.ExitCode}}' migrate)" = 0
+      # A second run on the migrated database must succeed with no change.
+      - name: Run make migrate again
+        run: make migrate
 
       - name: Smoke test
         run: WAIT=300 make smoke
