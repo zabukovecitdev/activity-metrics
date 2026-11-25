@@ -1,6 +1,7 @@
 # activity-metrics
 
 [![CI](https://github.com/zabukovecitdev/activity-metrics/actions/workflows/ci.yml/badge.svg)](https://github.com/zabukovecitdev/activity-metrics/actions/workflows/ci.yml)
+[![Smoke test](https://github.com/zabukovecitdev/activity-metrics/actions/workflows/smoke.yml/badge.svg)](https://github.com/zabukovecitdev/activity-metrics/actions/workflows/smoke.yml)
 
 activity-metrics collects CPU and memory metrics from a few machines, scores every sample for anomalies with two
 detectors (MAD and EWMA), and charts the samples, the detectors' baselines and bands, and the anomalies in Grafana. It
@@ -42,7 +43,7 @@ default 1-second gap.
 | `make agent`              | runs the agent locally                                                   |
 | `make collector`          | runs the collector locally                                               |
 | `make clickhouse-writer`  | runs the ClickHouse writers locally                                      |
-| `make anomaly-detector`   | runs the Flink job locally (creates `flink/.venv` with Python 3.11)      |
+| `make anomaly-detector`   | runs the Flink job locally (creates `flink/.venv` with Python 3.10)      |
 | `make venv`               | opens a subshell with the project's virtual environment active          |
 | `make test`               | runs the tests                                                           |
 | `make lint`               | runs `ruff check` and `ruff format --check`                              |

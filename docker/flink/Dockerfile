@@ -7,8 +7,9 @@ RUN apt-get update && \
     ln -s /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
 
-# Keep the PyFlink version in lockstep with the base Flink image version above.
-RUN pip3 install --no-cache-dir apache-flink==1.19.1 pydantic-settings
+# requirements.txt pins PyFlink to the base image's Flink version and the pydantic packages to uv.lock.
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 # Kafka SQL/Table & DataStream connector, so PyFlink jobs can read/write Kafka
 # topics without each job having to ship its own jar.

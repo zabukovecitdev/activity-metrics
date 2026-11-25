@@ -1,0 +1,51 @@
+name: Smoke test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+
+      # The default entry in collector.toml, http://host.docker.internal:8080, is this agent. The collector's
+      # extra_hosts entry maps that name to the host gateway on Docker Engine.
+      - name: Start an agent on the runner
+        run: nohup uv run agent > agent.log 2>&1 &
+      - name: Wait for the agent
+        run: |
+          for _ in $(seq 60); do
+            curl -fsS http://localhost:8080/v1/health && exit 0
+            sleep 1
+          done
+          cat agent.log
+          exit 1
+
+      - name: Start the stack
+        run: docker compose up -d --build
+      # `up` already ran the migrate service: clickhouse-writer starts only after it completed successfully.
+      - name: Check the migrations
+        run: |
+          docker compose logs --no-color migrate
+          test "$(docker inspect --format '{{.State.ExitCode}}' migrate)" = 0
+      # A second run on the migrated database must succeed with no change.
+      - name: Run make migrate again
+        run: make migrate
+
+      - name: Smoke test
+        run: WAIT=300 make smoke
+
+      - name: Show the stack
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail=200
+          cat agent.log

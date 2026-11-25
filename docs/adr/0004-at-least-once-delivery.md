@@ -39,4 +39,4 @@ Exactly-once end to end would need a transactional Kafka sink (`EXACTLY_ONCE` wi
 - A new consumer group starts at `earliest` and can rewrite what Kafka still holds. That is safe for the same reason.
 - The collector is at-most-once for a failed publish. Samples lost there are not retried.
 - One-second checkpoints bound how much a failure repeats. They also cost a checkpoint every second for a job this small.
-  The interval was not tuned.
+  The interval was not tuned; see [ADR 0014](0014-one-second-checkpoints.md).

@@ -27,7 +27,7 @@ Process commands from the `Makefile`:
 | `mutate` | `uv run mutmut run` | dev dependency; see [Mutation testing](#mutation-testing) |
 | `anomaly-detector` | `flink/.venv/bin/python -m activity_metrics.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
-`anomaly-detector` creates `flink/.venv` with Python 3.11 and `apache-flink==1.19.1`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
+`anomaly-detector` creates `flink/.venv` with Python 3.10, the version in the Flink image, installs `docker/flink/requirements.txt`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
 
 ## Environment
 
@@ -58,7 +58,7 @@ An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already ha
 
 `docker/flink/Dockerfile` fetches the same jar (`3.2.0-1.19` on Flink `1.19.1`) and runs `chmod 644` on it. `ADD` from a URL otherwise leaves the file mode `600`, owned by root, and the `flink` user (uid 9999) cannot read it. The job then fails at submission with the connector classes unresolved.
 
-The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The job calls `env.set_python_executable(sys.executable)` so keyed Python operators use that interpreter. A worker started as plain `python` on `PATH` dies with `ModuleNotFoundError: pyflink`.
+The image installs the packages in `docker/flink/requirements.txt`: PyFlink `apache-flink==1.19.1`, matching the base image, and `pydantic-settings`, `pydantic` and `pydantic-core` at their versions in `uv.lock`. `make anomaly-detector` installs the same file into `flink/.venv`. The job calls `env.set_python_executable(sys.executable)` so keyed Python operators use that interpreter. A worker started as plain `python` on `PATH` dies with `ModuleNotFoundError: pyflink`.
 
 ### ClickHouse writer
 
@@ -156,6 +156,8 @@ Upgrade note: the project used to be called `activityreporter`. The Prometheus m
 `make smoke` runs `scripts/smoke-test.sh` against the running stack. It checks that the containers are up and `migrate` exited 0, that `raw_metrics`, `machines`, and `evaluations` have messages, that the Flink job `Anomaly Detection` is `RUNNING` (`/jobs/overview` on port 8081), that `metrics`, `machines`, and `evaluations` have rows from the last 10 minutes and every evaluation's `metric_id` is in `metrics`, and that Grafana, its ClickHouse datasource, and the dashboard respond. Each failure prints a hint.
 
 It needs an agent the collector can reach (`make agent` on the host) and, for the evaluation checks, a few minutes of samples: `WAIT=300 make smoke` retries failed checks for up to 300 seconds. Grafana is called as `admin:admin`; set `GRAFANA_AUTH` if you changed it.
+
+CI runs the same check on every pull request and every push to `master`, in `.github/workflows/smoke.yml`. The `smoke` job starts an agent on the runner with `uv run agent`, starts the stack with `docker compose up -d --build`, waits for the `migrate` container, runs `make migrate`, and then `WAIT=300 make smoke`. On failure it prints `docker compose ps -a`, the last 200 log lines of every service, and the agent's log.
 
 ## Troubleshooting
 
