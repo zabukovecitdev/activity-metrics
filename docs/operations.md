@@ -1,6 +1,6 @@
 # Operations
 
-Setup, configuration, and failure modes for the agent, collector, Flink job, ClickHouse writers, and migrations. Behavior below is what the current source and Compose file do. See [README](../README.md) for the data model and API.
+Setup, configuration, and failure modes for the agent, collector, Flink job, ClickHouse writers, and migrations. Behavior below is what the current source and Compose file do. See [reference](reference.md) for the data model and API.
 
 ## Local stack
 
@@ -43,7 +43,7 @@ Defaults are the `from_env` / `os.environ.get` fallbacks. Compose overrides are 
 | `COLLECTOR_SCRAPE_INTERVAL_SECONDS` | `1` | unset |
 | `COLLECTOR_MACHINE_REFRESH_SECONDS` | `300` | unset |
 
-`CollectorSettings` (`shared/settings/collector_settings.py`) reads those two with `env_prefix=COLLECTOR_` and `gt=0`. The scrape value is the sleep after a round finishes. The old names `SCRAPE_INTERVAL_SECONDS` and `MACHINE_REFRESH_SECONDS` are ignored. The agents to scrape are not an environment variable but `collector.toml`; see [Local stack](#local-stack) and the README.
+`CollectorSettings` (`shared/settings/collector_settings.py`) reads those two with `env_prefix=COLLECTOR_` and `gt=0`. The scrape value is the sleep after a round finishes. The old names `SCRAPE_INTERVAL_SECONDS` and `MACHINE_REFRESH_SECONDS` are ignored. The agents to scrape are not an environment variable but `collector.toml`; see [Local stack](#local-stack) and the [reference](reference.md#agents).
 
 ### Anomaly detector
 

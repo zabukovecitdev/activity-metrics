@@ -1,0 +1,296 @@
+# Reference
+
+What each part of activity-metrics does: the package layout, the HTTP API, the Kafka records, the detectors, the
+ClickHouse tables and the dashboards. Setup, configuration and troubleshooting are in [operations](operations.md). The
+reasons behind the design are in the [architecture decision records](adr/README.md).
+
+## Project layout
+
+One package, `src/activity_metrics/`, split by application. Each application keeps `main.py` (wiring and process start, `cli()`, nothing else) at its root, and everything else lives in a directory named for its role, one class per file, the file named after the class (`KafkaRecordsProducer` in `producers/kafka_records_producer.py`). `__init__.py` files are empty: import from the full module path.
+
+```
+src/activity_metrics/
+  shared/              code used by more than one application
+    models/              Metric, Machine, Evaluation, MetricObservation, MetricsResponse
+    settings/            KafkaSettings, ClickHouseSettings, ClickHouseSinkSettings, CollectorSettings, AgentSettings
+    observability/       Prometheus counters
+  agent/               runs on every machine, serves /v1/metrics and /v1/machine
+    api/                 FastAPI routes
+    services/            MetricsService: reads the host
+  collector/           scrapes agents, publishes to raw_metrics and machines
+    clients/             HttpAgentClient, AgentUrls
+    config/              AgentsFileLoader: reads collector.toml
+    parsers/             MetricsParser
+    producers/           KafkaRecordsProducer
+    services/            Collector
+  anomaly_detector/    PyFlink job, raw_metrics → evaluations (every scored sample, once per algorithm)
+    algorithms/          Detector, MAD, EWMA
+    models/              Result
+    services/            MetricEvaluator (no PyFlink)
+    flink/               everything that imports PyFlink
+      processors/          AnomalyDetectionFunction
+      sources/             KafkaMetricsSource
+      sinks/               KafkaEvaluationsSink
+      type_info/           RowTypeInfo, METRIC_TYPE_INFO, EVALUATION_TYPE_INFO
+      watermarks/          EventTimeWatermarks, EpochSecondsTimestampAssigner
+  clickhouse_writer/   one sink per topic, Kafka topic → ClickHouse table
+    consumers/           KafkaRecordsConsumer
+    repositories/        ClickHouseRepository
+    sinks/           ClickHouseSinkBase, ClickHouseMetricsSink, ClickHouseEvaluationsSink, ClickHouseMachinesSink
+tests/                 mirrors src/activity_metrics/; shared builders in tests/support/
+```
+
+## HTTP API
+
+Interactive docs: `GET /` redirects to `/docs`.
+
+| Method | Path | Body |
+| --- | --- | --- |
+| `GET` | `/v1/health` | `{"status": "ok"}` |
+| `GET` | `/v1/machine` | `Machine` from `shared/models/machine.py` |
+| `GET` | `/v1/metrics` | One snapshot of current gauges |
+
+`/v1/machine` fields: `machine_id`, `hostname`, `os` (lowercased `platform.system()`), `os_version`, `architecture`, `cores` (`0` when `psutil.cpu_count()` can't tell), `total_memory` and `total_disk` (bytes, disk of the root filesystem), `last_boot` (UTC ISO-8601), `last_seen_at` (epoch seconds when the agent answered). `machine_id` comes from `machineid.id()`. Only fields that rarely change are here; uptime is the `system.uptime` metric.
+
+`/v1/metrics` response:
+
+```json
+{
+  "machine_id": "machine-id",
+  "timestamp": "2026-09-28T10:16:00+00:00",
+  "metrics": [
+    {
+      "name": "system.cpu.utilization",
+      "type": "gauge",
+      "unit": "%",
+      "value": 12.5,
+      "attributes": null
+    }
+  ]
+}
+```
+
+`timestamp` is the sample time from `service.collect_metrics()` (`time.time()`), formatted as UTC ISO-8601.
+
+| Name | Unit | When present |
+| --- | --- | --- |
+| `system.cpu.utilization` | `%` | Always. `psutil.cpu_percent(interval=0.1)`, so the handler blocks about 100 ms. |
+| `system.memory.usage` | `By` | Always. Bytes used. |
+| `system.memory.limit` | `By` | Always. Bytes total. |
+| `system.uptime` | `s` | Always. Seconds since `psutil.boot_time()`. |
+
+`attributes` is reserved for extra series dimensions. Current samples leave it unset.
+
+## Agents
+
+The collector scrapes the agents listed in `collector.toml` at the repo root, as base URLs:
+
+```toml
+agents = [
+    "http://host.docker.internal:8080",   # `make agent` on this machine
+    "http://192.168.1.20:8080",           # another machine on the LAN
+]
+```
+
+It adds `/v1/metrics` and `/v1/machine` to each. The file is read once, at startup: after editing it, `docker compose restart collector`. The collector refuses to start, naming the problem, when the file is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs.
+
+## Collector contract
+
+Each round GETs every agent's `/v1/metrics`, then sleeps `COLLECTOR_SCRAPE_INTERVAL_SECONDS` (default 1) before the next round. Compose does not set it. The sleep is a gap after the round, so the cadence is slower than the setting by however long the scrapes took. Connect timeout and read timeout are 2 seconds. The HTTP client allows 200 connections.
+
+A non-2xx response or a transport error is logged and skipped. One bad agent does not cancel the other scrapes in that round.
+
+Both responses, `/v1/metrics` and `/v1/machine`, are validated in one place, `Collector._receive`: the body is parsed with `model_validate_json`, so invalid JSON and a wrong shape fail the same way. An invalid response is logged, counted in `activity_metrics_collector_invalid_responses_total{kind="metrics"|"machine"}`, and published as received to the dead letter topic of the topic it was meant for, `raw_metrics_dlq` or `machines_dlq`, keyed by the agent URL:
+
+```json
+{"url": "http://192.168.1.20:8080/v1/metrics", "error": "1 validation error for MetricsResponse ...", "body": "<the response body>"}
+```
+
+One invalid metric sends the whole response there. A failure to publish to the dead letter topic is logged and the scrape carries on.
+
+Required JSON fields: `machine_id` (string), `timestamp` (ISO-8601), `metrics` (array of objects with `name`, `type`, `unit`, `value`). `attributes` is optional. The response is validated against `MetricsResponse` (`shared/models/metrics_response.py`): `machine_id` must be non-empty and `timestamp` must carry a UTC offset. The shared timestamp is converted to epoch seconds and copied onto every `Metric`. Each `Metric` gets its own `metric_id`, a UUIDv7 string from `uuid.uuid7()`: the sample's identity from here on, in Kafka, in `metrics`, and in its `evaluations`. The agent does not send one.
+
+Each `Metric` is published to Kafka as JSON (`pydantic_core.to_json`), keyed by `machine_id`. Producer settings: `acks=all`, `retries=3`, send timeout 10 seconds. The producer is flushed and closed on the way out of `main`, including on `SIGTERM`, which cancels the main task.
+
+Kafka record shape:
+
+```json
+{
+  "timestamp": 1759054560.0,
+  "name": "system.cpu.utilization",
+  "type": "gauge",
+  "unit": "%",
+  "value": 12.5,
+  "machine_id": "machine-id",
+  "metric_id": "01a0e974-dc94-74df-ae87-e0e6064b18ef",
+  "attributes": null
+}
+```
+
+`timestamp` is epoch seconds, not an ISO-8601 string.
+
+### Machine info
+
+On the first scrape of an endpoint, and then every 300 seconds (`COLLECTOR_MACHINE_REFRESH_SECONDS`), the collector also GETs `/v1/machine` from the same host and port (`machine_url` swaps the metrics path for `/v1/machine`). The `Machine` is published as JSON on `KAFKA_MACHINES_TOPIC` (default `machines`), keyed by `machine_id`, with the same producer settings as metrics. A failed fetch or publish is logged and retried on the next scrape; it never stops that endpoint's metrics. A response missing a field, or with an empty `machine_id`, is logged as `Invalid machine from ...`, counted, and dead-lettered to `machines_dlq` like an invalid metrics response.
+
+## Anomaly detection
+
+`anomaly_detector/main.py` is the PyFlink job `Anomaly Detection`.
+
+- Source topic: `KAFKA_RAW_METRICS_TOPIC` (default `raw_metrics`), consumer group `anomaly-detector`, starting offset `earliest`.
+- Sink topic: `KAFKA_EVALUATIONS_TOPIC` (default `evaluations`). Every scored sample produces one evaluation per detector, anomalous or not, so the baseline and bands can be drawn next to the raw series.
+- Event time is `timestamp * 1000` milliseconds. Out-of-orderness bound is 5 seconds. Kafka record timestamps are not used.
+- Parallelism is 2. The stream is keyed by `(machine_id, name)` so each series keeps its own state. A single-partition source leaves one Kafka source subtask idle; the split applies after `key_by`.
+- State is the last 360 values for that key (`WINDOW_POINTS` in `anomaly_detector/flink/processors/anomaly_detection_function.py`). The list state `recent_values` holds plain doubles. Each record appends its value, and the oldest value drops once 360 are kept. Event time still drives the 5-second watermark. The list keeps a value until newer ones push it out, including across a gap. The value just appended is the one scored, in arrival order. 360 values is one hour at a steady 10-second cadence. The collector's default gap is 1 second, so a live series holds a little over six minutes. A 5-minute series holds 30 hours in the same 360 slots. An hour of that data is 12 values, fewer than `mad` needs, which is why the window is a count.
+
+Scoring rules (`MetricEvaluator` in `anomaly_detector/services/metric_evaluator.py`, called from `AnomalyDetectionFunction.process_element` in `anomaly_detector/flink/processors/`):
+
+- Only the metrics in `MetricEvaluator.DETECTORS`, and names that start with `nab.`, are scored. Every other series is dropped before any state is written. `system.memory.limit` and `system.uptime` barely move or only grow, so every small step would be flagged.
+- A `nab.` name uses `NAB_DETECTORS` (`MAD()` and `EWMA(min_deviation=0.0)`), both floors 0. The check is `str.startswith("nab.")` and it runs before the `DETECTORS` dict, so `nab.art_flatline` and `nab.` are scored and `nab` and `NAB.art_flatline` are not. NAB files span about 0.1 to millions, so one floor in the values' units cannot fit them. Publish those samples on `raw_metrics` under that name; the repo has no separate replay command.
+- Each of the metric's detectors scores the latest value against the window once the window has `min_points` values. Until then that detector emits nothing for the series.
+
+| Metric | `mad` | `ewma` |
+| --- | --- | --- |
+| `system.cpu.utilization` | `min_deviation=10.0` (percentage points) | `min_deviation=10.0` |
+| `system.memory.usage` | `min_relative=0.02` (2% of the median) | `min_relative=0.02` (2% of the average); `min_deviation` is cleared from the class default of 10 |
+| `nab.<file name>` | no floor | no floor (`min_deviation=0.0`; the class default of 10 is cleared) |
+
+Everything outside `anomaly_detector/flink/` and `anomaly_detector/main.py` is free of PyFlink, so its tests run in the regular `uv` environment.
+
+### Detectors
+
+A detector (`Detector` in `anomaly_detector/algorithms/`) has a `name`, `min_points`, and `evaluate(window) -> Result`. `Result` is what the dashboard draws, in the value's units:
+
+| Field | `mad` | `ewma` |
+| --- | --- | --- |
+| `baseline` | window median | exponentially weighted average |
+| `lower` / `upper` | median ∓ `THRESHOLD × scale` | `None` / average + `THRESHOLD × scale` (only rises are flagged) |
+| `is_anomaly` | modified z-score `>= 3.5` | score `> 1.0`. Score is `deviation ÷ scale`, or infinity for a rise when the scale is 0 |
+| `min_points` | 20 | 11 (`EWMA.WARMUP_READINGS + 1`); fewer raises `ValueError` |
+
+The score and threshold behind `is_anomaly` stay inside the detector; only the flag is published. A detector without a band returns `None` for it, which becomes `NULL` in ClickHouse and a gap in Grafana.
+
+To add an algorithm, write a class with that shape and add it to the lists in `MetricEvaluator.DETECTORS`. To score another metric, add its entry there. Names that start with `nab.` skip that dict and always use `NAB_DETECTORS`. No schema, sink, or dashboard change is needed: its anomalies show up on every chart, labelled with its name.
+
+`MAD` (`anomaly_detector/algorithms/mad.py`):
+
+- Modified z-score: `|last - median| / (1.4826 × median absolute deviation)`, threshold `3.5`.
+- When the median absolute deviation is 0 (over half the values equal the median), the scale is `1.253314 × mean absolute deviation` instead (Iglewicz & Hoaglin). When that is 0 too, every value is equal and the score is 0. The score is always finite, so it can be encoded as JSON.
+- The scale has a floor, `max(min_deviation, min_relative × |median|) / THRESHOLD`, so a deviation smaller than `min_deviation` and than `min_relative` of the median never reaches the threshold. Without it, a series that barely moves has a tiny MAD and every step is flagged: memory in use changing by 32 KB on a 470 MB median scored 8, against a threshold of 3.5. Both default to 0, the textbook modified z-score.
+
+To tune the floors, count what they let through, for example `SELECT metric_name, algorithm, toDate(timestamp) AS day, countIf(is_anomaly) FROM evaluations FINAL GROUP BY ALL`. At one sample every 10 seconds a series has 8,640 a day.
+- Returned numbers are Python `float`s; numpy scalars cannot be encoded by PyFlink's coders.
+
+`EWMA` (`anomaly_detector/algorithms/ewma.py`) walks the window with `alpha = 0.1`. The average is seeded with the first value and the variance starts at 0. Each value is scored against that average and variance from before it is folded in. The scale is `max(3 × standard deviation, min_deviation, min_relative × |average|)`. The constructor defaults are 10 and 0. CPU keeps `min_deviation=10` (percentage points). Memory sets `min_deviation=0` and `min_relative=0.02`, because 10 would mean 10 bytes. A reading is an anomaly only when its score is strictly greater than 1, so a value sitting on the upper band is kept. After the 10-reading warm-up, a flagged value updates the average with `alpha × 0.1` (`ANOMALY_DAMPING`), so a spike does not drag the baseline along. A reading exactly at the threshold is not flagged and uses the full `alpha`.
+
+A scale of 0 happens when the variance is still 0 and both floors are 0. A relative floor is also 0 when the average is 0, so a flat series of zeros with only `min_relative` set takes this path too. EWMA does not divide by that scale. A flat continuation scores 0 and is not flagged. Any rise scores infinity and is flagged, and `upper` equals the average (`THRESHOLD × 0`). A thirty-value window of `5.0` has `baseline` 5 and `upper` 5; appending `5.1` flags it, appending `4.9` does not. A drop scores 0. The infinity stays inside the detector: `Result` and the evaluation record carry `baseline`, `upper`, and `is_anomaly`. CPU's floor of 10 keeps its scale above 0. Memory's relative floor does too whenever the average is non-zero. A zero average with no variance is still a scale of 0. `NAB_DETECTORS` takes this path on a flat file. Dividing by the zero scale used to raise `ZeroDivisionError` and fail the Flink task. MAD never flags when its scale is 0, because a scale of 0 there means every value is equal, including the one being scored. EWMA can still see a rise: the current value is not in the variance yet.
+
+Input rows follow `Metric` (`shared/models/metric.py`) and output rows follow `Evaluation` (`shared/models/evaluation.py`). `METRIC_FIELD_TYPES` and `EVALUATION_FIELD_TYPES` in `anomaly_detector/flink/type_info/` must name the same fields as those models or the job raises `RuntimeError` at import. The Flink image runs Python 3.10, so code under `anomaly_detector/` and `shared/` must not use newer syntax.
+
+### Evaluation record
+
+Published on `evaluations` as JSON, without a Kafka key:
+
+```json
+{
+  "metric_id": "01a0e974-dc94-74df-ae87-e0e6064b18ef",
+  "machine_id": "server-42",
+  "metric_name": "system.cpu.utilization",
+  "timestamp": 1790595000.0,
+  "algorithm": "ewma",
+  "baseline": 21.3,
+  "lower": null,
+  "upper": 31.3,
+  "is_anomaly": true
+}
+```
+
+- `metric_id` is the scored sample's id in `metrics`, which holds its value; it isn't repeated here. `machine_id`, `metric_name`, and `timestamp` (epoch seconds, like `raw_metrics`) are the sample's series and time, so the table is sorted like `metrics`.
+- Numbers are stored as computed, at full `Float64` precision.
+
+Job submission, the Kafka connector jar, and consumer-group rules are in [operations](operations.md).
+
+## ClickHouse sinks
+
+`clickhouse-writer` is one process that runs one sink per topic on its own thread, each with its own Kafka consumer and ClickHouse client, so each topic has its own offsets and its own batches. `ClickHouseSinkBase` in `clickhouse_writer/sinks/clickhouse_sink_base.py` is the abstract base: it polls, converts, batches, writes and commits. A subclass in `clickhouse_writer/sinks/` names the table, its columns, the record model, the topic, and implements `to_row`. A record is converted by the sink of the topic it came from:
+
+| Sink | Topic variable | Default topic | Table | Group |
+| --- | --- | --- | --- | --- |
+| `ClickHouseMetricsSink` | `KAFKA_RAW_METRICS_TOPIC` | `raw_metrics` | `metrics` | `clickhouse-metrics-writer` |
+| `ClickHouseEvaluationsSink` | `KAFKA_EVALUATIONS_TOPIC` | `evaluations` | `evaluations` | `clickhouse-evaluations-writer` |
+| `ClickHouseMachinesSink` | `KAFKA_MACHINES_TOPIC` | `machines` | `machines` | `clickhouse-machines-writer` |
+
+The topic variables are the ones the producers read, so a renamed topic is set once. Auto-commit is off. Offset reset is `earliest`. To load another topic, subclass `ClickHouseSinkBase` and add it to `SINKS` in `clickhouse_writer/main.py`. A sink that fails after its retries stops the other two and the process exits, so Compose restarts all three. To scale a topic, start more `clickhouse-writer` processes: they share each topic's group, so Kafka splits the partitions between them.
+
+Records are decoded as JSON into the sink's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
+
+`ClickHouseRepository.insert_batch` writes the sink's table over HTTP (`clickhouse-connect`), then `ClickHouseSinkBase` commits the offsets of its own consumer. A failed insert leaves them uncommitted and the whole batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `inserted_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
+
+```sql
+SELECT machine_id, name, count() FROM metrics FINAL GROUP BY machine_id, name
+```
+
+`None` maps are stored as empty maps and `None` bands as `NULL`. Epoch-second and ISO-8601 times are converted to UTC `datetime`s (`DateTime64(3, 'UTC')`).
+
+ClickHouse errors retry up to `CLICKHOUSE_MAX_RETRIES` times (default 5). Backoff is `CLICKHOUSE_BACKOFF_BASE_SECONDS * 2^(attempt-1)` with a default base of 1 second (1s, 2s, 4s, 8s). The HTTP client holds no transaction, so the same client is reused.
+
+## Database
+
+[golang-migrate](https://github.com/golang-migrate/migrate) runs `db/migrations` against ClickHouse (`metrics` database) from the `migrate` Compose service. Applied versions are recorded in `metrics.schema_migrations`. Every migration is a numbered pair, `NNNNNN_<name>.up.sql` and `NNNNNN_<name>.down.sql`; create one with `make migrate-new name=<name>`. Statements are split on every `;`, comments included, so comments in a migration must not contain one.
+
+| Migration | Effect |
+| --- | --- |
+| 000001 | `metrics` and `evaluations` tables, `ReplacingMergeTree`, daily partitions, 24-hour TTL. `machines` table, `ReplacingMergeTree(observed_at)`, no TTL. |
+| 000002 | Renames `metrics.ingested_at` and `machines.ingested_at` to `inserted_at`, and `machines.observed_at` to `last_seen_at`. ClickHouse cannot rename a version column, so it rebuilds both tables and copies the rows; stop `clickhouse-writer` first. |
+
+Partitions are daily, not hourly: a replay with historical timestamps split into one part per hour it touched, and 38k NAB rows made 16k parts and ran ClickHouse out of memory. See [ADR 0005](adr/0005-daily-partitions.md).
+
+`metrics` holds only what devices report. Columns: `metric_id` (`UUID`), `machine_id`, `name`, `timestamp`, `type`, `unit`, `value`, `attributes` (`Map(String, String)`), `inserted_at`. Sorting (and deduplication) key `(machine_id, name, timestamp, metric_id)`: queries filter by series and time, and `metric_id` makes each sample unique, including two series at the same instant that differ only in `attributes`. `ttl_only_drop_parts` drops whole expired daily parts instead of rewriting them, so a row lives up to about 48 hours.
+
+`evaluations` columns are the fields of the evaluation record: `metric_id` is `UUID`, `baseline` and `upper` are `Float64`, `lower` is `Nullable(Float64)`, `is_anomaly` is `Bool`. Sorting (and deduplication) key `(machine_id, metric_name, algorithm, timestamp, metric_id)`: one algorithm's results for a series over time are contiguous, and a replayed evaluation collapses on merge. Anomalous samples are `WHERE is_anomaly`.
+
+`machines` holds the latest `Machine` per `machine_id`; `ReplacingMergeTree(last_seen_at)` keeps the newest on merge, so read it with `FINAL`. It has no TTL: a machine that stops reporting keeps its row, and `last_seen_at` is when it was last seen.
+
+A sample with its evaluation, and a series with its hostname:
+
+```sql
+SELECT m.timestamp, m.value, e.baseline, e.lower, e.upper, e.is_anomaly
+FROM (SELECT metric_id, timestamp, value FROM metrics FINAL
+      WHERE machine_id = 'server-42' AND name = 'system.cpu.utilization') AS m
+LEFT JOIN (SELECT metric_id, baseline, lower, upper, is_anomaly FROM evaluations FINAL
+           WHERE machine_id = 'server-42' AND metric_name = 'system.cpu.utilization' AND algorithm = 'mad') AS e
+  USING (metric_id)
+ORDER BY m.timestamp
+SETTINGS join_use_nulls = 1;
+
+SELECT h.hostname, m.timestamp, m.value
+FROM (SELECT machine_id, timestamp, value FROM metrics FINAL WHERE name = 'system.cpu.utilization') AS m
+LEFT JOIN (SELECT machine_id, hostname FROM machines FINAL) AS h USING (machine_id);
+```
+
+`metric_id` alone identifies the sample. Filter both sides by series before joining, as above, or the join reads whole tables. `join_use_nulls = 1` makes samples without an evaluation (warm-up, unscored series) come back with `NULL` bands rather than ClickHouse's default `0`.
+
+Identity trade-off: `metric_id` is assigned per collector. If two collectors ever scraped the same agent, the same reading would become two rows with different ids, where a key of `(machine_id, name, attributes, timestamp)` would have collapsed them. With one collector that does not happen. See [ADR 0007](adr/0007-metric-id-as-sample-identity.md).
+
+The TimescaleDB schema (Flyway `V1`–`V5`) was removed along with TimescaleDB; it is in git history.
+
+## Grafana
+
+`docker/grafana/dashboards/machine-usage-metrics.json` is provisioned as *Metrics explorer* (uid `ad8rn6h`). It works for any metric in `metrics`, for example `system.cpu.utilization` or a replayed `nab.*` series. A link at the top opens *Pipeline performance*. Variables:
+
+- `host` (shown as *Machine*): the hostname from `machines`, or the machine id for a machine the collector hasn't described yet. A replayed NAB series shows its file name.
+- `machine_id`: hidden, the id of the selected host; every panel filters on it. Two machines with the same hostname would both map to the first id, so give them different hostnames.
+- `metric_name` (*Metric*): every metric that machine has reported.
+
+Panels:
+
+- **Selected series**: *Summary* (latest, min, mean, p95, max, sample count, average interval), *Anomalies by algorithm*, the series with every algorithm's anomalies as points and every algorithm's `baseline`, `lower`, and `upper` as dashed lines, *Anomalies over time*, and *Value distribution*.
+- **All series in the time range**: one row for every machine and metric, with the sample count, the latest value, the anomaly count, and the algorithms that flagged it. The series with most anomalies come first.
+- **Ingestion into ClickHouse**: the rows and parts in the tables (a part count in the thousands means the partition key is too fine), *Metric rows ingested /s*, and *Ingest delay*. The delay leaves out rows older than one hour at the insert, because a replay shifts the timestamps. It is not the end-to-end time of a replay.
+- **Machine**: hardware and uptime from `machines`, then a table of the last 200 anomalies with their values.
+
+A replay moves each series to end now, and the series span about a month. Set the time range to 30 days to see all of it.
+
+## Tests
+
+Tests mirror the package directories (`tests/agent`, `tests/collector`, `tests/anomaly_detector`, `tests/clickhouse_writer`) and import `activity_metrics.*`. `make test` runs `uv run pytest`. `make check` also runs ruff, pyright and complexipy, as CI does (`.github/workflows/ci.yml`). `make mutate` mutation-tests the detectors; the configuration and the `also_copy` trap are in [operations](operations.md).
