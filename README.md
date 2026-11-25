@@ -56,6 +56,11 @@ tests/                 mirrors src/activity_metrics/; shared builders in tests/s
 | `make clickhouse-writer` | runs the ClickHouse writers locally                                 |
 | `make anomaly-detector` | runs the Flink job locally (creates `flink/.venv` with Python 3.11)  |
 | `make test`             | runs the tests                                                       |
+| `make lint`             | runs `ruff check` and `ruff format --check`                          |
+| `make format`           | formats the code with `ruff format`                                  |
+| `make typecheck`        | runs `pyright`                                                       |
+| `make complexity`       | runs `complexipy` (cognitive complexity, max 15 per function)        |
+| `make check`            | runs lint, typecheck, complexity and tests, as CI does               |
 | `make mutate`           | mutation-tests the detectors (`uv run mutmut run`)                   |
 | `make smoke`            | checks a running stack end to end (`WAIT=300 make smoke` retries)    |
 

@@ -4,7 +4,6 @@ import pytest
 
 from activity_metrics.collector.parsers.metrics_parser import MetricsParser
 
-
 METRICS_PAYLOAD = {
     "machine_id": "m1",
     "timestamp": "2026-10-01T06:30:00+00:00",

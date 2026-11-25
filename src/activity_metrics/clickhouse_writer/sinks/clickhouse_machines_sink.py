@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import UTC
 
-from activity_metrics.clickhouse_writer.sinks.row_values import RowValues
 from activity_metrics.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
+from activity_metrics.clickhouse_writer.sinks.row_values import RowValues
 from activity_metrics.shared.models.machine import Machine
 from activity_metrics.shared.settings.kafka_settings import KafkaSettings
 
@@ -38,6 +38,6 @@ class ClickHouseMachinesSink(ClickHouseSinkBase):
             record.cores,
             record.total_memory,
             record.total_disk,
-            record.last_boot.astimezone(timezone.utc),
+            record.last_boot.astimezone(UTC),
             RowValues.utc(record.last_seen_at),
         ]
