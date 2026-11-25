@@ -85,13 +85,11 @@ class ClickHouseSinkBase(ABC):
             return self.to_row(self.record_type.model_validate_json(record.value))
         except (TypeError, ValueError) as e:
             logger.error("Skipping malformed record %s[%s]@%s: %r", record.topic, record.partition, record.offset, e)
-            # We should probably send the record to a dead letter topic, but we don't have one yet.
-            # For now, just count it.
             Metrics.MALFORMED.labels(self.table).inc()
             return None
 
     def _flush(self, rows: list[list]) -> None:
-        # A crash before the commit replays the batch, and ReplacingMergeTree collapses the duplicates.
+        # Insert, then commit: see docs/adr/0004-at-least-once-delivery.md.
         with Metrics.WRITE_SECONDS.labels(self.table).time():
             self._repository.insert_batch(self.table, self.columns, rows)
             self._consumer.commit()

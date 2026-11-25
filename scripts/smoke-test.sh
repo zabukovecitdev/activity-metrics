@@ -66,7 +66,7 @@ check "migrate exited 0" "docker compose logs migrate" migrate_succeeded
 echo "Kafka"
 check "raw_metrics has messages" "no agent reachable? run \`make agent\` and check collector.toml" positive topic_messages raw_metrics
 check "machines has messages" "docker compose logs collector | grep -i machine" positive topic_messages machines
-check "evaluations has messages" "detectors need 11-20 samples per series (2-4 min); try WAIT=300" positive topic_messages evaluations
+check "evaluations has messages" "detectors need 11-20 samples per series; try WAIT=300" positive topic_messages evaluations
 
 echo "Flink"
 check "job 'Anomaly Detection' is RUNNING" "docker compose logs jobmanager; Web UI at $FLINK" flink_job_running

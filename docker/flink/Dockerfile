@@ -1,7 +1,7 @@
 FROM flink:1.19.1-scala_2.12-java11
 
 # PyFlink needs a CPython 3.8-3.11 interpreter available as `python`/`python3`,
-# which the upstream Flink image does not ship.
+# which the upstream Flink image does not ship. apt installs 3.10: see docs/adr/0006-python-3-10-in-the-flink-image.md.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 python3-pip python3-dev && \
     ln -s /usr/bin/python3 /usr/bin/python && \

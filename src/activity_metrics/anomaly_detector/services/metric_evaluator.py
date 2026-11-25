@@ -9,16 +9,13 @@ from activity_metrics.shared.models.evaluation import Evaluation
 
 
 class MetricEvaluator:
-    # The only scored metrics, with their detectors. The floors are the smallest deviation worth flagging for that
-    # metric: a series that barely moves would otherwise be flagged on every small step.
+    # The only scored metrics, with their detectors and floors: see docs/adr/0008-mad-and-ewma-with-floors.md.
     DETECTORS: dict[str, list[Detector]] = {
         # Percentage points.
         "system.cpu.utilization": [MAD(min_deviation=10.0), EWMA(min_deviation=10.0)],
-        # Memory in use sits near one level and drifts, so only a change of 2% of it counts.
         "system.memory.usage": [MAD(min_relative=0.02), EWMA(min_deviation=0.0, min_relative=0.02)],
     }
-    # A replayed NAB series is named NAB_PREFIX + its file name. NAB values range from 0.1 to millions,
-    # so no floor in the values' units fits them all, and these detectors have none.
+    # A replayed NAB series is named NAB_PREFIX + its file name.
     NAB_PREFIX = "nab."
     NAB_DETECTORS: list[Detector] = [MAD(), EWMA(min_deviation=0.0)]
 
