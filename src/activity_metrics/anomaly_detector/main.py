@@ -28,7 +28,7 @@ def main() -> None:
     env.set_python_executable(sys.executable)
     env.set_parallelism(PARALLELISM)
 
-    # Without state.checkpoints.dir Flink keeps checkpoints on the JobManager heap; see docker-compose.yml.
+    # Checkpoints and delivery guarantees: see docs/adr/0004-at-least-once-delivery.md.
     env.enable_checkpointing(1000)
     env.get_checkpoint_config().set_checkpointing_mode(CheckpointingMode.EXACTLY_ONCE)
     env.get_checkpoint_config().set_min_pause_between_checkpoints(500)

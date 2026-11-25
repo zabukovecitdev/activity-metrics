@@ -34,7 +34,7 @@ dev = [
     "pytest-asyncio (>=1.4.0,<2.0.0)",
     "ruff>=0.17.6",
 ]
-# The notebook and Streamlit app in experiments/. Installed by `uv sync`, never by the image's `pip install .`.
+# The notebook and Streamlit app in experiments/. Installed by `uv sync`, never by the image (`--no-default-groups`).
 experiments = [
     "ipykernel>=7.4.0",
     "ipympl>=0.10.0",
@@ -79,7 +79,7 @@ paths = ["src"]
 max-complexity-allowed = 15
 
 # pyflink only exists in the Flink image (its pemja dependency needs a JDK and doesn't build here).
-# The Flink image runs Python 3.10, so anomaly_detector and shared are checked as 3.10.
+# anomaly_detector and shared run on Python 3.10: see docs/adr/0006-python-3-10-in-the-flink-image.md.
 [tool.pyright]
 include = ["src", "tests"]
 pythonVersion = "3.14"

@@ -2,6 +2,8 @@
 
 activity-metrics collects CPU and memory metrics from my machines, scores every sample for anomalies, and shows both in Grafana. It is also where I learn Kafka, Flink, and ClickHouse, so some parts are bigger than a few home machines need. That is a deliberate choice, noted below where it applies.
 
+The reasons behind each design choice are in the [architecture decision records](adr/README.md).
+
 ```
 agent (on each machine)       serves /v1/metrics and /v1/machine
    │  HTTP, 1 s gap between rounds
@@ -20,8 +22,8 @@ Grafana                       pick a host, see its series and anomalies
 | --- | --- | --- |
 | **agent** | FastAPI app on every machine. `/v1/metrics` returns CPU, memory, and uptime; `/v1/machine` returns hostname, OS, cores, memory, and disk. | Each machine only has to answer HTTP. It knows nothing about Kafka or the database. |
 | **collector** | Scrapes every agent, then waits 1 s (`COLLECTOR_SCRAPE_INTERVAL_SECONDS`), fetches machine info every 5 min, and publishes both to Kafka. Gives each sample a `metric_id` (UUIDv7). | One place decides when and what to collect. `metric_id` follows the sample everywhere after this. |
-| **Kafka** | Topics `raw_metrics`, `machines`, `evaluations`. | Decouples collecting from scoring from storing: each can be down or replayed without losing data. *Learning goal.* |
-| **Flink job** | Keeps the last 360 values of each series (`machine_id`, `name`), in arrival order, with no time cutoff, and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. A count stays full at any sample rate. *Learning goal*: a plain Kafka consumer would do at this scale. |
+| **Kafka** | Topics `raw_metrics`, `machines`, `evaluations`. | Decouples collecting from scoring from storing: each can be down or replayed without losing data. *Learning goal* ([ADR 0001](adr/0001-kafka-and-flink-as-a-learning-goal.md)). |
+| **Flink job** | Keeps the last 360 values of each series (`machine_id`, `name`), in arrival order, with no time cutoff, and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. A count stays full at any sample rate. *Learning goal*: a plain Kafka consumer would do at this scale ([ADR 0001](adr/0001-kafka-and-flink-as-a-learning-goal.md)). |
 | **clickhouse-writer** | One process, one sink per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `ClickHouseSinkBase` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its sink's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. |
 | **ClickHouse** | Tables `metrics`, `evaluations`, `machines`. Schema in `db/migrations`. | Fast time-range queries for Grafana, and a good fit for append-only data. |
 | **Grafana** | Dashboards `machine-usage-metrics.json` (metrics explorer) and `pipeline-performance.json`, provisioned on start. | Charts without writing a frontend. |
@@ -67,7 +69,7 @@ Details are in [README](../README.md) and [operations](operations.md).
 
 On purpose, until there's a reason:
 
-- **End-to-end exactly-once.** Flink checkpoints its window state and source offsets every second to a local volume, in `EXACTLY_ONCE` mode, which covers Flink's own state only. The Kafka sink is `AT_LEAST_ONCE`: it flushes to Kafka on every checkpoint, so a failure can repeat evaluations but not lose them. Repeats collapse in ClickHouse (`ReplacingMergeTree`). Exactly-once would need a transactional sink and `read_committed` consumers; not worth it while ClickHouse deduplicates anyway.
+- **End-to-end exactly-once.** Delivery is at-least-once and ClickHouse collapses the repeats; see [ADR 0004](adr/0004-at-least-once-delivery.md).
 - **Alerting.** Anomalies are only visible on the dashboard.
 - **Anomaly episodes.** Each anomalous sample is its own row; consecutive ones aren't grouped into one event.
 - **Long-term storage and downsampling.** Everything older than 24 hours is gone.

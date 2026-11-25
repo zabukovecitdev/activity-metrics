@@ -5,8 +5,7 @@ from pyflink.datastream.state import ListStateDescriptor
 
 from activity_metrics.anomaly_detector.services.metric_evaluator import MetricEvaluator
 
-# A count, not a time span, so the window holds enough values for every detector at any sample rate.
-# One hour at the 10-second scrape interval.
+# A count, not a time span: see docs/adr/0003-count-based-window.md.
 WINDOW_POINTS = 360
 
 
