@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from activity_metrics.agent.services.metrics_service import MetricsService
@@ -24,7 +24,7 @@ async def test_collect_metrics_returns_metrics_built_from_system_stats():
         "system.memory.limit": 100,
         "system.uptime": 3600.0,
     }
-    assert (response.timestamp, response.machine_id) == (datetime.fromtimestamp(123.456, timezone.utc), "machine-123")
+    assert (response.timestamp, response.machine_id) == (datetime.fromtimestamp(123.456, UTC), "machine-123")
 
 
 async def test_describe_machine_reports_static_info_and_when_it_was_observed():
@@ -39,5 +39,5 @@ async def test_describe_machine_reports_static_info_and_when_it_was_observed():
     assert machine.machine_id == "machine-123"
     assert machine.cores == 0
     assert machine.last_seen_at == 1790595000.0
-    assert machine.last_boot == datetime.fromtimestamp(1790590000.0, timezone.utc)
+    assert machine.last_boot == datetime.fromtimestamp(1790590000.0, UTC)
     assert machine.total_memory > 0 and machine.total_disk > 0

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic_core import to_jsonable_python
@@ -13,7 +13,7 @@ def test_evaluation_row_matches_columns_and_keeps_a_missing_band_as_null():
         "metric_id": uuid.UUID(METRIC_ID),
         "machine_id": "machine-123",
         "metric_name": "system.cpu.utilization",
-        "timestamp": datetime.fromtimestamp(1.5, timezone.utc),
+        "timestamp": datetime.fromtimestamp(1.5, UTC),
         "algorithm": "ewma",
         "baseline": 21.3,
         "lower": None,

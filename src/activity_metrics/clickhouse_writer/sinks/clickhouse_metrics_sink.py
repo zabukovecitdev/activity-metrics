@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from activity_metrics.clickhouse_writer.sinks.row_values import RowValues
 from activity_metrics.clickhouse_writer.sinks.clickhouse_sink_base import ClickHouseSinkBase
+from activity_metrics.clickhouse_writer.sinks.row_values import RowValues
 from activity_metrics.shared.models.metric import Metric
 from activity_metrics.shared.settings.kafka_settings import KafkaSettings
 

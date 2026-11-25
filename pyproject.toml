@@ -27,9 +27,12 @@ clickhouse-writer = "activity_metrics.clickhouse_writer.main:cli"
 
 [dependency-groups]
 dev = [
+    "complexipy>=9.0.0",
     "mutmut>=3.8.0",
+    "pyright>=1.1.414",
     "pytest (>=9.1.1,<10.0.0)",
     "pytest-asyncio (>=1.4.0,<2.0.0)",
+    "ruff>=0.17.6",
 ]
 # The notebook and Streamlit app in experiments/. Installed by `uv sync`, never by the image's `pip install .`.
 experiments = [
@@ -65,9 +68,23 @@ line-length = 120
 target-version = "py314"
 extend-exclude = ["mutants"]
 
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C90"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.complexipy]
+paths = ["src"]
+max-complexity-allowed = 15
+
 # pyflink only exists in the Flink image (its pemja dependency needs a JDK and doesn't build here).
+# The Flink image runs Python 3.10, so anomaly_detector and shared are checked as 3.10.
 [tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.14"
 executionEnvironments = [
-    { root = "src/activity_metrics/anomaly_detector", extraPaths = ["src"], reportMissingImports = "none" },
+    { root = "src/activity_metrics/anomaly_detector", pythonVersion = "3.10", extraPaths = ["src"], reportMissingImports = "none" },
+    { root = "src/activity_metrics/shared", pythonVersion = "3.10", extraPaths = ["src"] },
     { root = "src" },
 ]

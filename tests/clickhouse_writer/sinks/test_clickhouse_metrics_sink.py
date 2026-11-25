@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from activity_metrics.clickhouse_writer.sinks.clickhouse_metrics_sink import ClickHouseMetricsSink
 from tests.support.builders import METRIC_ID, build_metric, row_of
@@ -10,7 +10,7 @@ def test_metric_row_matches_columns():
         "metric_id": uuid.UUID(METRIC_ID),
         "machine_id": "machine-123",
         "name": "system.cpu.utilization",
-        "timestamp": datetime.fromtimestamp(1.5, timezone.utc),
+        "timestamp": datetime.fromtimestamp(1.5, UTC),
         "type": "gauge",
         "unit": "%",
         "value": 15.0,

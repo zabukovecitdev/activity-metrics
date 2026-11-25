@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic_core import to_jsonable_python
@@ -10,8 +10,8 @@ from tests.support.builders import build_machine, parse_record, row_of
 def test_machine_row_converts_both_times_to_utc():
     row = row_of(ClickHouseMachinesSink, build_machine(1.5))
 
-    assert row["last_boot"] == datetime(2026, 10, 1, 6, 30, tzinfo=timezone.utc)
-    assert row["last_seen_at"] == datetime.fromtimestamp(1.5, timezone.utc)
+    assert row["last_boot"] == datetime(2026, 10, 1, 6, 30, tzinfo=UTC)
+    assert row["last_seen_at"] == datetime.fromtimestamp(1.5, UTC)
     assert (row["cores"], row["total_memory"]) == (16, 34_359_738_368)
 
 

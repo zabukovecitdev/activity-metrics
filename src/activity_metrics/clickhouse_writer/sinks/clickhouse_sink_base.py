@@ -26,8 +26,8 @@ class ClickHouseSinkBase(ABC):
     """Loads one Kafka topic into one ClickHouse table: batches rows, then writes them before committing offsets.
 
     A subclass names the table, its columns, the record model, the topic and how a record becomes a row.
-    The topic comes from `KafkaSettings`, the same setting the producer of that topic uses. Run several instances for one topic and Kafka splits its partitions
-    between them, because they share a consumer group.
+    The topic comes from `KafkaSettings`, the same setting the producer of that topic uses. Run several instances for
+    one topic and Kafka splits its partitions between them, because they share a consumer group.
     """
 
     table: ClassVar[str]
@@ -85,7 +85,8 @@ class ClickHouseSinkBase(ABC):
             return self.to_row(self.record_type.model_validate_json(record.value))
         except (TypeError, ValueError) as e:
             logger.error("Skipping malformed record %s[%s]@%s: %r", record.topic, record.partition, record.offset, e)
-            # We should probably send the record to a dead letter topic, but we don't have one yet. For now, just count it.
+            # We should probably send the record to a dead letter topic, but we don't have one yet.
+            # For now, just count it.
             Metrics.MALFORMED.labels(self.table).inc()
             return None
 

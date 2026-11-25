@@ -7,7 +7,10 @@ from activity_metrics.shared.models.metrics_response import MetricsResponse
 class MetricsParser:
     @staticmethod
     def parse(body: str) -> list[Metric]:
-        """One Metric per observation in an agent's /v1/metrics body. Raises ValidationError if it isn't a MetricsResponse."""
+        """One Metric per observation in an agent's /v1/metrics body.
+
+        Raises ValidationError if it isn't a MetricsResponse.
+        """
         response = MetricsResponse.model_validate_json(body)
         timestamp = response.timestamp.timestamp()
         return [

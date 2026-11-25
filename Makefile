@@ -2,7 +2,7 @@ FLINK_PYTHON := flink/.venv/bin/python
 KAFKA_CONNECTOR_JAR := flink/lib/flink-sql-connector-kafka-3.2.0-1.19.jar
 KAFKA_CONNECTOR_URL := https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.2.0-1.19/flink-sql-connector-kafka-3.2.0-1.19.jar
 
-.PHONY: venv agent collector clickhouse-writer anomaly-detector smoke test mutate up down migrate migrate-down migrate-new
+.PHONY: venv agent collector clickhouse-writer anomaly-detector smoke test lint format typecheck complexity check mutate up down migrate migrate-down migrate-new
 
 # Make can't activate the venv in your current shell; this opens a subshell with it active (exit to leave).
 venv:
@@ -35,6 +35,22 @@ smoke:
 
 test:
 	uv run pytest
+
+lint:
+	uv run ruff check .
+	uv run ruff format --check .
+
+format:
+	uv run ruff format .
+
+typecheck:
+	uv run pyright
+
+complexity:
+	uv run complexipy
+
+# What CI runs.
+check: lint typecheck complexity test
 
 # Mutation-tests the detectors; survivors are listed by `uv run mutmut results`.
 mutate:

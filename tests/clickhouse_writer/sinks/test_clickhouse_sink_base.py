@@ -13,7 +13,6 @@ from activity_metrics.shared.settings.clickhouse_sink_settings import ClickHouse
 from activity_metrics.shared.settings.kafka_settings import KafkaSettings
 from tests.support.builders import build_evaluation, build_machine, build_metric, kafka_record, parse_record
 
-
 SINK_CASES = pytest.mark.parametrize(
     "sink_type, build",
     [
