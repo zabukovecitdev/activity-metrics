@@ -63,7 +63,7 @@ To add an algorithm: write a class in `anomaly_detector/algorithms/` that return
 - `WAIT=300 make smoke` checks every step end to end.
 - After a change to the Flink job: `docker compose restart jobmanager`.
 
-Details are in [README](../README.md) and [operations](operations.md).
+Details are in [reference](reference.md) and [operations](operations.md).
 
 ## Not doing yet
 
