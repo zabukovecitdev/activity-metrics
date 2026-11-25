@@ -10,6 +10,7 @@ class Metric(BaseModel):
     collector accepts it. Unknown fields are ignored, so a producer may add one
     before every consumer knows it.
     """
+
     timestamp: float
     name: str = Field(min_length=1)
     type: str = Field(min_length=1)

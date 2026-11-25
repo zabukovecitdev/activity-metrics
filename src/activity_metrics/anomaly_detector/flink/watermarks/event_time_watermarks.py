@@ -11,5 +11,6 @@ MAX_OUT_OF_ORDERNESS = Duration.of_seconds(5)
 class EventTimeWatermarks:
     @staticmethod
     def build() -> WatermarkStrategy:
-        return WatermarkStrategy.for_bounded_out_of_orderness(MAX_OUT_OF_ORDERNESS) \
-            .with_timestamp_assigner(EpochSecondsTimestampAssigner())
+        return WatermarkStrategy.for_bounded_out_of_orderness(MAX_OUT_OF_ORDERNESS).with_timestamp_assigner(
+            EpochSecondsTimestampAssigner()
+        )

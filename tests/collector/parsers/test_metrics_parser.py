@@ -19,7 +19,12 @@ def test_metrics_are_parsed_from_the_agent_response():
 
 @pytest.mark.parametrize(
     "overrides",
-    [{"machine_id": ""}, {"timestamp": "2026-10-01T06:30:00"}, {"timestamp": "yesterday"}, {"metrics": [{"name": "x"}]}],
+    [
+        {"machine_id": ""},
+        {"timestamp": "2026-10-01T06:30:00"},
+        {"timestamp": "yesterday"},
+        {"metrics": [{"name": "x"}]},
+    ],
     ids=["empty-id", "no-offset", "not-iso", "incomplete-metric"],
 )
 def test_malformed_metrics_raise_a_value_error(overrides):

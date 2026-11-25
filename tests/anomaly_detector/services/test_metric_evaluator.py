@@ -39,7 +39,10 @@ def test_evaluation_is_keyed_by_the_metric_sample():
     evaluation = by_algorithm(build_metric(90.0), BASELINE)["mad"]
 
     assert (evaluation.metric_id, evaluation.machine_id, evaluation.metric_name, evaluation.timestamp) == (
-        "01a0e974-dc94-74df-ae87-e0e6064b18ef", "server-42", "system.cpu.utilization", 1790595000.25,
+        "01a0e974-dc94-74df-ae87-e0e6064b18ef",
+        "server-42",
+        "system.cpu.utilization",
+        1790595000.25,
     )
 
 
@@ -140,7 +143,9 @@ def test_flat_nab_series_is_scored_without_an_error():
 def test_observe_gets_each_detectors_name_and_a_duration():
     seen: list[tuple[str, float]] = []
 
-    MetricEvaluator.evaluate(build_metric(11.0), BASELINE + [11.0], observe=lambda name, seconds: seen.append((name, seconds)))
+    MetricEvaluator.evaluate(
+        build_metric(11.0), BASELINE + [11.0], observe=lambda name, seconds: seen.append((name, seconds))
+    )
 
     assert sorted(name for name, _ in seen) == ["ewma", "mad"]
     assert all(seconds >= 0 for _, seconds in seen)

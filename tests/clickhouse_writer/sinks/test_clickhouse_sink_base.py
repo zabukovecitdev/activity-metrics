@@ -14,10 +14,13 @@ from activity_metrics.shared.settings.kafka_settings import KafkaSettings
 from tests.support.builders import build_evaluation, build_machine, build_metric, kafka_record, parse_record
 
 
-
 SINK_CASES = pytest.mark.parametrize(
     "sink_type, build",
-    [(ClickHouseMetricsSink, build_metric), (ClickHouseEvaluationsSink, build_evaluation), (ClickHouseMachinesSink, build_machine)],
+    [
+        (ClickHouseMetricsSink, build_metric),
+        (ClickHouseEvaluationsSink, build_evaluation),
+        (ClickHouseMachinesSink, build_machine),
+    ],
     ids=["metrics", "evaluations", "machines"],
 )
 
@@ -34,7 +37,9 @@ def test_columns_are_the_record_fields(sink_type, build):
 
 def test_each_sink_has_its_own_group():
     assert sorted(w.group_id() for w in SINKS) == [
-        "clickhouse-evaluations-writer", "clickhouse-machines-writer", "clickhouse-metrics-writer",
+        "clickhouse-evaluations-writer",
+        "clickhouse-machines-writer",
+        "clickhouse-metrics-writer",
     ]
 
 
@@ -50,11 +55,14 @@ def test_topics_follow_the_producers_environment(monkeypatch):
 
 @SINK_CASES
 def test_parse_ignores_unknown_fields(sink_type, build):
-    assert parse_record(sink_type, {**to_jsonable_python(build()), "added_later": "x"}) == parse_record(sink_type, to_jsonable_python(build()))
+    assert parse_record(sink_type, {**to_jsonable_python(build()), "added_later": "x"}) == parse_record(
+        sink_type, to_jsonable_python(build())
+    )
 
 
 @pytest.mark.parametrize(
-    "sink_type, build", [(ClickHouseMetricsSink, build_metric), (ClickHouseEvaluationsSink, build_evaluation)],
+    "sink_type, build",
+    [(ClickHouseMetricsSink, build_metric), (ClickHouseEvaluationsSink, build_evaluation)],
     ids=["metrics", "evaluations"],
 )
 @pytest.mark.parametrize("metric_id", [None, "not-a-uuid", 5])
@@ -109,8 +117,13 @@ def test_run_flushes_on_timeout_before_batch_is_full():
     sink, records, store = build_sink(batch_size=100, batch_timeout_seconds=5.0)
     records.poll.side_effect = [[machine_record("h1")], LoopBreak]
 
-    with patch("activity_metrics.clickhouse_writer.sinks.clickhouse_sink_base.time.monotonic", side_effect=[0.0, 10.0, 10.0]), \
-         pytest.raises(LoopBreak):
+    with (
+        patch(
+            "activity_metrics.clickhouse_writer.sinks.clickhouse_sink_base.time.monotonic",
+            side_effect=[0.0, 10.0, 10.0],
+        ),
+        pytest.raises(LoopBreak),
+    ):
         sink.run()
 
     assert inserted(store) == [machine_row("h1")]

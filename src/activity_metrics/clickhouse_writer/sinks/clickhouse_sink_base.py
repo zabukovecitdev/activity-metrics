@@ -64,9 +64,7 @@ class ClickHouseSinkBase(ABC):
         last_flush = time.monotonic()
         while self._running:
             rows.extend(self._poll())
-            if rows and (
-                len(rows) >= self._batch_size or time.monotonic() - last_flush >= self._batch_timeout_seconds
-            ):
+            if rows and (len(rows) >= self._batch_size or time.monotonic() - last_flush >= self._batch_timeout_seconds):
                 self._flush(rows)
                 rows = []
                 last_flush = time.monotonic()
@@ -86,9 +84,7 @@ class ClickHouseSinkBase(ABC):
         try:
             return self.to_row(self.record_type.model_validate_json(record.value))
         except (TypeError, ValueError) as e:
-            logger.error(
-                "Skipping malformed record %s[%s]@%s: %r", record.topic, record.partition, record.offset, e
-            )
+            logger.error("Skipping malformed record %s[%s]@%s: %r", record.topic, record.partition, record.offset, e)
             # We should probably send the record to a dead letter topic, but we don't have one yet. For now, just count it.
             Metrics.MALFORMED.labels(self.table).inc()
             return None

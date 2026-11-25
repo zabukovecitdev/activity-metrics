@@ -18,11 +18,9 @@ class AnomalyDetectionFunction(KeyedProcessFunction):
         self.evaluations_emitted = self.metrics_group.counter("evaluations_emitted")
         # Per detector, as a count and a total of microseconds: the mean is rate(score_micros) / rate(scores).
         self.score_metrics: dict[str, tuple] = {}
-        self.recent_values = runtime_context.get_list_state(
-            ListStateDescriptor("recent_values", Types.DOUBLE())
-        )
+        self.recent_values = runtime_context.get_list_state(ListStateDescriptor("recent_values", Types.DOUBLE()))
 
-    def process_element(self, value, ctx: 'KeyedProcessFunction.Context'):
+    def process_element(self, value, ctx: "KeyedProcessFunction.Context"):
         if not MetricEvaluator.is_scored(value):
             return
 

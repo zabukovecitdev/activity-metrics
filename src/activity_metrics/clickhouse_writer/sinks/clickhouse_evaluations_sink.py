@@ -13,7 +13,15 @@ from activity_metrics.shared.settings.kafka_settings import KafkaSettings
 class ClickHouseEvaluationsSink(ClickHouseSinkBase):
     table = "evaluations"
     columns: ClassVar[list[str]] = [
-        "metric_id", "machine_id", "metric_name", "timestamp", "algorithm", "baseline", "lower", "upper", "is_anomaly",
+        "metric_id",
+        "machine_id",
+        "metric_name",
+        "timestamp",
+        "algorithm",
+        "baseline",
+        "lower",
+        "upper",
+        "is_anomaly",
     ]
     record_type = Evaluation
 

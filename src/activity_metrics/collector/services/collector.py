@@ -79,7 +79,9 @@ class Collector:
         # Only after a successful publish, so a failure is retried on the next scrape.
         self._machine_refreshed_at[endpoint] = now
 
-    async def _receive[T](self, kind: str, url: str, parse: Callable[[str], T], producer: KafkaRecordsProducer) -> T | None:
+    async def _receive[T](
+        self, kind: str, url: str, parse: Callable[[str], T], producer: KafkaRecordsProducer
+    ) -> T | None:
         """`parse` applied to the body at `url`, or None once the failure is logged.
 
         The one place agent responses are validated: an invalid one is counted and sent to `producer`'s dead letter
