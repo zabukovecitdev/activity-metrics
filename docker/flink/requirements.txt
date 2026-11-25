@@ -1,0 +1,7 @@
+# Python packages of the Flink job, for the Flink image and the local flink/.venv (make anomaly-detector).
+# apache-flink matches the Flink version of the base image in the Dockerfile.
+# The pydantic packages match uv.lock, so the job runs the shared models on the versions the tests use.
+apache-flink==1.19.1
+pydantic-settings==2.15.0
+pydantic==2.13.5
+pydantic-core==2.46.5

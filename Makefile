@@ -23,7 +23,7 @@ anomaly-detector: $(FLINK_PYTHON) $(KAFKA_CONNECTOR_JAR)
 
 $(FLINK_PYTHON):
 	python3.10 -m venv flink/.venv
-	flink/.venv/bin/pip install apache-flink==1.19.1 pydantic-settings
+	flink/.venv/bin/pip install -r docker/flink/requirements.txt
 
 $(KAFKA_CONNECTOR_JAR):
 	mkdir -p $(dir $(KAFKA_CONNECTOR_JAR))

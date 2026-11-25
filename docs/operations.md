@@ -27,7 +27,7 @@ Process commands from the `Makefile`:
 | `mutate` | `uv run mutmut run` | dev dependency; see [Mutation testing](#mutation-testing) |
 | `anomaly-detector` | `flink/.venv/bin/python -m activity_metrics.anomaly_detector.main` | Passes `KAFKA_CONNECTOR_JAR` as an absolute path |
 
-`anomaly-detector` creates `flink/.venv` with Python 3.10, the version in the Flink image, and `apache-flink==1.19.1`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
+`anomaly-detector` creates `flink/.venv` with Python 3.10, the version in the Flink image, installs `docker/flink/requirements.txt`, downloads `flink-sql-connector-kafka-3.2.0-1.19.jar` into `flink/lib/`, and exports that absolute path as `KAFKA_CONNECTOR_JAR`.
 
 ## Environment
 
@@ -58,7 +58,7 @@ An empty `KAFKA_CONNECTOR_JAR` skips `pipeline.jars`. The Flink image already ha
 
 `docker/flink/Dockerfile` fetches the same jar (`3.2.0-1.19` on Flink `1.19.1`) and runs `chmod 644` on it. `ADD` from a URL otherwise leaves the file mode `600`, owned by root, and the `flink` user (uid 9999) cannot read it. The job then fails at submission with the connector classes unresolved.
 
-The image installs PyFlink `apache-flink==1.19.1`, matching the base image. The job calls `env.set_python_executable(sys.executable)` so keyed Python operators use that interpreter. A worker started as plain `python` on `PATH` dies with `ModuleNotFoundError: pyflink`.
+The image installs the packages in `docker/flink/requirements.txt`: PyFlink `apache-flink==1.19.1`, matching the base image, and `pydantic-settings`, `pydantic` and `pydantic-core` at their versions in `uv.lock`. `make anomaly-detector` installs the same file into `flink/.venv`. The job calls `env.set_python_executable(sys.executable)` so keyed Python operators use that interpreter. A worker started as plain `python` on `PATH` dies with `ModuleNotFoundError: pyflink`.
 
 ### ClickHouse writer
 
