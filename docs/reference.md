@@ -92,7 +92,7 @@ agents = [
 ]
 ```
 
-It adds `/v1/metrics` and `/v1/machine` to each. The file is read once, at startup: after editing it, `docker compose restart collector`. The collector refuses to start, naming the problem, when the file is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs.
+It adds `/v1/metrics` and `/v1/machine` to each. The path of each entry is replaced, so `http://host:8080`, `http://host:8080/` and `http://host:8080/v1/metrics` are one endpoint, scraped once. The file is read once, at startup: after editing it, `docker compose restart collector`. The collector refuses to start, naming the problem, when the file is missing, isn't valid TOML, or `agents` isn't a non-empty list of `http://` or `https://` URLs.
 
 ## Collector contract
 
@@ -224,7 +224,7 @@ The topic variables are the ones the producers read, so a renamed topic is set o
 
 Records are decoded as JSON into the sink's record model and converted to a ClickHouse row as they are polled; unknown keys are dropped. A record missing a required key, a metric or evaluation without a valid `metric_id`, a metric, evaluation or machine with an empty `machine_id`, or a machine whose `last_boot` has no UTC offset is logged as `Skipping malformed record` and skipped there, so it cannot fail its batch on every retry. A flush happens when the batch reaches `WRITER_BATCH_SIZE` (default 100) or when `WRITER_BATCH_TIMEOUT_SECONDS` (default 5) has passed since the previous flush. `SIGTERM` stops the loop and flushes a partial batch. An empty poll does not write or commit.
 
-`ClickHouseRepository.insert_batch` writes the sink's table over HTTP (`clickhouse-connect`), then `ClickHouseSinkBase` commits the offsets of its own consumer. A failed insert leaves them uncommitted and the whole batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge, keeping the latest `inserted_at`. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
+`ClickHouseRepository.insert_batch` writes the sink's table over HTTP (`clickhouse-connect`), then `ClickHouseSinkBase` commits the offsets of its own consumer. A failed insert leaves them uncommitted and the whole batch is replayed. ClickHouse has no `ON CONFLICT`: the replayed rows are inserted again and `ReplacingMergeTree` collapses rows with the same sorting key on merge. `metrics` keeps the row with the greatest `inserted_at`, `machines` the greatest `last_seen_at`, and `evaluations`, which has no version column, the last one inserted. Neither sink sends `inserted_at`; ClickHouse fills it at insert. Until a merge runs, duplicates are visible; read with `FINAL` when that matters:
 
 ```sql
 SELECT machine_id, name, count() FROM metrics FINAL GROUP BY machine_id, name
@@ -286,8 +286,8 @@ Panels:
 
 - **Selected series**: *Summary* (latest, min, mean, p95, max, sample count, average interval), *Anomalies by algorithm*, the series with every algorithm's anomalies as points and every algorithm's `baseline`, `lower`, and `upper` as dashed lines, *Anomalies over time*, and *Value distribution*.
 - **All series in the time range**: one row for every machine and metric, with the sample count, the latest value, the anomaly count, and the algorithms that flagged it. The series with most anomalies come first.
-- **Ingestion into ClickHouse**: the rows and parts in the tables (a part count in the thousands means the partition key is too fine), *Metric rows ingested /s*, and *Ingest delay*. The delay leaves out rows older than one hour at the insert, because a replay shifts the timestamps. It is not the end-to-end time of a replay.
-- **Machine**: hardware and uptime from `machines`, then a table of the last 200 anomalies with their values.
+- **Ingestion into ClickHouse**: the rows and parts in the tables (a part count in the thousands means the partition key is too fine), *Metric rows ingested /s*, and *Ingest delay (live data only)*. Both read `inserted_at`, the insert time ClickHouse fills with `now64(3)`. The delay leaves out rows older than one hour at the insert, because a replay shifts the timestamps. It is not the end-to-end time of a replay.
+- **Machine**: hardware from `machines`, with *Last boot* and *Last seen* (`last_seen_at`), then a table of the last 200 anomalies with their values. Uptime is the `system.uptime` series.
 
 A replay moves each series to end now, and the series span about a month. Set the time range to 30 days to see all of it.
 
