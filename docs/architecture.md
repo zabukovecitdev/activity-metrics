@@ -26,7 +26,8 @@ Grafana                       pick a host, see its series and anomalies
 | **Flink job** | Keeps the last 360 values of each series (`machine_id`, `name`), in arrival order, with no time cutoff, and emits one evaluation per sample per algorithm. Runs in Application Mode: the jobmanager starts the job itself. | Stateful stream processing per series. A count stays full at any sample rate. *Learning goal*: a plain Kafka consumer would do at this scale ([ADR 0001](adr/0001-kafka-and-flink-as-a-learning-goal.md)). |
 | **clickhouse-writer** | One process, one sink per topic (`metrics`, `evaluations`, `machines`) on its own thread, sharing the `ClickHouseSinkBase` base class. Each batches rows and commits its offsets only after its table is written. | A topic's offsets, batches and log lines are its sink's alone, so a problem is easy to place. Replays are safe because the tables deduplicate. See [ADR 0010](adr/0010-a-consumer-and-client-per-sink.md) and [ADR 0011](adr/0011-a-custom-writer-not-the-kafka-table-engine.md). |
 | **ClickHouse** | Tables `metrics`, `evaluations`, `machines`. Schema in `db/migrations`. | Fast time-range queries for Grafana, and a good fit for append-only data. |
-| **Grafana** | Dashboards `machine-usage-metrics.json` (metrics explorer) and `pipeline-performance.json`, provisioned on start. | Charts without writing a frontend. |
+| **Prometheus** | Scrapes the collector and the writer on port 8000, and both Flink processes on port 9249, every 15 seconds. | Process counters for the *Pipeline performance* dashboard. Samples keep flowing to ClickHouse while it is down. |
+| **Grafana** | `machine-usage-metrics.json` (*Metrics explorer*) reads ClickHouse; `pipeline-performance.json` reads Prometheus. Both are provisioned on start. | Charts without writing a frontend. |
 
 ## Data model
 
